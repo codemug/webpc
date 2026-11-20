@@ -28,6 +28,7 @@
 - **Real apps, not mock-ups.** The Storytold Craft editors are full Rust and WebAssembly applications. The Terminal boots Alpine Linux in an x86 emulator. The Packet Viewer runs Wireshark's own dissectors. The AI Agent runs language models on your GPU.
 - **Nothing leaves your machine.** Opening an app makes zero requests to any other host. The smoke checks and browser tests assert this for each app. Your files stay in your browser's storage, and network tools only reach out when you press their button.
 - **No server.** WebPC is a static site: drop the build into any host and serve it at `/pc/`.
+- **A real desktop feel.** Drag icons anywhere on the desktop, move, resize and maximize windows, and right-click any app to pop it out into its own browser window.
 - **Pinned and verified.** Every upstream release is pinned to an exact version and SHA-256 checksum, and checked before it is unpacked.
 - **Keeps itself current.** Every Monday a workflow looks for new releases, upgrades each app, and runs the unit tests, a full build and a headless smoke check. Only then does it commit to `main`. Anything that needs a person lands in [one tidy issue](https://github.com/codemug/webpc/issues).
 - **One file to rule it.** [`catalog.yaml`](catalog.yaml) lists every app and every pin. Set `enabled: false` and the app is gone from the desktop and the build.
@@ -36,7 +37,7 @@
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/images/desktop.png" alt="The WebPC desktop with 27 app icons and the WebPC wordmark"><br><b>The desktop.</b> Windows, a taskbar, an app launcher, keyboard control, and light and dark themes.</td>
+    <td width="50%"><img src="docs/images/desktop.png" alt="The WebPC desktop with 27 app icons and the WebPC wordmark"><br><b>The desktop.</b> Drag icons anywhere (they snap to a grid and stay put), right-click an app to open it in a WebPC window, a new browser window or a tab, and use windows, a taskbar, an app launcher, full keyboard control, and light and dark themes.</td>
     <td width="50%"><img src="docs/images/terminal.png" alt="A Linux terminal showing an ASCII Mandelbrot set rendered by Python"><br><b>Terminal.</b> Real 32-bit Alpine Linux with Bash, Python and Node.js. It runs offline, and you can save and restore whole sessions.</td>
   </tr>
   <tr>

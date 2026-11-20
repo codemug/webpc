@@ -8,7 +8,9 @@ const short = text => (String(text).length > 90 ? `${String(text).slice(0, 87)}.
 export function reportMarkdown(plan, results = new Map()) {
   const key = e => `${e.app}#${e.index}#${e.name}`;
   const auto = plan.filter(e => e.auto && !e.error);
-  const manual = plan.filter(e => !e.auto && !e.error);
+  // One row per upgrade: a package pinned in several files (two onnxruntime-web files) is one decision.
+  const seen = new Set();
+  const manual = plan.filter(e => !e.auto && !e.error).filter(e => { const k = `${e.app}|${e.name}|${e.from}|${e.to}`; return !seen.has(k) && seen.add(k); });
   const errors = plan.filter(e => e.error);
   const lines = ['## WebPC upgrades', ''];
   if (!plan.length) return [...lines, 'Everything is up to date.', ''].join('\n');
