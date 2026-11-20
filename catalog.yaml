@@ -251,9 +251,9 @@ apps:
         upgrade: auto
       - type: cdn-file
         package: idb-keyval
-        version: 6.2.1
+        version: 6.3.0
         file: dist/index.js
-        sha256: 541fcbcdaeb77fa87250844fd40e1ed0faf79be2e7f29be1aefb8b9ca19f7ce5
+        sha256: 480f1d31a40b5720fbaaee44c1a21d83392c6cf9516672007813a1824483a058
         upgrade: auto
       - type: huggingface
         models:
