@@ -25,9 +25,10 @@
 
 ## Why WebPC
 
-- **Real apps, not mock-ups.** The Storytold Craft editors are full Rust and WebAssembly applications. The Terminal boots Alpine Linux in an x86 emulator. The Packet Viewer runs Wireshark's own dissectors. The AI Agent runs language models on your GPU.
+- **Real apps, not mock-ups.** The Storytold Craft editors are full Rust and WebAssembly applications. The Terminal boots Alpine Linux in an x86 emulator. The Packet Viewer runs Wireshark's own dissectors. Buddy, the built-in assistant, runs language models on your GPU.
 - **Nothing leaves your machine.** Opening an app makes zero requests to any other host. The smoke checks and browser tests assert this for each app. Your files stay in your browser's storage, and network tools only reach out when you press their button.
 - **No server.** WebPC is a static site: drop the build into any host and serve it at `/pc/`.
+- **Buddy, one click away.** A friendly on-device assistant slides in from the taskbar over the right third of the screen. It can read the files you grant, search the web and run code in the Terminal, and it keeps your chat while hidden.
 - **A real desktop feel.** Drag icons anywhere on the desktop, move, resize and maximize windows, and right-click any app to pop it out into its own browser window.
 - **Pinned and verified.** Every upstream release is pinned to an exact version and SHA-256 checksum, and checked before it is unpacked.
 - **Keeps itself current.** Every Monday a workflow looks for new releases, upgrades each app, and runs the unit tests, a full build and a headless smoke check. Only then does it commit to `main`. Anything that needs a person lands in [one tidy issue](https://github.com/codemug/webpc/issues).
@@ -49,7 +50,7 @@
     <td><img src="docs/images/packets.png" alt="Packet Viewer dissecting DNS, TCP and HTTP packets with a protocol tree and hex dump"><br><b>Packet Viewer.</b> Open pcap and pcapng captures with Wireshark 4.6 dissectors, compiled to WebAssembly.</td>
   </tr>
   <tr>
-    <td><img src="docs/images/aiagent.png" alt="AI Agent start screen with model picker and suggested prompts"><br><b>AI Agent.</b> On-device models with tools for files, the web, OCR, background removal and running code in the Terminal. An optional cloud model uses your own key.</td>
+    <td><img src="docs/images/buddy.png" alt="Buddy's panel open over the right third of the WebPC desktop, greeting with Hi, I'm Buddy"><br><b>Buddy.</b> Your on-device sidekick, opened from the taskbar. Local models with tools for files, the web, OCR, background removal and running code in the Terminal. An optional cloud model uses your own key.</td>
     <td><img src="docs/images/excalidraw.png" alt="Excalidraw diagram: catalog.yaml to weekly upgrader to latest-dist to your site"><br><b>Excalidraw.</b> Hand-drawn diagrams with its fonts served by WebPC, never fetched from a CDN. Pictured: how WebPC ships.</td>
   </tr>
 </table>
@@ -60,8 +61,9 @@
 |---|---|
 | **Office** | GridCraft (spreadsheets) · Docs · DeckCraft (presentations) · PDFCraft |
 | **Creative** | FilmCraft · EffectCraft · SoundCraft · BeepBox · PhotoCraft · LightCraft · VectorCraft · FigCraft · CADCraft · MaterialCraft · TextureCraft · Excalidraw |
+| **Built in** | Buddy, the assistant behind the taskbar's Buddy button (not a desktop app) |
 | **Developer** | Terminal (Alpine Linux) · Packet Viewer (Wireshark dissectors) · VS Code (opens vscode.dev) |
-| **Utilities** | AI Agent · Files · Media Player · SQLiteViz · CyberChef · Network Tools (DNS, RDAP, global ping, subnets, password strength, age encryption) · VERT (opens vert.sh) |
+| **Utilities** | Files · Media Player · SQLiteViz · CyberChef · Network Tools (DNS, RDAP, global ping, subnets, password strength, age encryption) · VERT (opens vert.sh) |
 
 ## How it ships
 
@@ -114,7 +116,7 @@ Each entry under `apps:` has a desktop entry (`title`, `category`, `keywords`, `
 | `npm-tarball` | version and SRI integrity | wiregasm (Packet Viewer) |
 | `cdn-file` | package, version, file and SHA-256 | Transformers.js, Readability |
 | `alpine` | the Linux guest's package lock | Terminal |
-| `huggingface` | model repo and commit | AI Agent models |
+| `huggingface` | model repo and commit | Buddy's models |
 
 Icons come from upstream wherever the app ships one: the Storytold apps' own icon set (re-pinned by the upgrader whenever the tag moves), the icons inside the SQLiteViz, BeepBox and CyberChef releases, and pinned files for Excalidraw and VERT. WebPC's own apps keep its gradient tiles.
 

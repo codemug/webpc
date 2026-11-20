@@ -57,7 +57,7 @@ function follow(wasNear) { if (wasNear) $('conversation').scrollTop = $('convers
 function message(role, content = '') {
   const near = nearBottom(); $('welcome').hidden = true;
   const root = document.createElement('article'); root.className = `message ${role}`;
-  const label = document.createElement('div'); label.className = 'message-label'; label.textContent = role === 'user' ? 'You' : 'AI Agent';
+  const label = document.createElement('div'); label.className = 'message-label'; label.textContent = role === 'user' ? 'You' : 'Buddy';
   const body = document.createElement('div'); body.className = 'message-body'; body.textContent = content;
   root.append(label, body); $('messages').append(root); follow(near); return body;
 }
@@ -182,12 +182,12 @@ function renderFileGrants() {
 }
 $('files-grant').addEventListener('click', async () => {
   error('');
-  const picked = await pickFile({ select: 'any', title: 'Give the agent access to…' });
+  const picked = await pickFile({ select: 'any', title: 'Give Buddy access to…' });
   if (!picked) return;
   const grant = picked.name != null ? { root: picked.path, kind: 'file' } : { root: picked.path, kind: 'folder' };
   if (fileGrants.some((g) => g.root === grant.root && g.kind === grant.kind)) { status('Already granted.'); return; }
   fileGrants.push(grant); applyFileGates(); renderFileGrants();
-  status(`Granted ${grant.kind} "${grant.root || '(Files root)'}". ${isCloud(selected) ? 'Note: with a cloud model, file contents the agent reads are sent to that provider.' : ''}`);
+  status(`Granted ${grant.kind} "${grant.root || '(Files root)'}". ${isCloud(selected) ? 'Note: with a cloud model, file contents Buddy reads are sent to that provider.' : ''}`);
 });
 $('files-build').addEventListener('click', async () => {
   error('');
@@ -538,6 +538,11 @@ try { theme(localStorage.getItem('theme') ?? (matchMedia('(prefers-color-scheme:
 addEventListener('message', event => { if (event.origin === location.origin && event.source === parent && event.data?.type === 'pc:theme') theme(event.data.theme); });
 document.addEventListener('pointerdown', () => { if (parent !== window) parent.postMessage({ type: 'pc:focus', appId: 'ai-agent' }, location.origin); }, true);
 if (parent !== window) parent.postMessage({ type: 'pc:ready', appId: 'ai-agent' }, location.origin);
+// In the desktop panel, the header's close button closes it (the panel has no chrome of its own).
+if (parent !== window) { $('panel-close').hidden = false; $('panel-close').addEventListener('click', () => parent.postMessage({ type: 'pc:panel-close', appId: 'ai-agent' }, location.origin)); }
+// Escape closes the desktop panel; skip while a dialog is open (it closes itself), and never
+// preventDefault, so Escape still reaches dialogs and the Stop control.
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && parent !== window && !document.querySelector('dialog[open]')) parent.postMessage({ type: 'pc:panel-close', appId: 'ai-agent' }, location.origin); });
 const unsaved = () => Boolean(store.pending) || (session.savedRevision < session.revision && session.exportedRevision !== session.revision);
 window.pcFlush = () => {
   if (!initialized) { error('Wait for stored data to finish opening before closing.'); return false; }

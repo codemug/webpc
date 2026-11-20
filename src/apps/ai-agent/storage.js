@@ -11,7 +11,7 @@ export const LEGACY_MODEL_KEY = 'voice-agent:model';
 export const MAX_MESSAGE_CHARS = 100_000;
 
 export function validateConversation(value) {
-  if (!value || !Array.isArray(value.history) || value.history.length > 2000 || (value.summary != null && typeof value.summary !== 'string')) throw new Error('This is not a valid AI Agent conversation.');
+  if (!value || !Array.isArray(value.history) || value.history.length > 2000 || (value.summary != null && typeof value.summary !== 'string')) throw new Error('This is not a valid Buddy conversation.');
   for (const message of value.history) {
     if (!message || !['user', 'assistant', 'tool'].includes(message.role) || typeof message.content !== 'string' || message.content.length > MAX_MESSAGE_CHARS) throw new Error('The conversation contains an invalid message.');
     if (message.at != null && (typeof message.at !== 'number' || !Number.isFinite(message.at))) throw new Error('Invalid message time.');

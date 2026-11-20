@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { validateExecRequest, buildExecCommand, findSentinel, parseExecResult, parseExecPartial, stripAnsi, isAtShellPrompt, toSentBytes, findOwnLine, cutStart, randomNonce, base64Encode, visibleCode, handleExecChannelMessage, MAX_OUTPUT, MAX_TIMEOUT_MS, DEFAULT_TIMEOUT_MS } from '../src/scripts/pc/apps/terminal-exec.mjs';
 
-const req = { type: 'exec-request', id: 'r1', from: 'AI Agent', lang: 'sh', code: 'echo hi', timeoutMs: DEFAULT_TIMEOUT_MS };
+const req = { type: 'exec-request', id: 'r1', from: 'Buddy', lang: 'sh', code: 'echo hi', timeoutMs: DEFAULT_TIMEOUT_MS };
 const nonce = '0123456789abcdef';
 
 test('request validation: shape, caps, and the default timeout', () => {
-  assert.deepEqual(validateExecRequest({ ...req, timeoutMs: undefined }), { ok: true, id: 'r1', from: 'AI Agent', lang: 'sh', code: 'echo hi', timeoutMs: DEFAULT_TIMEOUT_MS });
+  assert.deepEqual(validateExecRequest({ ...req, timeoutMs: undefined }), { ok: true, id: 'r1', from: 'Buddy', lang: 'sh', code: 'echo hi', timeoutMs: DEFAULT_TIMEOUT_MS });
   assert.equal(validateExecRequest({ ...req }).ok, true);
   assert.equal(validateExecRequest({ ...req, timeoutMs: MAX_TIMEOUT_MS }).ok, true, 'the cap itself is allowed');
   for (const bad of [

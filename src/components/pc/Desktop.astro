@@ -1,6 +1,6 @@
 ---
 import AppIcon from './AppIcon.astro';
-import { apps, categories } from '../../scripts/pc/registry.mjs';
+import { apps, buddy, categories } from '../../scripts/pc/registry.mjs';
 ---
 <div class="pc-shell" data-pc>
   <header class="pc-topbar">
@@ -25,6 +25,7 @@ import { apps, categories } from '../../scripts/pc/registry.mjs';
   </main>
   <footer class="pc-taskbar" aria-label="Taskbar">
     <button type="button" class="pc-launcher-button" aria-controls="pc-launcher" aria-expanded="false" data-launcher-toggle><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h7v7H3zm11 0h7v7h-7zM3 14h7v7H3zm11 0h7v7h-7z" fill="currentColor"/></svg><span>Apps</span></button>
+    {buddy ? <button type="button" class="pc-buddy-button" data-buddy-toggle aria-controls="pc-buddy" aria-expanded="false" title="Buddy"><img src={buddy.icon} alt="" width="24" height="24"><span>Buddy</span></button> : <Fragment />}
     <span class="pc-taskbar-divider" aria-hidden="true"></span>
     <div class="pc-tasks" data-tasks aria-label="Open windows"></div>
     <button type="button" class="pc-show-desktop" data-show-desktop title="Minimize all windows" aria-label="Show desktop"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg></button>
@@ -39,6 +40,7 @@ import { apps, categories } from '../../scripts/pc/registry.mjs';
     </div>
     <div class="pc-launcher-footer"><span>Runs in your browser</span><a href="/">Back to site ↗</a></div>
   </section>
+  {buddy ? <aside id="pc-buddy" class="pc-buddy" aria-label="Buddy" inert><div class="pc-buddy-body"></div></aside> : <Fragment />}
   <p class="pc-sr-only" data-announcement role="status" aria-live="polite"></p>
   <noscript><div class="pc-no-script">WebPC needs JavaScript to open its apps. <a href="/pc/apps/gridcraft/">Open GridCraft directly</a> or <a href="/">return to the site</a>.</div></noscript>
 </div>
@@ -48,7 +50,7 @@ import { apps, categories } from '../../scripts/pc/registry.mjs';
     <h2>A little desktop.<br/>Right in your browser.</h2>
     <p>Open an app and make something. Find your apps in the launcher, then arrange your workspace however you like.</p>
     <h3>Make yourself at home</h3>
-    <dl><div><dt>Open an app</dt><dd>Double-click its desktop icon, press Enter, or use Apps. On touch screens, tap once.</dd></div><div><dt>Arrange your windows</dt><dd>Drag a title bar or its bottom-right corner. Focus a title bar and use arrow keys to move; Shift + arrows resizes. Double-click the title bar to maximize.</dd></div><div><dt>Pick up where you left off</dt><dd>Minimize keeps an app running. Its taskbar button brings it back.</dd></div></dl>
+    <dl><div><dt>Open an app</dt><dd>Double-click its desktop icon, press Enter, or use Apps. On touch screens, tap once.</dd></div><div><dt>Ask Buddy</dt><dd>Click Buddy at the bottom left of the taskbar. It opens beside your windows and keeps your chat while it is hidden.</dd></div><div><dt>Arrange your windows</dt><dd>Drag a title bar or its bottom-right corner. Focus a title bar and use arrow keys to move; Shift + arrows resizes. Double-click the title bar to maximize.</dd></div><div><dt>Pick up where you left off</dt><dd>Minimize keeps an app running. Its taskbar button brings it back.</dd></div></dl>
     <h3>Your work stays here</h3>
     <p>Apps that support local saving keep work in this browser on this device. Check each app’s help for its save and export options. Clearing site data or using a different browser won’t carry your work over. Export important work as a backup.</p>
     <a class="pc-about-link" href="/">Back to Usman’s site ↗</a>

@@ -1,4 +1,4 @@
-import { apps } from './registry.mjs';
+import { apps, buddy } from './registry.mjs';
 import { filterApps } from './app-search.mjs';
 import { reduceDesktop, windowRect, MOBILE_WIDTH } from './window-state.mjs';
 import { showMenu } from './context-menu.mjs';
@@ -186,6 +186,45 @@ if (shell) {
     button.addEventListener('pointerup', () => endIconDrag(button, true));
     button.addEventListener('pointercancel', () => endIconDrag(button, false));
   };
+
+  // --- Buddy side panel ----------------------------------------------------------------
+  // The panel app (registry `buddy`) is not a window: the taskbar button toggles a
+  // fixed right-third aside. The iframe is created once, on first open, with the same
+  // attributes the window manager gives app iframes (loadApp); closing only hides the
+  // panel, so the chat and any loaded model survive. The frame is never in `views`, so
+  // the window message path ignores it; its own messages are handled below.
+  const buddyButton = shell.querySelector('[data-buddy-toggle]');
+  const buddyPanel = shell.querySelector('#pc-buddy');
+  let buddyFrame = null;
+  const isBuddyOpen = () => buddyPanel?.dataset.open === 'true';
+  const ensureBuddyFrame = () => {
+    if (buddyFrame?.isConnected) return buddyFrame;
+    const frame = document.createElement('iframe');
+    frame.title = 'Buddy';
+    frame.className = 'pc-app-frame';
+    frame.src = buddy.src;
+    buddyPanel.querySelector('.pc-buddy-body').append(frame);
+    return (buddyFrame = frame);
+  };
+  const setBuddyOpen = open => {
+    buddyPanel.dataset.open = String(open);
+    buddyButton.setAttribute('aria-expanded', String(open));
+    buddyPanel.toggleAttribute('inert', !open);
+    if (open) ensureBuddyFrame();
+  };
+  const openBuddy = () => { setBuddyOpen(true); buddyFrame.focus(); };
+  const closeBuddy = () => { if (!isBuddyOpen()) return; setBuddyOpen(false); buddyButton.focus(); };
+  if (buddyButton && buddyPanel) {
+    // The panel ends at the taskbar's top edge, so Buddy's composer is never under the taskbar.
+    const taskbar = shell.querySelector('.pc-taskbar');
+    new ResizeObserver(() => shell.style.setProperty('--pc-taskbar-height', `${taskbar.offsetHeight}px`)).observe(taskbar);
+    buddyButton.addEventListener('click', () => isBuddyOpen() ? closeBuddy() : openBuddy());
+    window.addEventListener('message', event => {
+      if (event.origin !== location.origin || !buddyFrame || event.source !== buddyFrame.contentWindow) return;
+      if (event.data?.type === 'pc:ready') buddyFrame.contentWindow.postMessage({ type: 'pc:theme', theme: document.documentElement.dataset.theme ?? 'dark' }, location.origin);
+      if (event.data?.type === 'pc:panel-close') closeBuddy();
+    });
+  }
 
   function dispatch(action) {
     state = reduceDesktop(state, action, bounds());
@@ -433,7 +472,8 @@ if (shell) {
     if (!launcher.hidden && !launcher.contains(event.target) && !launcherToggle.contains(event.target)) toggleLauncher(false);
   });
   document.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && !launcher.hidden) { toggleLauncher(false); launcherToggle.focus(); }
+    if (event.key !== 'Escape') return; // Escape inside Buddy arrives as pc:panel-close
+    if (!launcher.hidden) { toggleLauncher(false); launcherToggle.focus(); }
   });
   shell.querySelector('[data-show-desktop]').addEventListener('click', () => {
     state.windows.forEach(win => { state = reduceDesktop(state, { type: 'minimize', id: win.id }, bounds()); });
@@ -457,6 +497,7 @@ if (shell) {
     document.documentElement.dataset.theme = theme;
     try { localStorage.setItem('theme', theme); } catch {}
     for (const view of views.values()) view.frame?.contentWindow?.postMessage({ type: 'pc:theme', theme }, location.origin);
+    if (buddyFrame?.isConnected) buddyFrame.contentWindow.postMessage({ type: 'pc:theme', theme }, location.origin);
   });
   const clock = shell.querySelector('[data-clock]');
   const updateClock = () => {

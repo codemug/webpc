@@ -4,6 +4,7 @@
 #   upgrade: auto    -> the scheduled upgrader may bump this source (tests and a smoke check must pass).
 #   upgrade: manual  -> the upgrader only reports newer releases (hand-written adapters, AI models).
 #   folder: Games    -> the app sits in that desktop folder instead of on the desktop (the launcher lists it as usual)
+#   kind: panel      -> not a desktop app: the taskbar's bottom-left button opens it in a side panel (Buddy). At most one.
 #   icon             -> the app's upstream icon, served at /pc/icons/<id> (apps without one keep WebPC's tile):
 #                       { from: repo, path, sha256 }  file in the app's GitHub-release repo at its tag (re-pinned on upgrade)
 #                       { from: release, path }       file inside the app's prepared release
@@ -231,14 +232,15 @@ apps:
         upgrade: auto
   - id: ai-agent
     enabled: true
-    title: AI Agent
+    title: Buddy
     category: Utilities
-    keywords: [ ai, chat, assistant, local, model ]
-    description: A private text workspace with an on-device model.
+    keywords: [ buddy, ai, chat, assistant, local, model ]
+    description: Your on-device sidekick, one click away in the taskbar.
     src: /pc/apps/ai-agent/
-    kind: iframe
-    width: 1000
-    height: 740
+    kind: panel
+    icon:
+      url: https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Robot/3D/robot_3d.png
+      sha256: 3f9b5a00b53c8bddda36b6a3f68d00718d9d7d8c04f986a3248e55ae93a7961b
     sources:
       - type: npm
         package: "@anthropic-ai/sdk"

@@ -11,7 +11,7 @@ const HERE = fileURLToPath(new URL('../../', import.meta.url));
 export const ROOT = existsSync(`${HERE}catalog.yaml`) ? HERE : `${process.cwd()}/`;
 const DESKTOP_KEYS = ['id', 'title', 'category', 'folder', 'keywords', 'description', 'src', 'kind', 'loadTimeout', 'width', 'height'];
 const APP_KEYS = new Set([...DESKTOP_KEYS, 'enabled', 'icon', 'sources']);
-const KINDS = new Set(['iframe', 'external', 'about']);
+const KINDS = new Set(['iframe', 'external', 'about', 'panel']);
 const HEX64 = /^[0-9a-f]{64}$/;
 // Keys each source type must have (plus `type`, `upgrade`); optional keys are listed after `|`.
 const SOURCE_KEYS = {
@@ -60,7 +60,7 @@ function appErrors(app) {
   for (const key of ['title', 'category', 'description']) if (!isText(app[key])) errors.push(`${id}: ${key} is required`);
   if (!Array.isArray(app.keywords) || !app.keywords.every(isText)) errors.push(`${id}: keywords must be a list of words`);
   if (!KINDS.has(app.kind)) errors.push(`${id}: kind must be one of ${[...KINDS].join(', ')}`);
-  if (app.kind === 'iframe' && app.src !== `/pc/apps/${id}/`) errors.push(`${id}: src must be /pc/apps/${id}/`);
+  if ((app.kind === 'iframe' || app.kind === 'panel') && app.src !== `/pc/apps/${id}/`) errors.push(`${id}: src must be /pc/apps/${id}/`);
   if (app.kind === 'external' && !String(app.src).startsWith('https://')) errors.push(`${id}: src must be an https URL`);
   for (const key of ['loadTimeout', 'width', 'height']) if (key in app && !isPositiveInt(app[key])) errors.push(`${id}: ${key} must be a positive whole number`);
   if ('folder' in app && !/^[A-Z][A-Za-z0-9 ]{0,29}$/.test(String(app.folder))) errors.push(`${id}: folder must be a short name starting with a capital letter (e.g. Games)`);
@@ -115,6 +115,8 @@ export function validateCatalog(catalog) {
     seen.add(app?.id);
     errors.push(...appErrors(app));
   }
+  const panels = catalog.apps.filter(a => a?.kind === 'panel').map(a => a.id);
+  if (panels.length > 1) errors.push(`only one app may be kind: panel (the taskbar has one side panel), found ${panels.join(', ')}`);
   return errors;
 }
 

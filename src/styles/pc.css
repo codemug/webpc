@@ -79,7 +79,6 @@ body { margin: 0; }
 .pc-icon-packets { --from: #64748b; --to: #1e293b; }
 .pc-icon-sqliteviz { --from: #a78bfa; --to: #6d28d9; }
 .pc-icon-cyberchef { --from: #c084fc; --to: #9333ea; }
-.pc-icon-ai-agent { --from: #2dd4bf; --to: #115e59; }
 .pc-icon-vert { --from: #4ade80; --to: #15803d; }
 .pc-icon-files { --from: #8b5cf6; --to: #4c1d95; }
 .pc-icon-media { --from: #10b981; --to: #065f46; }
@@ -118,6 +117,9 @@ body { margin: 0; }
 .pc-launcher-button { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 9px; height: 44px; padding: 0 14px; font-size: 12px !important; font-weight: 600 !important; border-radius: 6px; background: var(--color-surface-2); }
 .pc-launcher-button svg { width: 18px; height: 18px; color: var(--color-accent); }
 .pc-launcher-button[aria-expanded="true"] { background: var(--pc-selection); box-shadow: inset 0 0 0 1px var(--color-accent-muted); }
+.pc-buddy-button { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 9px; height: 44px; padding: 0 14px; font-size: 12px !important; font-weight: 600 !important; border-radius: 6px; background: var(--color-surface-2); }
+.pc-buddy-button img { width: 24px; height: 24px; border-radius: 6px; object-fit: cover; }
+.pc-buddy-button[aria-expanded="true"] { background: var(--pc-selection); box-shadow: inset 0 0 0 1px var(--color-accent-muted); }
 .pc-taskbar-divider { width: 1px; align-self: stretch; margin: 6px 2px; background: var(--color-border); }
 .pc-tasks { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; overflow-x: auto; }
 .pc-task { flex: none; position: relative; display: flex; align-items: center; gap: 6px; height: 44px; padding: 0 12px; font-size: 11px !important; background: transparent; border-radius: 6px; }
@@ -130,6 +132,12 @@ body { margin: 0; }
 .pc-show-desktop { display: grid; place-items: center; min-height: 44px; min-width: 44px; background: transparent; color: var(--color-text-muted) !important; }
 .pc-show-desktop svg { width: 20px; height: 20px; }
 .pc-clock { min-width: 72px; text-align: center; font: 10px var(--font-mono); white-space: nowrap; color: var(--color-text-muted); }
+/* Buddy: fixed right-third panel from below the top bar (its theme and Help stay usable) down to the taskbar
+   (the taskbar's higher z-index keeps it and the Buddy button above the panel).
+   Closed = slid off-screen, hidden and inert; only transform animates. */
+.pc-buddy { position: fixed; top: 48px; right: 0; bottom: var(--pc-taskbar-height, 64px); z-index: 90; width: 33.333vw; min-width: 360px; display: flex; flex-direction: column; background: var(--color-surface); color: var(--color-text); border-left: 1px solid var(--color-border-strong); box-shadow: -12px 0 40px var(--pc-window-shadow); transform: translateX(100%); visibility: hidden; transition: transform 200ms ease-out, visibility 0s linear 200ms; }
+.pc-buddy[data-open="true"] { transform: none; visibility: visible; transition: transform 200ms ease-out; }
+.pc-buddy-body { flex: 1; min-height: 0; }
 .pc-launcher { position: absolute; z-index: 101; left: 12px; bottom: calc(76px + env(safe-area-inset-bottom)); width: min(420px, calc(100% - 24px)); max-height: calc(100dvh - 140px); display: flex; flex-direction: column; border: 1px solid var(--color-border-strong); border-radius: 12px; box-shadow: 0 12px 50px var(--pc-window-shadow); background: var(--color-surface); color: var(--color-text); overflow: clip; }
 .pc-launcher-filters { display: flex; gap: 8px; padding: 0 16px 12px; }
 .pc-launcher-filters input, .pc-launcher-filters select { font: 12px var(--font-sans); background: var(--color-surface-2); color: var(--color-text); border: 1px solid var(--color-border-strong); border-radius: 5px; min-height: 42px; padding: 8px; min-width: 0; }
@@ -186,6 +194,9 @@ body { margin: 0; }
   .pc-desktop-hint { left: 20px; max-width: calc(100% - 40px); font-size: 9px; }
   .pc-taskbar { gap: 3px; padding-inline: 6px; }
   .pc-launcher-button { padding: 0 10px; }
+  .pc-buddy-button { padding: 0 10px; }
+  .pc-buddy-button span { display: none; }
+  .pc-buddy { width: 100vw; min-width: 0; }
   .pc-task { padding: 0 7px; }
   .pc-clock { min-width: 58px; font-size: 9px; }
   .pc-show-desktop { min-width: 44px; }
@@ -193,4 +204,4 @@ body { margin: 0; }
   .pc-window-title { cursor: default !important; }
   .pc-about { padding: 24px; }
 }
-@media (prefers-reduced-motion: reduce) { .pc-loading-mark { animation-duration: 2s; } }
+@media (prefers-reduced-motion: reduce) { .pc-loading-mark { animation-duration: 2s; } .pc-buddy { transition: none; } }
