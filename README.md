@@ -84,13 +84,17 @@ flowchart LR
 
 ## The catalog
 
-Each entry under `apps:` has a desktop entry (`title`, `category`, `keywords`, `description`, `src`, `kind`, window size), an `enabled` flag, and its `sources`:
+Each entry under `apps:` has a desktop entry (`title`, `category`, `keywords`, `description`, `src`, `kind`, window size), an `enabled` flag, an optional upstream `icon`, and its `sources`:
 
 ```yaml
 - id: gridcraft
   enabled: true
   title: GridCraft
   category: Office
+  icon:                     # the app's own icon, pinned and served by WebPC
+    from: repo              # a file in the app's repo at its release tag
+    path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.gridcraft.png
+    sha256: 3d8cb180ae9ea3691051e8d2309e79baf6f69e0a86276bf50265b5867ff26e41
   sources:
     - type: github-release
       repo: storytold/gridcraft
@@ -109,6 +113,8 @@ Each entry under `apps:` has a desktop entry (`title`, `category`, `keywords`, `
 | `cdn-file` | package, version, file and SHA-256 | Transformers.js, Readability |
 | `alpine` | the Linux guest's package lock | Terminal |
 | `huggingface` | model repo and commit | AI Agent models |
+
+Icons come from upstream wherever the app ships one: the Storytold apps' own icon set (re-pinned by the upgrader whenever the tag moves), the icons inside the SQLiteViz, BeepBox and CyberChef releases, and pinned files for Excalidraw and VERT. WebPC's own apps keep its gradient tiles.
 
 `npm run catalog` validates the file, naming the app and field of every defect, and generates the desktop registry. `npm test` and `npm run build` run it first.
 
