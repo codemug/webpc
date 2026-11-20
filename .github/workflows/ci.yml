@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write # publish the latest-dist release from main
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      # Pinned downloads (release zips, npm tarballs, CDN files) keyed by the catalog.
+      - uses: actions/cache@v4
+        with:
+          path: node_modules/.cache/webpc
+          key: webpc-downloads-${{ hashFiles('catalog.yaml', 'scripts/pc/linux/packages.lock.json') }}
+          restore-keys: webpc-downloads-
+
+      # --ignore-scripts blocks postinstall hooks, the main npm supply-chain attack vector.
+      - name: Install dependencies (no postinstall scripts)
+        run: npm ci --ignore-scripts
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # The browser suite (npm run test:browser) runs locally; it is not part of CI.
+
+      - name: Publish dist for the host site
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/release/publish-dist.sh

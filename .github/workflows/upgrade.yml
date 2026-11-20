@@ -1,0 +1,90 @@
+name: Upgrade apps
+
+on:
+  schedule:
+    - cron: "0 3 * * 1" # Mondays 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "Upgrade only this app id (empty: all)"
+        required: false
+
+permissions:
+  contents: write # commit upgrades to main and publish latest-dist
+  issues: write # keep the "Upgrades that need a human" issue current
+
+concurrency:
+  group: upgrade
+  cancel-in-progress: false
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: actions/cache@v4
+        with:
+          path: node_modules/.cache/webpc
+          key: webpc-downloads-${{ hashFiles('catalog.yaml', 'scripts/pc/linux/packages.lock.json') }}
+          restore-keys: webpc-downloads-
+
+      - name: Install dependencies (no postinstall scripts)
+        run: npm ci --ignore-scripts
+
+      # The upgrader smoke-checks each upgraded app in Chromium before committing it.
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Upgrade, test, build and smoke-check each app
+        id: upgrade
+        continue-on-error: true # still push the apps that passed
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ONLY: ${{ inputs.only }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -n "$ONLY" ]; then npm run upgrade -- --only "$ONLY"; else npm run upgrade; fi
+
+      - name: Push the upgrades
+        id: push
+        run: |
+          if [ "$(git rev-list --count origin/main..HEAD)" -gt 0 ]; then
+            git pull --rebase origin main
+            git push origin HEAD:main
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Pushes made with the workflow token start no other workflow, so publish here.
+      - name: Build and publish dist for the host site
+        if: steps.push.outputs.pushed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          npm run build
+          bash scripts/release/publish-dist.sh
+
+      - name: Update the "Upgrades that need a human" issue
+        if: always() && hashFiles('upgrade-report.md') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="Upgrades that need a human"
+          number=$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[0].number // empty')
+          if grep -q -E "Needs a human|reverted|Could not check" upgrade-report.md; then
+            if [ -n "$number" ]; then gh issue edit "$number" --body-file upgrade-report.md
+            else gh issue create --title "$title" --body-file upgrade-report.md; fi
+          elif [ -n "$number" ]; then
+            gh issue close "$number" --comment "Everything that needed a human is resolved as of $(git rev-parse --short HEAD)."
+          fi
+
+      - name: Fail the run if an upgrade was reverted
+        if: steps.upgrade.outcome == 'failure'
+        run: exit 1
