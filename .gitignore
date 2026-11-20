@@ -32,3 +32,6 @@ src/scripts/pc/registry.generated.json
 # Upgrader output
 upgrade-plan.json
 upgrade-report.md
+
+# Upstream app icons placed by scripts/catalog/icons.mjs (pinned in catalog.yaml)
+public/pc/icons/

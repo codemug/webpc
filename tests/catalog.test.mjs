@@ -45,7 +45,7 @@ test('a disabled app leaves the desktop registry; the others keep their order an
   const entries = registryEntries(catalog);
   assert.equal(entries.some(e => e.id === 'beepbox'), false);
   assert.equal(entries.length, catalog.apps.length - 1);
-  assert.deepEqual(entries[0], { id: 'gridcraft', title: 'GridCraft', category: 'Office', keywords: byId(catalog, 'gridcraft').keywords, description: byId(catalog, 'gridcraft').description, src: '/pc/apps/gridcraft/', kind: 'iframe', loadTimeout: 75000, width: 1180, height: 760 });
+  assert.deepEqual(entries[0], { id: 'gridcraft', title: 'GridCraft', category: 'Office', keywords: byId(catalog, 'gridcraft').keywords, description: byId(catalog, 'gridcraft').description, src: '/pc/apps/gridcraft/', kind: 'iframe', loadTimeout: 75000, width: 1180, height: 760, icon: '/pc/icons/gridcraft.png' });
   assert.equal('sources' in entries[0] || 'enabled' in entries[0], false);
   assert.equal(isEnabled(catalog, 'beepbox'), false);
   assert.equal(isEnabled(catalog, 'gridcraft'), true);
@@ -57,4 +57,15 @@ test('appSources filters an app\'s sources by type and package', () => {
   assert.equal(appSources(catalog, 'gridcraft', 'github-release')[0].repo, 'storytold/gridcraft');
   assert.equal(appSources(catalog, 'terminal', 'npm', 'v86')[0].version, byId(catalog, 'terminal').sources[0].version);
   assert.deepEqual(appSources(catalog, 'files'), []);
+});
+
+test('icons: each form validates, and the registry carries the served icon URL', () => {
+  assert.match(errorsOf(c => { byId(c, 'gridcraft').icon.sha256 = 'x'; }).join('\n'), /gridcraft: icon\.sha256 must be 64 lowercase hex/);
+  assert.match(errorsOf(c => { byId(c, 'sqliteviz').icon.path = '../escape.png'; }).join('\n'), /sqliteviz: icon\.path must be a relative path without \.\./);
+  assert.match(errorsOf(c => { byId(c, 'vert').icon.url = 'http://vert.sh/x.png'; }).join('\n'), /vert: icon\.url must be an https URL/);
+  assert.match(errorsOf(c => { byId(c, 'files').icon = { from: 'repo', path: 'a.png', sha256: 'a'.repeat(64) }; }).join('\n'), /files: icon: from: repo needs a github-release source/);
+  assert.match(errorsOf(c => { byId(c, 'beepbox').icon.path = 'icon.gif'; }).join('\n'), /beepbox: icon must be a \.png, \.jpg or \.svg file/);
+  const entries = registryEntries(base());
+  assert.equal(entries.find(e => e.id === 'gridcraft').icon, '/pc/icons/gridcraft.png');
+  assert.equal('icon' in entries.find(e => e.id === 'files'), false, 'WebPC-native apps keep their own tile');
 });

@@ -1,9 +1,12 @@
 ---
-const { id } = Astro.props;
-// The tile colour comes from CSS (.pc-icon-<id> --from/--to on .pc-app-icon); the
-// SVG draws only the white glyph. No defs/ids: one icon renders several times per page.
+const { id, icon } = Astro.props;
+// With an upstream icon (registry `icon` field) the tile is an <img>; without it, the
+// SVG tile below. The tile colour comes from CSS (.pc-icon-<id> --from/--to on .pc-app-icon);
+// the SVG draws only the white glyph. No defs/ids: one icon renders several times per page.
 ---
-<svg class:list={['pc-app-icon', `pc-icon-${id}`]} viewBox="0 0 64 64" fill="none" aria-hidden="true">
+{icon
+  ? <img class:list={['pc-app-icon', 'pc-app-icon-img', `pc-icon-${id}`]} src={icon} alt="" aria-hidden="true" decoding="async" draggable="false" />
+  : <svg class:list={['pc-app-icon', `pc-icon-${id}`]} viewBox="0 0 64 64" fill="none" aria-hidden="true">
   {id === 'gridcraft' ? <g>
     <rect x="9" y="12" width="46" height="40" rx="4" stroke="currentColor" stroke-width="3"/><path d="M9 29h46M9 42h46M32 12v40" stroke="currentColor" stroke-width="2.5"/>
   </g> : id === 'docs' ? <g>
@@ -61,4 +64,4 @@ const { id } = Astro.props;
   </g> : <g>
     <rect x="6" y="9" width="52" height="37" rx="5" stroke="currentColor" stroke-width="2"/><path d="M24 55h16M32 46v9" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><path d="M24 27h16M32 19v16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
   </g>}
-</svg>
+</svg>}

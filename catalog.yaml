@@ -3,7 +3,11 @@
 #   enabled: false   -> the app is not prepared, not on the desktop and ships no bytes.
 #   upgrade: auto    -> the scheduled upgrader may bump this source (tests and a smoke check must pass).
 #   upgrade: manual  -> the upgrader only reports newer releases (hand-written adapters, AI models).
-# Field order per app: desktop entry (title ... height), then sources.
+#   icon             -> the app's upstream icon, served at /pc/icons/<id> (apps without one keep WebPC's tile):
+#                       { from: repo, path, sha256 }  file in the app's GitHub-release repo at its tag (re-pinned on upgrade)
+#                       { from: release, path }       file inside the app's prepared release
+#                       { url, sha256 }               fixed https URL
+# Field order per app: desktop entry (title ... height), icon, then sources.
 apps:
   - id: gridcraft
     enabled: true
@@ -16,6 +20,10 @@ apps:
     loadTimeout: 75000
     width: 1180
     height: 760
+    icon:
+      from: repo
+      path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.gridcraft.png
+      sha256: 3d8cb180ae9ea3691051e8d2309e79baf6f69e0a86276bf50265b5867ff26e41
     sources:
       - type: github-release
         repo: storytold/gridcraft
@@ -59,6 +67,10 @@ apps:
     loadTimeout: 75000
     width: 1180
     height: 760
+    icon:
+      from: repo
+      path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.deckcraft.png
+      sha256: 66343901b993332bceadf13277e6a028b80b2fb3a1e215b841c855be731e5130
     sources:
       - type: github-release
         repo: storytold/deckcraft
@@ -108,6 +120,9 @@ apps:
     loadTimeout: 45000
     width: 1180
     height: 720
+    icon:
+      from: release
+      path: Logo512x512.png
     sources:
       - type: github-release
         repo: lana-k/sqliteviz
@@ -149,6 +164,9 @@ apps:
     loadTimeout: 55000
     width: 1180
     height: 720
+    icon:
+      from: release
+      path: images/cyberchef-128x128.png
     sources:
       - type: github-release
         repo: gchq/CyberChef
@@ -276,6 +294,10 @@ apps:
     loadTimeout: 75000
     width: 1180
     height: 760
+    icon:
+      from: repo
+      path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.lightcraft.png
+      sha256: 57e58898ea1a1012ebafe1472e2438db2f02886a0e022c6abf88bcb71b690fc3
     sources:
       - type: github-release
         repo: storytold/lightcraft
@@ -295,6 +317,10 @@ apps:
     loadTimeout: 75000
     width: 1180
     height: 760
+    icon:
+      from: repo
+      path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.figcraft.png
+      sha256: 6969435ac6da662c202e8150bdf54462ce4b37c9e6dd45dc93c3a19ccf15b995
     sources:
       - type: github-release
         repo: storytold/figcraft
@@ -314,6 +340,10 @@ apps:
     loadTimeout: 75000
     width: 1180
     height: 760
+    icon:
+      from: repo
+      path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.pdfcraft.png
+      sha256: 47094c09fb77eb35d465eee46445626a4d78c7ef50629cc7d04a602de3e144e9
     sources:
       - type: github-release
         repo: storytold/pdfcraft
@@ -333,6 +363,10 @@ apps:
     loadTimeout: 75000
     width: 1180
     height: 760
+    icon:
+      from: repo
+      path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.soundcraft.png
+      sha256: fd6fa6a938fb734990218e23523354762b601c3f06a9b93e77a5efbdae2b0fe6
     sources:
       - type: github-release
         repo: storytold/soundcraft
@@ -352,6 +386,9 @@ apps:
     loadTimeout: 45000
     width: 1180
     height: 760
+    icon:
+      from: release
+      path: icon_maskable_192.png
     sources:
       - type: github-release
         repo: johnnesky/beepbox
@@ -374,6 +411,10 @@ apps:
     loadTimeout: 75000
     width: 1280
     height: 800
+    icon:
+      from: repo
+      path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.filmcraft.png
+      sha256: f07f1390c0467ab7e357f7bc102658caed40ec931e3614b255031c6adf555a2b
     sources:
       - type: github-release
         repo: storytold/filmcraft
@@ -393,6 +434,10 @@ apps:
     loadTimeout: 75000
     width: 1280
     height: 800
+    icon:
+      from: repo
+      path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.cadcraft.png
+      sha256: 59253da46029952ebb3a24f034d8333fc8ef75042933b7f3f25cb109a97079d1
     sources:
       - type: github-release
         repo: storytold/cadcraft
@@ -412,6 +457,10 @@ apps:
     loadTimeout: 75000
     width: 1280
     height: 800
+    icon:
+      from: repo
+      path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.vectorcraft.png
+      sha256: 440a9a0d31ea3e098a6bd2806046ea936005a008742e4cc97c0adba2574a0825
     sources:
       - type: github-release
         repo: storytold/vectorcraft
@@ -431,6 +480,10 @@ apps:
     loadTimeout: 75000
     width: 1280
     height: 800
+    icon:
+      from: repo
+      path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.photocraft.png
+      sha256: efd02e0b8ea76c59fbc3a9692ddc21faae6064cc9f9492898df1facec3b5b57d
     sources:
       - type: github-release
         repo: storytold/photocraft
@@ -450,6 +503,10 @@ apps:
     loadTimeout: 75000
     width: 1280
     height: 800
+    icon:
+      from: repo
+      path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.effectcraft.png
+      sha256: 186a1d869a4602ec86cd03f6e5e288ebbd328e0c3d8a17c205329829392f9add
     sources:
       - type: github-release
         repo: storytold/effectcraft
@@ -469,6 +526,10 @@ apps:
     loadTimeout: 75000
     width: 1280
     height: 800
+    icon:
+      from: repo
+      path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.materialcraft.png
+      sha256: 9277652831eddf91d36fb67f8f8926623d0a785f531307ad1090502821b529b9
     sources:
       - type: github-release
         repo: storytold/materialcraft
@@ -488,6 +549,10 @@ apps:
     loadTimeout: 75000
     width: 1280
     height: 800
+    icon:
+      from: repo
+      path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.texturecraft.png
+      sha256: 757f858b26897cb0e9f0c8cd43db9ade9664dd6199bd190d1af406839769c71f
     sources:
       - type: github-release
         repo: storytold/texturecraft
@@ -507,6 +572,9 @@ apps:
     loadTimeout: 45000
     width: 1280
     height: 800
+    icon:
+      url: https://raw.githubusercontent.com/excalidraw/excalidraw/v0.18.0/public/apple-touch-icon.png
+      sha256: b6a6c4464319a3b1faeb310bcb8ac24061b2301ce19ddc81453675bbd461ed8f
     sources:
       - type: npm
         package: "@excalidraw/excalidraw"
@@ -528,6 +596,9 @@ apps:
     description: vert.sh file converter — opens in a new tab.
     src: https://vert.sh/
     kind: external
+    icon:
+      url: https://raw.githubusercontent.com/VERT-sh/VERT/35ebeb1679eb0b1af3f099c03060cb89f72e70f8/static/favicon.png
+      sha256: f0d82f01c177658038adff50b1af638c86d18f58e30e53fadc2f305263185888
   - id: about
     enabled: true
     title: About WebPC

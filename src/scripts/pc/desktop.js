@@ -16,7 +16,7 @@ if (shell) {
   let state = { windows: [], activeId: null };
   const bounds = () => ({ width: workspace.clientWidth, height: workspace.clientHeight });
   const announce = text => { announcement.textContent = text; };
-  const icon = id => shell.querySelector(`[data-shortcut="${id}"] svg`).cloneNode(true);
+  const icon = id => shell.querySelector(`[data-shortcut="${id}"] .pc-app-icon`).cloneNode(true);
   const appById = id => apps.find(app => app.id === id);
 
   function dispatch(action) {

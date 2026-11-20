@@ -53,6 +53,11 @@ export async function applyApp(entries, { root = ROOT, hash = sha256OfUrl, apk, 
       continue;
     }
     applyToCatalog(doc, entry, await fieldsFor(entry, source, { hash }));
+    // An icon taken from the app's repo follows the release tag: re-pin its hash at the new tag.
+    if (entry.type === 'github-release' && app.icon?.from === 'repo') {
+      const appIndex = doc.get('apps').items.findIndex(node => node.get('id') === entry.app);
+      doc.setIn(['apps', appIndex, 'icon', 'sha256'], await hash(`https://raw.githubusercontent.com/${source.repo}/${entry.to}/${app.icon.path}`));
+    }
     changed.add('catalog.yaml');
     if (entry.type === 'npm') { npmInstall(root, `${source.package}@${entry.to}`); changed.add('package.json').add('package-lock.json'); }
   }

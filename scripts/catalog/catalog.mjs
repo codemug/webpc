@@ -10,7 +10,7 @@ import { parse } from 'yaml';
 const HERE = fileURLToPath(new URL('../../', import.meta.url));
 export const ROOT = existsSync(`${HERE}catalog.yaml`) ? HERE : `${process.cwd()}/`;
 const DESKTOP_KEYS = ['id', 'title', 'category', 'keywords', 'description', 'src', 'kind', 'loadTimeout', 'width', 'height'];
-const APP_KEYS = new Set([...DESKTOP_KEYS, 'enabled', 'sources']);
+const APP_KEYS = new Set([...DESKTOP_KEYS, 'enabled', 'icon', 'sources']);
 const KINDS = new Set(['iframe', 'external', 'about']);
 const HEX64 = /^[0-9a-f]{64}$/;
 // Keys each source type must have (plus `type`, `upgrade`); optional keys are listed after `|`.
@@ -63,9 +63,46 @@ function appErrors(app) {
   if (app.kind === 'iframe' && app.src !== `/pc/apps/${id}/`) errors.push(`${id}: src must be /pc/apps/${id}/`);
   if (app.kind === 'external' && !String(app.src).startsWith('https://')) errors.push(`${id}: src must be an https URL`);
   for (const key of ['loadTimeout', 'width', 'height']) if (key in app && !isPositiveInt(app[key])) errors.push(`${id}: ${key} must be a positive whole number`);
+  if ('icon' in app) errors.push(...iconErrors(app));
   if ('sources' in app && !Array.isArray(app.sources)) errors.push(`${id}: sources must be a list`);
   (Array.isArray(app.sources) ? app.sources : []).forEach((s, i) => errors.push(...sourceErrors(app, s, i)));
   return errors;
+}
+
+// An app's upstream icon, served by WebPC at /pc/icons/<id><ext>. Three forms:
+//   { from: repo, path, sha256 }  a file in the app's GitHub-release repo at its pinned tag
+//                                 (the upgrader re-pins the hash when the tag moves)
+//   { from: release, path }       a file inside the app's prepared release (covered by its checksum)
+//   { url, sha256 }               a fixed https URL
+const ICON_EXT = /\.(png|jpg|svg)$/;
+const safePath = p => typeof p === 'string' && p !== '' && !p.startsWith('/') && !p.includes('\\') && !p.split('/').includes('..');
+function iconErrors(app) {
+  const icon = app.icon, at = `${app.id}: icon`;
+  if (!icon || typeof icon !== 'object') return [`${at} must be a mapping`];
+  const errors = [];
+  const allowed = icon.from === 'release' ? ['from', 'path'] : icon.from === 'repo' ? ['from', 'path', 'sha256'] : ['url', 'sha256'];
+  for (const key of Object.keys(icon)) if (!allowed.includes(key)) errors.push(`${at}: unknown key "${key}"`);
+  if (icon.from !== undefined && icon.from !== 'repo' && icon.from !== 'release') errors.push(`${at}.from must be repo or release`);
+  if (icon.from && !safePath(icon.path)) errors.push(`${at}.path must be a relative path without ..`);
+  if (!icon.from && !String(icon.url).startsWith('https://')) errors.push(`${at}.url must be an https URL`);
+  if (icon.from !== 'release' && !HEX64.test(String(icon.sha256))) errors.push(`${at}.sha256 must be 64 lowercase hex characters`);
+  if (!ICON_EXT.test(String(icon.path ?? icon.url))) errors.push(`${at} must be a .png, .jpg or .svg file`);
+  if (icon.from === 'repo' && !(app.sources ?? []).some(s => s.type === 'github-release')) errors.push(`${at}: from: repo needs a github-release source`);
+  return errors;
+}
+
+/** Where an app's icon is served, or null when it uses WebPC's own tile. */
+export const iconUrl = app => (app.icon ? `/pc/icons/${app.id}${String(app.icon.path ?? app.icon.url).match(ICON_EXT)[0]}` : null);
+/** How to obtain the icon: { download: url, sha256 } or { release: path }. */
+export function iconSource(app) {
+  const icon = app.icon;
+  if (!icon) return null;
+  if (icon.from === 'release') return { release: icon.path };
+  if (icon.from === 'repo') {
+    const src = app.sources.find(s => s.type === 'github-release');
+    return { download: `https://raw.githubusercontent.com/${src.repo}/${src.tag}/${icon.path}`, sha256: icon.sha256 };
+  }
+  return { download: icon.url, sha256: icon.sha256 };
 }
 
 /** @returns {string[]} every defect found, each naming the app and field (empty when valid). */
@@ -113,7 +150,7 @@ export const appSources = (catalog, id, type, pkg) => (find(catalog, id).sources
 
 /** Desktop registry: enabled apps only, desktop fields only, in catalog order. */
 export function registryEntries(catalog) {
-  return catalog.apps.filter(a => a.enabled).map(a => Object.fromEntries(DESKTOP_KEYS.filter(k => k in a).map(k => [k, a[k]])));
+  return catalog.apps.filter(a => a.enabled).map(a => ({ ...Object.fromEntries(DESKTOP_KEYS.filter(k => k in a).map(k => [k, a[k]])), ...(a.icon ? { icon: iconUrl(a) } : {}) }));
 }
 
 export const REGISTRY_JSON = 'src/scripts/pc/registry.generated.json';

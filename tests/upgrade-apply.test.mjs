@@ -24,11 +24,12 @@ test('github release: tag, url and the hash of the exact new asset are written; 
   hashes.length = 0;
   const changed = await applyApp([{ app: 'gridcraft', index: 0, type: 'github-release', from: 'v0.19.1', to: 'v0.20.0', url }], { root, hash });
   assert.deepEqual(changed, ['catalog.yaml']);
-  assert.deepEqual(hashes, [url]);
   const after = readFileSync(join(root, 'catalog.yaml'), 'utf8');
-  const source = parse(after).apps.find(a => a.id === 'gridcraft').sources[0];
+  const app = parse(after).apps.find(a => a.id === 'gridcraft'), source = app.sources[0];
+  assert.deepEqual(hashes, [url, `https://raw.githubusercontent.com/storytold/gridcraft/v0.20.0/${app.icon.path}`]);
   assert.deepEqual([source.tag, source.url, source.sha256], ['v0.20.0', url, 'f'.repeat(64)]);
-  assert.equal(after.split('\n').filter((l, i) => l !== before.split('\n')[i]).length, 3);
+  // tag, url and sha256 of the release, plus the icon's sha256 at the new tag; nothing else.
+  assert.deepEqual(after.split('\n').filter((l, i) => l !== before.split('\n')[i]).map(l => l.trim().split(':')[0]), ['sha256', 'tag', 'url', 'sha256']);
 });
 
 test('github release with a pinned licence file: the licence at the new tag is hashed too', async () => {
@@ -60,4 +61,14 @@ test('alpine: the lock file is rewritten from the index and the catalog is untou
   const next = JSON.parse(readFileSync(join(root, 'scripts/pc/linux/packages.lock.json'), 'utf8'));
   assert.equal(next.packages[0].version, `${lock.packages[0].version}-next`);
   assert.equal(readFileSync(join(root, 'catalog.yaml'), 'utf8'), readFileSync(join(repo, 'catalog.yaml'), 'utf8'));
+});
+
+test('github release: an icon taken from the app repo is re-pinned at the new tag', async () => {
+  const root = sandbox();
+  const url = 'https://github.com/storytold/gridcraft/releases/download/v0.20.0/gridcraft-web-0.20.0.zip';
+  hashes.length = 0;
+  await applyApp([{ app: 'gridcraft', index: 0, type: 'github-release', from: 'v0.19.1', to: 'v0.20.0', url }], { root, hash });
+  const app = parse(readFileSync(join(root, 'catalog.yaml'), 'utf8')).apps.find(a => a.id === 'gridcraft');
+  assert.equal(hashes[1], `https://raw.githubusercontent.com/storytold/gridcraft/v0.20.0/${app.icon.path}`);
+  assert.equal(app.icon.sha256, 'f'.repeat(64));
 });

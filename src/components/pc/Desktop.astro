@@ -18,7 +18,7 @@ import { apps, categories } from '../../scripts/pc/registry.mjs';
     </div>
     <h1 class="pc-sr-only">WebPC — your browser desktop</h1>
     <div class="pc-shortcuts" aria-label="Desktop apps">
-      {apps.map(app => <button type="button" class="pc-shortcut" data-shortcut={app.id} aria-pressed="false" aria-describedby="pc-open-hint"><AppIcon id={app.id}/><span>{app.title}</span></button>)}
+      {apps.map(app => <button type="button" class="pc-shortcut" data-shortcut={app.id} aria-pressed="false" aria-describedby="pc-open-hint"><AppIcon id={app.id} icon={app.icon}/><span>{app.title}</span></button>)}
     </div>
     <p class="pc-desktop-hint" id="pc-open-hint"><span class="pc-mouse-hint">Double-click an app to open</span><span class="pc-touch-hint">Tap an app to open</span><span aria-hidden="true"> · </span><span>Enter works, too</span></p>
     <div class="pc-windows" data-windows></div>
@@ -34,7 +34,7 @@ import { apps, categories } from '../../scripts/pc/registry.mjs';
     <div class="pc-launcher-heading"><strong>Your apps</strong><span>WebPC</span></div>
     <div class="pc-launcher-filters"><label for="pc-app-search" class="pc-sr-only">Search apps</label><input id="pc-app-search" type="search" placeholder="Search apps…" autocomplete="off" /><label for="pc-category" class="pc-sr-only">App category</label><select id="pc-category"><option value="all">All apps</option>{categories.map(category => <option value={category}>{category}</option>)}</select></div>
     <div class="pc-launcher-results" data-app-results>
-    {apps.map(app => <button type="button" class="pc-launcher-app" data-open-app={app.id} data-app-result={app.id}><AppIcon id={app.id}/><span><strong>{app.title}</strong><small>{app.description}</small></span><span aria-hidden="true">↗</span></button>)}
+    {apps.map(app => <button type="button" class="pc-launcher-app" data-open-app={app.id} data-app-result={app.id}><AppIcon id={app.id} icon={app.icon}/><span><strong>{app.title}</strong><small>{app.description}</small></span><span aria-hidden="true">↗</span></button>)}
     <p class="pc-launcher-empty" data-app-empty hidden>No apps found. Try another search.</p>
     </div>
     <div class="pc-launcher-footer"><span>Runs in your browser</span><a href="/">Back to site ↗</a></div>
