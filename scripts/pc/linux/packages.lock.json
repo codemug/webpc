@@ -80,18 +80,18 @@
     },
     {
       "name": "alpine-release",
-      "version": "3.22.2-r0",
+      "version": "3.22.8-r0",
       "origin": "alpine-base",
       "license": "MIT",
-      "sourceCommit": "7397bb5014e6c0ad0d68a40fff4bf6aae20aef7c",
+      "sourceCommit": "dd94d896d312c363b34d0f13970fde25def57bb1",
       "url": "https://alpinelinux.org"
     },
     {
       "name": "apk-tools",
-      "version": "2.14.9-r3",
+      "version": "2.14.13-r0",
       "origin": "apk-tools",
       "license": "GPL-2.0-only",
-      "sourceCommit": "a75f93ccd6e481eaf60f204061ac34bf04e3a598",
+      "sourceCommit": "32e10bb0f3fd549bd1cfd9fa90d4761639a2e12e",
       "url": "https://gitlab.alpinelinux.org/alpine/apk-tools"
     },
     {
@@ -176,10 +176,10 @@
     },
     {
       "name": "ca-certificates-bundle",
-      "version": "20250911-r0",
+      "version": "20261020-r0",
       "origin": "ca-certificates",
       "license": "MPL-2.0 AND MIT",
-      "sourceCommit": "f626b79f972258e59cbb84ba261ae34cec8637be",
+      "sourceCommit": "ce7bff87478cd936f5b7031ce822b02d4fdd313a",
       "url": "https://www.mozilla.org/en-US/about/governance/policies/security-group/certs/"
     },
     {
@@ -320,10 +320,10 @@
     },
     {
       "name": "libapk2",
-      "version": "2.14.9-r3",
+      "version": "2.14.13-r0",
       "origin": "apk-tools",
       "license": "GPL-2.0-only",
-      "sourceCommit": "a75f93ccd6e481eaf60f204061ac34bf04e3a598",
+      "sourceCommit": "32e10bb0f3fd549bd1cfd9fa90d4761639a2e12e",
       "url": "https://gitlab.alpinelinux.org/alpine/apk-tools"
     },
     {
@@ -360,10 +360,10 @@
     },
     {
       "name": "libcrypto3",
-      "version": "3.5.4-r0",
+      "version": "3.5.9-r0",
       "origin": "openssl",
       "license": "Apache-2.0",
-      "sourceCommit": "8f330e62bd41c2ac23dbd866fea36fb8e22f8422",
+      "sourceCommit": "b6d0d5c5639c0034e9073c39e9ff139e28e71818",
       "url": "https://www.openssl.org/"
     },
     {
@@ -416,10 +416,10 @@
     },
     {
       "name": "libssl3",
-      "version": "3.5.4-r0",
+      "version": "3.5.9-r0",
       "origin": "openssl",
       "license": "Apache-2.0",
-      "sourceCommit": "8f330e62bd41c2ac23dbd866fea36fb8e22f8422",
+      "sourceCommit": "b6d0d5c5639c0034e9073c39e9ff139e28e71818",
       "url": "https://www.openssl.org/"
     },
     {
@@ -480,18 +480,18 @@
     },
     {
       "name": "musl",
-      "version": "1.2.5-r10",
+      "version": "1.2.5-r13",
       "origin": "musl",
       "license": "MIT",
-      "sourceCommit": "1a5f5e699b2eae883e73c93a789f87bd89a2a190",
+      "sourceCommit": "ddaf59b84bc6983a37d6e24d2210c2c4791642bb",
       "url": "https://musl.libc.org/"
     },
     {
       "name": "musl-utils",
-      "version": "1.2.5-r10",
+      "version": "1.2.5-r13",
       "origin": "musl",
       "license": "MIT AND BSD-2-Clause AND GPL-2.0-or-later",
-      "sourceCommit": "1a5f5e699b2eae883e73c93a789f87bd89a2a190",
+      "sourceCommit": "ddaf59b84bc6983a37d6e24d2210c2c4791642bb",
       "url": "https://musl.libc.org/"
     },
     {
@@ -664,10 +664,10 @@
     },
     {
       "name": "zlib",
-      "version": "1.3.1-r2",
+      "version": "1.4-r0",
       "origin": "zlib",
       "license": "Zlib",
-      "sourceCommit": "4c2722e7ecc1c5e3ba882429044a101497121223",
+      "sourceCommit": "a01d2885b6dc5443913a4a40f3689984ab66e7bb",
       "url": "https://zlib.net/"
     },
     {
