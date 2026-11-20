@@ -3,6 +3,7 @@
 #   enabled: false   -> the app is not prepared, not on the desktop and ships no bytes.
 #   upgrade: auto    -> the scheduled upgrader may bump this source (tests and a smoke check must pass).
 #   upgrade: manual  -> the upgrader only reports newer releases (hand-written adapters, AI models).
+#   folder: Games    -> the app sits in that desktop folder instead of on the desktop (the launcher lists it as usual)
 #   icon             -> the app's upstream icon, served at /pc/icons/<id> (apps without one keep WebPC's tile):
 #                       { from: repo, path, sha256 }  file in the app's GitHub-release repo at its tag (re-pinned on upgrade)
 #                       { from: release, path }       file inside the app's prepared release

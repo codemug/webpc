@@ -69,3 +69,11 @@ test('icons: each form validates, and the registry carries the served icon URL',
   assert.equal(entries.find(e => e.id === 'gridcraft').icon, '/pc/icons/gridcraft.png');
   assert.equal('icon' in entries.find(e => e.id === 'files'), false, 'WebPC-native apps keep their own tile');
 });
+
+test('folders: an app may name a desktop folder; bad names are rejected and the registry carries it', () => {
+  assert.match(errorsOf(c => { byId(c, 'beepbox').folder = 'games/../x'; }).join('\n'), /beepbox: folder must be a short name/);
+  assert.deepEqual(errorsOf(c => { byId(c, 'beepbox').folder = 'Games'; }), []);
+  const c = base(); byId(c, 'beepbox').folder = 'Games';
+  assert.equal(registryEntries(c).find(e => e.id === 'beepbox').folder, 'Games');
+  assert.equal('folder' in registryEntries(c).find(e => e.id === 'gridcraft'), false);
+});

@@ -9,7 +9,7 @@ import { parse } from 'yaml';
 // bundled (Astro prerenders pages from dist/.prerender/, and builds run from the repo root).
 const HERE = fileURLToPath(new URL('../../', import.meta.url));
 export const ROOT = existsSync(`${HERE}catalog.yaml`) ? HERE : `${process.cwd()}/`;
-const DESKTOP_KEYS = ['id', 'title', 'category', 'keywords', 'description', 'src', 'kind', 'loadTimeout', 'width', 'height'];
+const DESKTOP_KEYS = ['id', 'title', 'category', 'folder', 'keywords', 'description', 'src', 'kind', 'loadTimeout', 'width', 'height'];
 const APP_KEYS = new Set([...DESKTOP_KEYS, 'enabled', 'icon', 'sources']);
 const KINDS = new Set(['iframe', 'external', 'about']);
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -63,6 +63,7 @@ function appErrors(app) {
   if (app.kind === 'iframe' && app.src !== `/pc/apps/${id}/`) errors.push(`${id}: src must be /pc/apps/${id}/`);
   if (app.kind === 'external' && !String(app.src).startsWith('https://')) errors.push(`${id}: src must be an https URL`);
   for (const key of ['loadTimeout', 'width', 'height']) if (key in app && !isPositiveInt(app[key])) errors.push(`${id}: ${key} must be a positive whole number`);
+  if ('folder' in app && !/^[A-Z][A-Za-z0-9 ]{0,29}$/.test(String(app.folder))) errors.push(`${id}: folder must be a short name starting with a capital letter (e.g. Games)`);
   if ('icon' in app) errors.push(...iconErrors(app));
   if ('sources' in app && !Array.isArray(app.sources)) errors.push(`${id}: sources must be a list`);
   (Array.isArray(app.sources) ? app.sources : []).forEach((s, i) => errors.push(...sourceErrors(app, s, i)));
