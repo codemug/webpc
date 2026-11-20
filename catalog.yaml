@@ -1,0 +1,539 @@
+# WebPC catalog: every app on the desktop, whether it is built, and every pinned upstream release.
+# The builder (npm run build) reads it; the upgrader (npm run upgrade) bumps the pins in it.
+#   enabled: false   -> the app is not prepared, not on the desktop and ships no bytes.
+#   upgrade: auto    -> the scheduled upgrader may bump this source (tests and a smoke check must pass).
+#   upgrade: manual  -> the upgrader only reports newer releases (hand-written adapters, AI models).
+# Field order per app: desktop entry (title ... height), then sources.
+apps:
+  - id: gridcraft
+    enabled: true
+    title: GridCraft
+    category: Office
+    keywords: [ spreadsheet, grid, excel, xlsx, csv, ods, calculate, sheets ]
+    description: Create and edit spreadsheets (XLSX, CSV, ODS).
+    src: /pc/apps/gridcraft/
+    kind: iframe
+    loadTimeout: 75000
+    width: 1180
+    height: 760
+    sources:
+      - type: github-release
+        repo: storytold/gridcraft
+        tag: v0.19.1
+        asset: gridcraft-web-*.zip
+        url: https://github.com/storytold/gridcraft/releases/download/v0.19.1/gridcraft-web-0.19.1.zip
+        sha256: 48c5d1b101befebb3c5ba3b7a14914f01c3207934813ed07dc4251b7ae116a78
+        upgrade: auto
+  - id: docs
+    enabled: true
+    title: Docs
+    category: Office
+    keywords: [ document, write, word ]
+    description: Write and format documents.
+    src: /pc/apps/docs/
+    kind: iframe
+    loadTimeout: 45000
+    width: 1040
+    height: 680
+    sources:
+      - type: npm
+        package: "@casualoffice/docs"
+        version: 1.4.2
+        upgrade: manual
+      - type: npm
+        package: "@fontsource-variable/inter"
+        version: 5.3.0
+        upgrade: auto
+      - type: npm
+        package: "@fontsource-variable/material-symbols-outlined"
+        version: 5.3.9
+        upgrade: auto
+  - id: deckcraft
+    enabled: true
+    title: DeckCraft
+    category: Office
+    keywords: [ presentation, slides, deck, pptx, slideshow ]
+    description: Build slide decks and present them.
+    src: /pc/apps/deckcraft/
+    kind: iframe
+    loadTimeout: 75000
+    width: 1180
+    height: 760
+    sources:
+      - type: github-release
+        repo: storytold/deckcraft
+        tag: v0.18.1
+        asset: deckcraft-web-*.zip
+        url: https://github.com/storytold/deckcraft/releases/download/v0.18.1/deckcraft-web-0.18.1.zip
+        sha256: 3196e537fcfab538aaa2e88584bc74e29bb584459b916ab584ac22fbafe32db5
+        upgrade: auto
+  - id: terminal
+    enabled: true
+    title: Terminal
+    category: Developer
+    keywords: [ linux, alpine, bash, python, node, shell ]
+    description: Real offline Linux with Bash, Python and Node.js.
+    src: /pc/apps/terminal/
+    kind: iframe
+    width: 940
+    height: 680
+    sources:
+      - type: npm
+        package: v86
+        version: 0.5.473
+        upgrade: manual
+      - type: npm
+        package: "@xterm/xterm"
+        version: 5.5.0
+        upgrade: auto
+      - type: npm
+        package: "@xterm/addon-fit"
+        version: 0.10.0
+        upgrade: auto
+      - type: npm
+        package: "@xterm/addon-serialize"
+        version: 0.13.0
+        upgrade: auto
+      - type: alpine
+        lock: scripts/pc/linux/packages.lock.json
+        upgrade: auto
+  - id: sqliteviz
+    enabled: true
+    title: SQLiteViz
+    category: Utilities
+    keywords: [ sql, sqlite, csv, database, query, chart ]
+    description: Query and chart CSV/SQLite data locally.
+    src: /pc/apps/sqliteviz/
+    kind: iframe
+    loadTimeout: 45000
+    width: 1180
+    height: 720
+    sources:
+      - type: github-release
+        repo: lana-k/sqliteviz
+        tag: 0.32.1
+        asset: dist.zip
+        url: https://github.com/lana-k/sqliteviz/releases/download/0.32.1/dist.zip
+        sha256: 6989a740b598570e684a95d0f561980723be6c4aa7f4e97faf119610866abe46
+        upgrade: auto
+  - id: files
+    enabled: true
+    title: Files
+    category: Utilities
+    keywords: [ files, storage, upload, download, folders, manager ]
+    description: Store and organize files and folders in this browser.
+    src: /pc/apps/files/
+    kind: iframe
+    loadTimeout: 45000
+    width: 1180
+    height: 720
+  - id: media
+    enabled: true
+    title: Media Player
+    category: Utilities
+    keywords: [ media, audio, video, player, music, playback ]
+    description: Play local audio and video files.
+    src: /pc/apps/media/
+    kind: iframe
+    loadTimeout: 45000
+    width: 1180
+    height: 720
+  - id: cyberchef
+    enabled: true
+    title: CyberChef
+    category: Utilities
+    keywords: [ encode, decode, hash, base64, convert ]
+    description: Encode, decode, and transform data.
+    src: /pc/apps/cyberchef/
+    kind: iframe
+    loadTimeout: 55000
+    width: 1180
+    height: 720
+    sources:
+      - type: github-release
+        repo: gchq/CyberChef
+        tag: v11.5.0
+        asset: CyberChef_*.zip
+        url: https://github.com/gchq/CyberChef/releases/download/v11.5.0/CyberChef_8cd426dd4f40f1423912d5fad91b578a86a65112.zip
+        sha256: f6478925d3eaa16ec08626a85f5b85eed10d531a5e18700615fed7ecb024cccf
+        upgrade: auto
+  - id: vscode
+    enabled: true
+    title: VS Code ↗
+    category: Developer
+    keywords: [ code, editor, vscode ]
+    description: vscode.dev — opens in a new tab.
+    src: https://vscode.dev/
+    kind: external
+  - id: nettools
+    enabled: true
+    title: Network Tools
+    category: Utilities
+    keywords: [ network, security, dns, subnet, rdap, whois, certificate, ping, traceroute, mtr, latency, password, encrypt, age ]
+    description: DNS, domain and IP lookups, global ping, subnets, latency, password strength and file encryption.
+    src: /pc/apps/nettools/
+    kind: iframe
+    loadTimeout: 45000
+    width: 1280
+    height: 800
+    sources:
+      - type: npm
+        package: "@zxcvbn-ts/core"
+        version: 4.3.0
+        upgrade: auto
+      - type: npm
+        package: "@zxcvbn-ts/language-common"
+        version: 4.2.0
+        upgrade: auto
+      - type: npm
+        package: "@zxcvbn-ts/language-en"
+        version: 4.1.2
+        upgrade: auto
+      - type: npm
+        package: age-encryption
+        version: 0.3.1
+        upgrade: auto
+  - id: packets
+    enabled: true
+    title: Packet Viewer
+    category: Developer
+    keywords: [ network, packets, pcap, pcapng, wireshark, capture, dissect ]
+    description: Inspect pcap and pcapng captures with Wireshark dissectors, locally.
+    src: /pc/apps/packets/
+    kind: iframe
+    loadTimeout: 45000
+    width: 1280
+    height: 800
+    sources:
+      - type: npm-tarball
+        package: "@goodtools/wiregasm"
+        version: 2.0.0
+        integrity: sha512-pAt6nckRGu8A1EDO0c0n6sXDtIZGLAWDdeeKiQDwtFxOP1RvKmyNE3okFKJkC9ex0/x2afuvYYMGWJCxepku/w==
+        upgrade: auto
+  - id: ai-agent
+    enabled: true
+    title: AI Agent
+    category: Utilities
+    keywords: [ ai, chat, assistant, local, model ]
+    description: A private text workspace with an on-device model.
+    src: /pc/apps/ai-agent/
+    kind: iframe
+    width: 1000
+    height: 740
+    sources:
+      - type: npm
+        package: "@anthropic-ai/sdk"
+        version: 1.11.0
+        upgrade: manual
+      - type: cdn-file
+        package: "@huggingface/transformers"
+        version: 4.3.2
+        file: dist/transformers.min.js
+        sha256: 8b5a3171f8876bab2b1820a7d65eb87628e3d30bb5ea85b9dd398e76eb34decb
+        upgrade: manual
+      - type: cdn-file
+        package: onnxruntime-web
+        version: 1.31.0-dev.20260914-8d85527a0
+        file: dist/ort-wasm-simd-threaded.asyncify.mjs
+        sha256: 0966b6105cd936744498aa60df7a22cbd47af3374dbc64a9ab561c08a71e3611
+        upgrade: manual
+      - type: cdn-file
+        package: onnxruntime-web
+        version: 1.31.0-dev.20260914-8d85527a0
+        file: dist/ort-wasm-simd-threaded.asyncify.wasm
+        sha256: 49871f5a4409519797e127440868a6d1923339d9185907f301a5b2a1d90af082
+        upgrade: manual
+      - type: cdn-file
+        package: "@mozilla/readability"
+        version: 0.6.0
+        file: Readability.js
+        sha256: 34dcab3d0832d0019f02990eed6b6124e029e8c32b9f0c6f2550544ff8dff174
+        upgrade: auto
+      - type: cdn-file
+        package: idb-keyval
+        version: 6.2.1
+        file: dist/index.js
+        sha256: 541fcbcdaeb77fa87250844fd40e1ed0faf79be2e7f29be1aefb8b9ca19f7ce5
+        upgrade: auto
+      - type: huggingface
+        models:
+          onnx-community/Florence-2-base-ft: e88a44eaf3791a35eae0c5a47b3dbcd36e67eb6f
+          Xenova/modnet: fa2fa546052fba4c08921230a26cc69a333fca12
+          onnx-community/BiRefNet_lite-ONNX: de15b22ba131738a16dff04aab8bdf8dc32e3ac1
+          Xenova/all-MiniLM-L6-v2: 751bff37182d3f1213fa05d7196b954e230abad9
+          onnx-community/Qwen3.5-0.8B-ONNX-OPT: 9a4c21d8f724176b0a7edaaed36303044451886e
+          onnx-community/Qwen3.5-2B-ONNX-OPT: ed446636739bf426e73c5a00714fd8e010d36c21
+          LiquidAI/LFM3-1.7B-ONNX: 57c125dfa29f2d39157e280b1d1f7480b8736d8d
+        upgrade: manual
+  - id: lightcraft
+    enabled: true
+    title: LightCraft
+    category: Creative
+    keywords: [ photos, raw, image ]
+    description: Develop and edit photos.
+    src: /pc/apps/lightcraft/
+    kind: iframe
+    loadTimeout: 75000
+    width: 1180
+    height: 760
+    sources:
+      - type: github-release
+        repo: storytold/lightcraft
+        tag: v0.21.1
+        asset: lightcraft-web-*.zip
+        url: https://github.com/storytold/lightcraft/releases/download/v0.21.1/lightcraft-web-0.21.1.zip
+        sha256: 57147383a46eaab3b0cc036acf9443b221450c6a19f5dc303ae165bb9678b8cb
+        upgrade: auto
+  - id: figcraft
+    enabled: true
+    title: FigCraft
+    category: Creative
+    keywords: [ design, vector, graphics ]
+    description: Create vector designs.
+    src: /pc/apps/figcraft/
+    kind: iframe
+    loadTimeout: 75000
+    width: 1180
+    height: 760
+    sources:
+      - type: github-release
+        repo: storytold/figcraft
+        tag: v0.18.1
+        asset: figcraft-web-*.zip
+        url: https://github.com/storytold/figcraft/releases/download/v0.18.1/figcraft-web-0.18.1.zip
+        sha256: 2fbeb93f5022b0a7cc9d8528f1ed7e2b54c94d213ef79e65128aa898c399f02b
+        upgrade: auto
+  - id: pdfcraft
+    enabled: true
+    title: PDFCraft
+    category: Office
+    keywords: [ pdf, annotate, document ]
+    description: Read and annotate PDF files.
+    src: /pc/apps/pdfcraft/
+    kind: iframe
+    loadTimeout: 75000
+    width: 1180
+    height: 760
+    sources:
+      - type: github-release
+        repo: storytold/pdfcraft
+        tag: v0.21.1
+        asset: pdfcraft-web-*.zip
+        url: https://github.com/storytold/pdfcraft/releases/download/v0.21.1/pdfcraft-web-0.21.1.zip
+        sha256: fe9708d46af191aebb56f70eb32cf8b112b0b9452d17ae6ba3a8c4a8665fe748
+        upgrade: auto
+  - id: soundcraft
+    enabled: true
+    title: SoundCraft
+    category: Creative
+    keywords: [ audio, music, sound ]
+    description: Work with audio in your browser.
+    src: /pc/apps/soundcraft/
+    kind: iframe
+    loadTimeout: 75000
+    width: 1180
+    height: 760
+    sources:
+      - type: github-release
+        repo: storytold/soundcraft
+        tag: v0.20.1
+        asset: soundcraft-web-*.zip
+        url: https://github.com/storytold/soundcraft/releases/download/v0.20.1/soundcraft-web-0.20.1.zip
+        sha256: ca7c03c53cf4b7ec9ae26ef2cbde5d86566d006127040fe694fb95f9773a34e4
+        upgrade: auto
+  - id: beepbox
+    enabled: true
+    title: BeepBox
+    category: Creative
+    keywords: [ music, chiptune, tracker, synth, compose, notes ]
+    description: Sketch chiptune songs in a full tracker.
+    src: /pc/apps/beepbox/
+    kind: iframe
+    loadTimeout: 45000
+    width: 1180
+    height: 760
+    sources:
+      - type: github-release
+        repo: johnnesky/beepbox
+        tag: v4.2.2
+        asset: BeepBox_*.zip
+        url: https://github.com/johnnesky/beepbox/releases/download/v4.2.2/BeepBox_4_2_2.zip
+        sha256: 884e5acb4007535b47b124f66f9a72b339a8df80a625ba6ae952873c166e81de
+        license:
+          path: LICENSE.md
+          sha256: 11bda08d0a35daa31dea162bce1aeaae999938fe7bddabd9709602c28af998ef
+        upgrade: auto
+  - id: filmcraft
+    enabled: true
+    title: FilmCraft
+    category: Creative
+    keywords: [ video, film, edit, timeline, audio ]
+    description: Edit video, audio and stills into films.
+    src: /pc/apps/filmcraft/
+    kind: iframe
+    loadTimeout: 75000
+    width: 1280
+    height: 800
+    sources:
+      - type: github-release
+        repo: storytold/filmcraft
+        tag: v0.20.1
+        asset: filmcraft-web-*.zip
+        url: https://github.com/storytold/filmcraft/releases/download/v0.20.1/filmcraft-web-0.20.1.zip
+        sha256: 1cf3072e3f3b6535fcd024d6f6ab2a16cf7776345d868037dc630de0ad0dbbb8
+        upgrade: auto
+  - id: cadcraft
+    enabled: true
+    title: CADCraft
+    category: Creative
+    keywords: [ cad, drafting, drawing, dxf, dwg, engineering ]
+    description: Draft drawings and open DXF and DWG files.
+    src: /pc/apps/cadcraft/
+    kind: iframe
+    loadTimeout: 75000
+    width: 1280
+    height: 800
+    sources:
+      - type: github-release
+        repo: storytold/cadcraft
+        tag: v0.20.1
+        asset: cadcraft-web-*.zip
+        url: https://github.com/storytold/cadcraft/releases/download/v0.20.1/cadcraft-web-0.20.1.zip
+        sha256: 300e870c50b66d371055915ba95e3ddbfd4c45431466d5214743b5dcab95a0e1
+        upgrade: auto
+  - id: vectorcraft
+    enabled: true
+    title: VectorCraft
+    category: Creative
+    keywords: [ vector, illustration, drawing, svg, design ]
+    description: Draw and edit vector illustrations.
+    src: /pc/apps/vectorcraft/
+    kind: iframe
+    loadTimeout: 75000
+    width: 1280
+    height: 800
+    sources:
+      - type: github-release
+        repo: storytold/vectorcraft
+        tag: v0.24.1
+        asset: vectorcraft-web-*.zip
+        url: https://github.com/storytold/vectorcraft/releases/download/v0.24.1/vectorcraft-web-0.24.1.zip
+        sha256: de31befd175476f252e3563b4b1fdc6c887d5842b33fb7d1f5fdf007dc7633aa
+        upgrade: auto
+  - id: photocraft
+    enabled: true
+    title: PhotoCraft
+    category: Creative
+    keywords: [ photo, image, edit, layers, retouch, psd ]
+    description: Edit photos and images with layers.
+    src: /pc/apps/photocraft/
+    kind: iframe
+    loadTimeout: 75000
+    width: 1280
+    height: 800
+    sources:
+      - type: github-release
+        repo: storytold/photocraft
+        tag: v0.23.1
+        asset: photocraft-web-*.zip
+        url: https://github.com/storytold/photocraft/releases/download/v0.23.1/photocraft-web-0.23.1.zip
+        sha256: 3a498eb517bca6cec89f9c6b1fc6448269a05428c8a3a4637c16817da157f03c
+        upgrade: auto
+  - id: effectcraft
+    enabled: true
+    title: EffectCraft
+    category: Creative
+    keywords: [ video, effects, compositing, motion graphics, timeline ]
+    description: Composite video, audio and images with effects.
+    src: /pc/apps/effectcraft/
+    kind: iframe
+    loadTimeout: 75000
+    width: 1280
+    height: 800
+    sources:
+      - type: github-release
+        repo: storytold/effectcraft
+        tag: v0.24.1
+        asset: effectcraft-web-*.zip
+        url: https://github.com/storytold/effectcraft/releases/download/v0.24.1/effectcraft-web-0.24.1.zip
+        sha256: 8adc985f345d73207abc69a27938905aba1729b63c6c9b332d0244a7567424f1
+        upgrade: auto
+  - id: materialcraft
+    enabled: true
+    title: MaterialCraft
+    category: Creative
+    keywords: [ shader, material, sbs, substance, 3d, game ]
+    description: Build shader graphs for game engines.
+    src: /pc/apps/materialcraft/
+    kind: iframe
+    loadTimeout: 75000
+    width: 1280
+    height: 800
+    sources:
+      - type: github-release
+        repo: storytold/materialcraft
+        tag: v0.4.1
+        asset: materialcraft-web-*.zip
+        url: https://github.com/storytold/materialcraft/releases/download/v0.4.1/materialcraft-web-0.4.1.zip
+        sha256: 73b8c319881fd7218737d30b5eeb033801a17427bcf3d31920da32a1fbb1ffec
+        upgrade: auto
+  - id: texturecraft
+    enabled: true
+    title: TextureCraft
+    category: Creative
+    keywords: [ texture, bake, 3d, mesh, uv, pbr ]
+    description: Bake and author textures for 3D meshes.
+    src: /pc/apps/texturecraft/
+    kind: iframe
+    loadTimeout: 75000
+    width: 1280
+    height: 800
+    sources:
+      - type: github-release
+        repo: storytold/texturecraft
+        tag: v0.6.1
+        asset: texturecraft-web-*.zip
+        url: https://github.com/storytold/texturecraft/releases/download/v0.6.1/texturecraft-web-0.6.1.zip
+        sha256: 6dea6a9f77a161cba3258ab4c6db591bdb4dd32b7385d16a7db997ab671a5f3b
+        upgrade: auto
+  - id: excalidraw
+    enabled: true
+    title: Excalidraw
+    category: Creative
+    keywords: [ diagram, whiteboard, draw, sketch, flowchart, wireframe ]
+    description: Sketch and diagram in a hand-drawn editor.
+    src: /pc/apps/excalidraw/
+    kind: iframe
+    loadTimeout: 45000
+    width: 1280
+    height: 800
+    sources:
+      - type: npm
+        package: "@excalidraw/excalidraw"
+        version: 0.18.1
+        upgrade: manual
+      - type: npm
+        package: react
+        version: 19.3.1
+        upgrade: manual
+      - type: npm
+        package: react-dom
+        version: 19.3.1
+        upgrade: manual
+  - id: vert
+    enabled: true
+    title: VERT ↗
+    category: Utilities
+    keywords: [ convert, converter, image, audio, document, video ]
+    description: vert.sh file converter — opens in a new tab.
+    src: https://vert.sh/
+    kind: external
+  - id: about
+    enabled: true
+    title: About WebPC
+    category: System
+    keywords: [ help, controls, keyboard, save ]
+    description: Controls, shortcuts, and local saves.
+    kind: about
+    width: 520
+    height: 560

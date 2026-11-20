@@ -1,0 +1,59 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { parse } from 'yaml';
+import { validateCatalog, checkNpmPins, registryEntries, loadCatalog, appSources, isEnabled } from '../scripts/catalog/catalog.mjs';
+
+const base = () => parse(readFileSync(new URL('../catalog.yaml', import.meta.url), 'utf8'));
+const errorsOf = mutate => { const c = base(); mutate(c); return validateCatalog(c); };
+const byId = (c, id) => c.apps.find(a => a.id === id);
+
+test('the committed catalog is valid and its npm pins match package.json and the lockfile', () => {
+  const catalog = base();
+  assert.deepEqual(validateCatalog(catalog), []);
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  const lock = JSON.parse(readFileSync(new URL('../package-lock.json', import.meta.url), 'utf8'));
+  assert.deepEqual(checkNpmPins(catalog, pkg, lock), []);
+  assert.equal(loadCatalog().apps.length, catalog.apps.length);
+});
+
+test('validation names the app and field for each defect', () => {
+  assert.match(errorsOf(c => { byId(c, 'gridcraft').enabled = 'yes'; }).join('\n'), /gridcraft: enabled must be true or false/);
+  assert.match(errorsOf(c => { byId(c, 'gridcraft').colour = 'red'; }).join('\n'), /gridcraft: unknown key "colour"/);
+  assert.match(errorsOf(c => { byId(c, 'gridcraft').sources[0].sha256 = 'abc'; }).join('\n'), /gridcraft: sources\[0\]\.sha256 must be 64 lowercase hex/);
+  assert.match(errorsOf(c => { byId(c, 'gridcraft').sources[0].upgrade = 'sometimes'; }).join('\n'), /gridcraft: sources\[0\]\.upgrade must be auto or manual/);
+  assert.match(errorsOf(c => { byId(c, 'gridcraft').sources[0].type = 'ftp'; }).join('\n'), /gridcraft: sources\[0\]\.type "ftp" is not one of/);
+  assert.match(errorsOf(c => { byId(c, 'gridcraft').src = '/pc/apps/other/'; }).join('\n'), /gridcraft: src must be \/pc\/apps\/gridcraft\//);
+  assert.match(errorsOf(c => { byId(c, 'vert').src = 'http://vert.sh/'; }).join('\n'), /vert: src must be an https URL/);
+  assert.match(errorsOf(c => { c.apps.push({ ...byId(c, 'files') }); }).join('\n'), /files: duplicate id/);
+  assert.match(errorsOf(c => { byId(c, 'gridcraft').sources[0].url = 'https://evil.example/x.zip'; }).join('\n'), /gridcraft: sources\[0\]\.url must be a release asset of storytold\/gridcraft/);
+});
+
+test('npm pins that drift from package.json or the lockfile are reported', () => {
+  const catalog = base();
+  const pkg = { dependencies: {}, devDependencies: { v86: '0.5.474' } };
+  const lock = { packages: { 'node_modules/v86': { version: '0.5.473' } } };
+  const errors = checkNpmPins({ apps: [byId(catalog, 'terminal')] }, pkg, lock).join('\n');
+  assert.match(errors, /terminal: v86 is 0\.5\.473 in the catalog but 0\.5\.474 in package\.json/);
+  assert.match(errors, /terminal: @xterm\/xterm is missing from package\.json/);
+});
+
+test('a disabled app leaves the desktop registry; the others keep their order and fields', () => {
+  const catalog = base();
+  byId(catalog, 'beepbox').enabled = false;
+  const entries = registryEntries(catalog);
+  assert.equal(entries.some(e => e.id === 'beepbox'), false);
+  assert.equal(entries.length, catalog.apps.length - 1);
+  assert.deepEqual(entries[0], { id: 'gridcraft', title: 'GridCraft', category: 'Office', keywords: byId(catalog, 'gridcraft').keywords, description: byId(catalog, 'gridcraft').description, src: '/pc/apps/gridcraft/', kind: 'iframe', loadTimeout: 75000, width: 1180, height: 760 });
+  assert.equal('sources' in entries[0] || 'enabled' in entries[0], false);
+  assert.equal(isEnabled(catalog, 'beepbox'), false);
+  assert.equal(isEnabled(catalog, 'gridcraft'), true);
+  assert.throws(() => isEnabled(catalog, 'nope'), /unknown app "nope"/);
+});
+
+test('appSources filters an app\'s sources by type and package', () => {
+  const catalog = base();
+  assert.equal(appSources(catalog, 'gridcraft', 'github-release')[0].repo, 'storytold/gridcraft');
+  assert.equal(appSources(catalog, 'terminal', 'npm', 'v86')[0].version, byId(catalog, 'terminal').sources[0].version);
+  assert.deepEqual(appSources(catalog, 'files'), []);
+});
