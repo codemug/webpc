@@ -42,5 +42,5 @@ reproduction, checkpoint compatibility and hosting limitations. Retain these
 source references and all applicable notices with redistributed images;
 source-distribution obligations for copyleft components still apply.
 
-xterm.js 5.5.0, addon-fit 0.10.0, addon-serialize 0.13.0
+xterm.js with addon-fit and addon-serialize (exact versions are pinned in catalog.yaml at https://github.com/codemug/webpc)
 https://github.com/xtermjs/xterm.js -- MIT, see xterm-LICENSE.txt.

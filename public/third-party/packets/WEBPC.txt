@@ -3,7 +3,7 @@ Packet Viewer (WebPC app)
   Dissection engine: @goodtools/wiregasm@2.0.0 (license: GPL-2.0-or-later)
     Tarball: https://registry.npmjs.org/@goodtools/wiregasm/-/wiregasm-2.0.0.tgz
     Integrity (npm dist.integrity): sha512-pAt6nckRGu8A1EDO0c0n6sXDtIZGLAWDdeeKiQDwtFxOP1RvKmyNE3okFKJkC9ex0/x2afuvYYMGWJCxepku/w==
-    Upstream repo: https://github.com/good-tools/wiregasm (Wireshark 4.6 compiled to WebAssembly; source at the matching v2.0.0 tag / npm published tarball)
+    Upstream repo: https://github.com/good-tools/wiregasm (Wireshark compiled to WebAssembly; source at the matching v2.0.0 tag / npm published tarball)
     Shipped here: wiregasm.wasm.gz + wiregasm.data.gz (raw 73 MB wasm and 2.6 MB data are NOT shipped;
     the page inflates the .gz files in the browser with DecompressionStream('gzip') and hands the bytes
     to the emscripten loader via wasmBinary + getPreloadedPackage, so the loader never fetches).

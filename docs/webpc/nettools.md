@@ -4,14 +4,14 @@
 
 ## Prepare and update
 
-Run `node scripts/pc/prepare-nettools.mjs` (wired into `assets:pc` after the other preparers). Four devDependencies are pinned exactly in `package.json` (`--save-exact --ignore-scripts`) with lockfile integrity, and the preparer re-verifies each against `package-lock.json` before skipping a rebuild:
+Run `node scripts/pc/prepare-nettools.mjs` (wired into `assets:pc` after the other preparers). Four devDependencies are pinned exactly in `catalog.yaml`, which `npm run catalog` checks against `package.json` and the lockfile, and the preparer re-verifies each against `package-lock.json` before skipping a rebuild:
 
 | Package | Version | Licence | Used by |
 |---|---|---|---|
-| `@zxcvbn-ts/core` | 4.3.0 | MIT (no licence file ships in the package; attribution generated) | Security tab |
-| `@zxcvbn-ts/language-common` | 4.2.0 | MIT (NOTICE.md: ODC-BY subtitle data) | Security tab |
-| `@zxcvbn-ts/language-en` | 4.1.2 | MIT (NOTICE.md: ODC-BY subtitle data) | Security tab |
-| `age-encryption` | 0.3.1 | BSD-3-Clause (pure-JS, noble crypto deps) | Security tab |
+| `@zxcvbn-ts/core` | pinned in `catalog.yaml` | MIT (no licence file ships in the package; attribution generated) | Security tab |
+| `@zxcvbn-ts/language-common` | pinned in `catalog.yaml` | MIT (NOTICE.md: ODC-BY subtitle data) | Security tab |
+| `@zxcvbn-ts/language-en` | pinned in `catalog.yaml` | MIT (NOTICE.md: ODC-BY subtitle data) | Security tab |
+| `age-encryption` | pinned in `catalog.yaml` | BSD-3-Clause (pure-JS, noble crypto deps) | Security tab |
 
 The preparer esbuild-bundles `scripts/pc/nettools/main.mjs` (production, minified, ESM, `splitting: true`) so each tab is its own lazy chunk — the Security tab's chunk carries the ~1.7 MB zxcvbn dictionaries + age and loads only on first visit. It copies `nettools.css`, writes a CSP-locked `index.html` and a `.release.json` fingerprint (preparer source + every `scripts/pc/nettools/*.{mjs,css}` file + the pinned versions). `public/third-party/nettools/` holds `WEBPC.txt`, per-package licence files (copied, or generated from the installed `package.json` when a package ships none), and `BUNDLED-NOTICES.txt` (full licence texts of every bundled package, via `writeBundleNotices`).
 

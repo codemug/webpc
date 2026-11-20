@@ -1,9 +1,9 @@
 // Prepare the self-hosted WebPC "Packet Viewer" (packets) vendor bundle:
-// download @goodtools/wiregasm 2.0.0 from the npm registry (pinned sha512 integrity), verify,
-// reject unsafe archive paths, extract with the system tar into staging, ship only the two
-// .gz engine assets to public/pc/vendor/packets/, esbuild-bundle scripts/pc/packets/ (app
-// entry + engine worker, with the wiregasm package aliased into the staged tarball), write a
-// CSP-locked index.html, and pin everything with a fingerprint marker.
+// download the pinned @goodtools/wiregasm npm tarball (version + sha512 integrity from
+// catalog.yaml), verify, reject unsafe archive paths, extract with the system tar into staging,
+// ship only the two .gz engine assets to public/pc/vendor/packets/, esbuild-bundle
+// scripts/pc/packets/ (app entry + engine worker, with the wiregasm package aliased into the
+// staged tarball), write a CSP-locked index.html, and pin everything with a fingerprint marker.
 import { build } from 'esbuild';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -12,16 +12,20 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { rowFingerprint } from './prepare-static-apps.mjs';
+import { loadCatalog, isEnabled, appSources } from '../catalog/catalog.mjs';
 
 const exec = promisify(execFile);
-const VERSION = '2.0.0';
-const TARBALL = `https://registry.npmjs.org/@goodtools/wiregasm/-/wiregasm-${VERSION}.tgz`;
-// npm dist.integrity, read once via `npm view @goodtools/wiregasm@2.0.0 dist.integrity`.
-const INTEGRITY = 'sha512-pAt6nckRGu8A1EDO0c0n6sXDtIZGLAWDdeeKiQDwtFxOP1RvKmyNE3okFKJkC9ex0/x2afuvYYMGWJCxepku/w==';
-const REPO = 'https://github.com/good-tools/wiregasm';
-const LICENSE_ID = 'GPL-2.0-or-later';
-
 const root = fileURLToPath(new URL('../../', import.meta.url));
+const catalog = loadCatalog(root);
+if (!isEnabled(catalog, 'packets')) { console.log('Skipped packets: disabled in catalog.yaml.'); process.exit(0); }
+const [tarball] = appSources(catalog, 'packets', 'npm-tarball');
+// Version and integrity come from catalog.yaml (the only pin source); the URL is the standard
+// npm registry tarball form for the pinned package.
+const VERSION = tarball.version;
+const TARBALL = `https://registry.npmjs.org/${tarball.package}/-/${tarball.package.split('/').pop()}-${VERSION}.tgz`;
+const INTEGRITY = tarball.integrity; // npm dist.integrity for the pinned version
+const REPO = 'https://github.com/good-tools/wiregasm'; // upstream provenance only (no repo field for npm-tarball sources in catalog.yaml)
+const LICENSE_ID = 'GPL-2.0-or-later';
 const out = join(root, 'public/pc/vendor/packets');
 const srcDir = join(root, 'scripts/pc/packets');
 const srcFiles = (await readdir(srcDir)).filter(f => f.endsWith('.mjs') || f.endsWith('.css')).sort();
@@ -104,7 +108,7 @@ async function prepare() {
     await mkdir(thirdParty, { recursive: true });
     await copyFile(join(extract, 'package', 'LICENSE'), join(thirdParty, 'LICENSE'));
     await writeFile(join(thirdParty, 'WEBPC.txt'),
-      `Packet Viewer (WebPC app)\n  App UI (original WebPC code): scripts/pc/packets/*.mjs, esbuild-bundled into app.js + worker.js (production, minified).\n  Dissection engine: @goodtools/wiregasm@${VERSION} (license: ${LICENSE_ID})\n    Tarball: ${TARBALL}\n    Integrity (npm dist.integrity): ${INTEGRITY}\n    Upstream repo: ${REPO} (Wireshark 4.6 compiled to WebAssembly; source at the matching v${VERSION} tag / npm published tarball)\n    Shipped here: wiregasm.wasm.gz + wiregasm.data.gz (raw 73 MB wasm and 2.6 MB data are NOT shipped;\n    the page inflates the .gz files in the browser with DecompressionStream('gzip') and hands the bytes\n    to the emscripten loader via wasmBinary + getPreloadedPackage, so the loader never fetches).\n    Full licence text: LICENSE (this directory).\n  Tweak: the worker sniffs the gzip magic (0x1f 0x8b) before inflating, because the local dev\n    server answers .gz files with Content-Encoding: gzip and fetch then hands the worker already-\n    inflated bytes; static hosts that serve the raw .gz are handled by the normal inflate path.\n    No other tweaks — every loader-referenced asset (wiregasm.wasm, wiregasm.data) is covered by a\n    shipped .gz file, and the loader makes zero runtime fetches. See docs/webpc/packets.md.\n`);
+      `Packet Viewer (WebPC app)\n  App UI (original WebPC code): scripts/pc/packets/*.mjs, esbuild-bundled into app.js + worker.js (production, minified).\n  Dissection engine: @goodtools/wiregasm@${VERSION} (license: ${LICENSE_ID})\n    Tarball: ${TARBALL}\n    Integrity (npm dist.integrity): ${INTEGRITY}\n    Upstream repo: ${REPO} (Wireshark compiled to WebAssembly; source at the matching v${VERSION} tag / npm published tarball)\n    Shipped here: wiregasm.wasm.gz + wiregasm.data.gz (raw 73 MB wasm and 2.6 MB data are NOT shipped;\n    the page inflates the .gz files in the browser with DecompressionStream('gzip') and hands the bytes\n    to the emscripten loader via wasmBinary + getPreloadedPackage, so the loader never fetches).\n    Full licence text: LICENSE (this directory).\n  Tweak: the worker sniffs the gzip magic (0x1f 0x8b) before inflating, because the local dev\n    server answers .gz files with Content-Encoding: gzip and fetch then hands the worker already-\n    inflated bytes; static hosts that serve the raw .gz are handled by the normal inflate path.\n    No other tweaks — every loader-referenced asset (wiregasm.wasm, wiregasm.data) is covered by a\n    shipped .gz file, and the loader makes zero runtime fetches. See docs/webpc/packets.md.\n`);
     // 6. Swap the staged layout into place.
     await rm(out, { recursive: true, force: true });
     await rename(stage, out);

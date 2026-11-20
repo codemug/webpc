@@ -8,15 +8,15 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { rowFingerprint } from './prepare-static-apps.mjs';
 import { writeBundleNotices } from './docs/bundle-notices.mjs';
+import { loadCatalog, isEnabled, appSources } from '../catalog/catalog.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
+const catalog = loadCatalog(root);
+if (!isEnabled(catalog, 'nettools')) { console.log('Skipped nettools: disabled in catalog.yaml.'); process.exit(0); }
 const lock = JSON.parse(await readFile(join(root, 'package-lock.json'), 'utf8'));
-const DEPS = [
-  { name: '@zxcvbn-ts/core', version: '4.3.0' },
-  { name: '@zxcvbn-ts/language-common', version: '4.2.0' },
-  { name: '@zxcvbn-ts/language-en', version: '4.1.2' },
-  { name: 'age-encryption', version: '0.3.1' },
-];
+// Deps and versions come from catalog.yaml (checked against package.json and package-lock.json by
+// `npm run catalog`); the lockfile check below keeps the installed tree equal to those pins.
+const DEPS = appSources(catalog, 'nettools', 'npm').map(s => ({ name: s.package, version: s.version }));
 for (const d of DEPS) {
   const entry = lock.packages[`node_modules/${d.name}`];
   if (!entry || entry.version !== d.version) throw new Error(`nettools: expected ${d.name}@${d.version}, found ${entry?.version ?? 'none'}; pin it in package.json and reinstall.`);

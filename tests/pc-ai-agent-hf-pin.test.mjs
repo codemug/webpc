@@ -5,6 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { pinnedUrl, HF_PINNED } from '../src/apps/ai-agent/hf-pin.js';
+import { loadCatalog, appSources } from '../scripts/catalog/catalog.mjs';
 
 test('pinnedUrl rewrites /resolve/main/ to the pinned revision for every pinned repo', () => {
   assert.ok(Object.keys(HF_PINNED).length >= 7, 'the map covers the vision, embedding and chat repos');
@@ -27,4 +28,12 @@ test('pinnedUrl passes everything else through untouched', () => {
   assert.equal(pinnedUrl('http://localhost:4322/pc/'), 'http://localhost:4322/pc/', 'non-HF URLs pass through');
   const req = { url: `https://huggingface.co/${repo}/resolve/main/x.json` };
   assert.equal(pinnedUrl(req), req, 'non-string input passes through');
+});
+
+// Drift guard: HF_PINNED must equal the catalog's huggingface models map exactly, so a pin
+// change must update both (or this test fails).
+test('HF_PINNED equals the catalog huggingface models map exactly', () => {
+  const catalog = loadCatalog();
+  const [hf] = appSources(catalog, 'ai-agent', 'huggingface');
+  assert.deepEqual(Object.entries(HF_PINNED).sort(), Object.entries(hf.models).sort());
 });

@@ -1,7 +1,7 @@
 # Packet Viewer in WebPC
 
-`packets` — "Packet Viewer" — at `/pc/apps/packets/`. Fully local: Wireshark 4.6's
-dissectors run as WebAssembly (via wiregasm 2.0.0) inside a Web Worker; captures are
+`packets` — "Packet Viewer" — at `/pc/apps/packets/`. Fully local: Wireshark's
+dissectors run as WebAssembly (via wiregasm, version pinned in `catalog.yaml`) inside a Web Worker; captures are
 read into memory, never stored or sent anywhere. The ~21 MB engine loads only when the
 user opens a file or clicks "Load engine", with a live progress line.
 
@@ -10,14 +10,14 @@ user opens a file or clicks "Load engine", with a live progress line.
 Run `node scripts/pc/prepare-packets.mjs` (the report provides the exact `assets:pc`
 line; it comes after the other preparers). The preparer is self-contained — wiregasm is
 **not** in `package.json` (lead ruling): it downloads the pinned tarball, verifies the
-pinned sha512 `dist.integrity`, rejects unsafe archive paths, extracts with the system
+pinned sha512 `dist.integrity` (both from `catalog.yaml`), rejects unsafe archive paths, extracts with the system
 tar, and keeps the tarball + extracted package out of the shipped output.
 
 | Item | Detail |
 |---|---|
-| Package | `@goodtools/wiregasm` 2.0.0 (GPL-2.0-or-later) |
-| Tarball | `https://registry.npmjs.org/@goodtools/wiregasm/-/wiregasm-2.0.0.tgz` |
-| Integrity | `sha512-pAt6nckRGu8A1EDO0c0n6sXDtIZGLAWDdeeKiQDwtFxOP1RvKmyNE3okFKJkC9ex0/x2afuvYYMGWJCxepku/w==` |
+| Package | `@goodtools/wiregasm` (version pinned in `catalog.yaml`; GPL-2.0-or-later) |
+| Tarball | the npm registry tarball of the pinned version (URL and integrity in `catalog.yaml`) |
+| Integrity | the sha512 `dist.integrity` recorded in `catalog.yaml` |
 | Upstream | `https://github.com/good-tools/wiregasm` |
 
 The preparer ships only `wiregasm.wasm.gz` (19.5 MB) and `wiregasm.data.gz` (433 KB) —

@@ -1,11 +1,14 @@
 // WebPC catalog (catalog.yaml): load, validate, and derive the desktop registry.
 // Node-only (reads files). Browser code imports the generated registry JSON instead
 // (src/scripts/pc/registry.generated.json, written by `npm run catalog`).
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 
-export const ROOT = fileURLToPath(new URL('../../', import.meta.url));
+// The repo root: two levels up from this file, or the working directory when this module runs
+// bundled (Astro prerenders pages from dist/.prerender/, and builds run from the repo root).
+const HERE = fileURLToPath(new URL('../../', import.meta.url));
+export const ROOT = existsSync(`${HERE}catalog.yaml`) ? HERE : `${process.cwd()}/`;
 const DESKTOP_KEYS = ['id', 'title', 'category', 'keywords', 'description', 'src', 'kind', 'loadTimeout', 'width', 'height'];
 const APP_KEYS = new Set([...DESKTOP_KEYS, 'enabled', 'sources']);
 const KINDS = new Set(['iframe', 'external', 'about']);

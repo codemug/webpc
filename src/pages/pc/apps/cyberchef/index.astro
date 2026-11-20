@@ -1,6 +1,6 @@
 ---
 import UtilityLayout from '../../../../components/pc/UtilityLayout.astro';
-import {loadCatalog,appSources} from '../../../../scripts/catalog/catalog.mjs';
+import {loadCatalog,appSources} from '../../../../../scripts/catalog/catalog.mjs';
 const version=String(appSources(loadCatalog(),'cyberchef','github-release')[0].tag).replace(/^v/,'');
 ---
 <UtilityLayout title="CyberChef">

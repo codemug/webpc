@@ -10,7 +10,7 @@
     "predev": "npm run catalog",
     "dev": "npm run assets:pc && astro dev",
     "prebuild": "npm run catalog",
-    "build": "npm run assets:pc && astro build",
+    "build": "npm run assets:pc && astro build && node scripts/catalog/prune.mjs && node scripts/catalog/size-check.mjs",
     "preview": "astro preview",
     "astro": "astro",
     "pretest": "npm run catalog",
