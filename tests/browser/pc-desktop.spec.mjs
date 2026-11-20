@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { skipUnlessEnabled } from './catalog.mjs';
 
 const appHtml = `<!doctype html><title>GridCraft test app</title><label>Cell A1 <input id="cell"></label><script>
 parent.postMessage({type:'pc:ready',appId:'gridcraft'},location.origin);
@@ -11,6 +12,7 @@ async function fakeGridcraft(page) {
 const win = (page, id) => page.locator(`[data-window="${id}"]`);
 
 test('PC launches lazily and reuses app state after minimize and close', async ({ page }) => {
+  skipUnlessEnabled(test, 'gridcraft');
   const loads = await fakeGridcraft(page);
   await page.goto('/pc/');
   await expect(page.locator('iframe')).toHaveCount(0);
@@ -35,6 +37,8 @@ test('PC launches lazily and reuses app state after minimize and close', async (
 });
 
 test('PC manages keyboard geometry, stacking, maximize, and launcher focus', async ({ page }) => {
+  skipUnlessEnabled(test, 'gridcraft');
+  skipUnlessEnabled(test, 'about'); // this test also drives the About (Help) window
   await fakeGridcraft(page);
   await page.goto('/pc/');
   await page.getByRole('button', { name: 'Apps', exact: true }).click();
@@ -66,6 +70,7 @@ test('PC manages keyboard geometry, stacking, maximize, and launcher focus', asy
 });
 
 test('PC pointer dragging and resizing work without escaping the workspace', async ({ page }) => {
+  skipUnlessEnabled(test, 'about');
   await page.goto('/pc/');
   await page.locator('[data-shortcut="about"]').dblclick();
   const title = await win(page, 'about').locator('[data-move]').boundingBox();
@@ -86,6 +91,7 @@ test('PC pointer dragging and resizing work without escaping the workspace', asy
 });
 
 test('PC iframe failure offers a working retry', async ({ page }) => {
+  skipUnlessEnabled(test, 'gridcraft');
   let failed = true;
   await page.route('**/pc/apps/gridcraft/', route => route.fulfill({ status: failed ? 404 : 200, contentType: 'text/html', body: failed ? '<title>404 Not Found</title>' : appHtml }));
   await page.goto('/pc/');
@@ -98,6 +104,7 @@ test('PC iframe failure offers a working retry', async ({ page }) => {
 });
 
 test('PC keeps a window open if its synchronous save hook fails', async ({ page }) => {
+  skipUnlessEnabled(test, 'gridcraft');
   await fakeGridcraft(page);
   await page.goto('/pc/');
   await page.locator('[data-shortcut="gridcraft"]').dblclick();
@@ -114,6 +121,7 @@ test('PC keeps a window open if its synchronous save hook fails', async ({ page 
 test.describe('PC touch and responsive layout' , () => {
   test.use({ hasTouch: true });
   test('touch launch and visible window controls at 320/375/414/768', async ({ page }) => {
+    skipUnlessEnabled(test, 'about');
     for (const width of [320, 375, 414, 768]) {
       await page.setViewportSize({ width, height: 760 });
       await page.goto('/pc/');
@@ -131,6 +139,7 @@ test.describe('PC touch and responsive layout' , () => {
 });
 
 test('WebPC launcher filters apps and launches a keyboard search result', async ({ page }) => {
+  skipUnlessEnabled(test, 'gridcraft');
   const loads = await fakeGridcraft(page);
   await page.goto('/pc/');
   await expect(page).toHaveTitle('WebPC · Usman Shahid');

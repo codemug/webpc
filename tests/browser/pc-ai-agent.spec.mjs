@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { skipUnlessEnabled } from './catalog.mjs';
 const route = process.env.AI_AGENT_TEST_PATH ?? '/pc/apps/ai-agent/';
 // Only the model is deterministic in these integration tests. Tools, worker lifecycle,
 // IndexedDB and DOM are real. The separate manual smoke runs actual model weights.
@@ -29,6 +30,7 @@ async function load(page) { await page.locator('#load-model').click(); await exp
 async function send(page, text) { await page.locator('#message').fill(text); await page.locator('#send').click(); }
 
 test('AI Agent is lazy, migrates legacy records without deleting them, and handles missing WebGPU', async ({ page }) => {
+  skipUnlessEnabled(test,'ai-agent');
   const requests=[]; page.on('request',r=>requests.push(r.url()));
   await page.addInitScript(() => Object.defineProperty(navigator,'gpu',{configurable:true,value:undefined}));
   await page.goto(route);
@@ -47,6 +49,7 @@ test('AI Agent is lazy, migrates legacy records without deleting them, and handl
 });
 
 test('AI Agent executes a real calculation, preserves Markdown, persists and isolates New chat', async ({ page }) => {
+  skipUnlessEnabled(test,'ai-agent');
   await modelFixture(page);page.on('dialog',d=>d.accept());await page.goto(route);
   expect(await page.evaluate(()=>window.workers.length)).toBe(0);await load(page);await send(page,'calculate 6*7');
   await expect(page.locator('#messages')).toContainText('calculate · complete');await expect(page.locator('.assistant .message-body').last()).toContainText('**42**');await expect(page.locator('.assistant .message-body').last()).toContainText('```js');
@@ -58,6 +61,7 @@ test('AI Agent executes a real calculation, preserves Markdown, persists and iso
 });
 
 test('AI Agent stops download and prefill, and model switching terminates the old worker', async ({ page }) => {
+  skipUnlessEnabled(test,'ai-agent');
   await modelFixture(page);await page.goto(route);await page.locator('#load-model').click();await page.locator('#stop').click();await page.waitForTimeout(200);
   await expect(page.locator('#send')).toBeDisabled();await load(page);await send(page,'HOLD prompt');await page.locator('#stop').click();await expect(page.locator('#send')).toBeDisabled();
   await load(page);await send(page,'HOLD another prompt');await page.locator('#model').selectOption('qwen3.5-2b');await page.waitForTimeout(2200);
@@ -65,6 +69,7 @@ test('AI Agent stops download and prefill, and model switching terminates the ol
 });
 
 test('AI Agent sandbox executes JavaScript, blocks network and parent access, ignores forged messages and cancels loops', async ({ page }) => {
+  skipUnlessEnabled(test,'ai-agent');
   await page.goto(route);let external=0;await page.route('https://sandbox-test.invalid/**',r=>{external++;return r.abort()});
   const results=await page.evaluate(async()=>{
     const {runJavaScript}=await import(new URL('sandbox.js',document.baseURI));
@@ -79,6 +84,7 @@ test('AI Agent sandbox executes JavaScript, blocks network and parent access, ig
 });
 
 test('AI Agent direct page reading and Wikipedia work; Jina requires opt-in and cancellation never invokes it', async ({ page }) => {
+  skipUnlessEnabled(test,'ai-agent');
   await page.goto(route);let proxy=0,unwanted=0;
   await page.route('https://example.org/**',r=>r.abort());
   await page.route('https://r.jina.ai/**',r=>{proxy++;return r.fulfill({contentType:'text/plain',body:'<article><h1>Proxy result</h1><p>Useful content.</p></article>'})});
@@ -93,6 +99,7 @@ test('AI Agent direct page reading and Wikipedia work; Jina requires opt-in and 
 });
 
 test('AI Agent quota errors keep saved data and let the current chat export; invalid imports are non-destructive', async ({ page }) => {
+  skipUnlessEnabled(test,'ai-agent');
   await modelFixture(page);await page.goto(route);await load(page);await send(page,'first saved');await expect(page.locator('#send')).toBeEnabled();
   await page.evaluate(()=>{IDBObjectStore.prototype.put=function(){throw new DOMException('Test quota exhausted','QuotaExceededError')}});
   await send(page,'second in memory');await expect(page.locator('#storage-warning')).toContainText('Test quota exhausted');await expect(page.locator('#send')).toBeEnabled();
@@ -103,6 +110,7 @@ test('AI Agent quota errors keep saved data and let the current chat export; inv
 });
 
 test('AI Agent mobile controls fit, theme messages are source-checked, and keyboard settings close restores focus', async ({ page }) => {
+  skipUnlessEnabled(test,'ai-agent');
   await page.setViewportSize({width:390,height:844});await page.goto(route);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await expect.poll(()=>page.locator('#conversation').evaluate(el=>el.scrollTop)).toBe(0);
@@ -112,6 +120,7 @@ test('AI Agent mobile controls fit, theme messages are source-checked, and keybo
 });
 
 test('AI Agent close hooks stop cached inference and block unsaved close until retry or export', async ({ page }) => {
+  skipUnlessEnabled(test,'ai-agent');
   await modelFixture(page);await page.goto(route);await load(page);await send(page,'HOLD before close');
   await expect.poll(()=>page.evaluate(()=>window.pcBeforeClose())).toBe(true);expect(await page.evaluate(()=>window.workers.every(w=>w.wasTerminated))).toBe(true);
   await page.waitForTimeout(2200);await expect(page.locator('#messages')).not.toContainText('STALE ANSWER');
@@ -121,6 +130,7 @@ test('AI Agent close hooks stop cached inference and block unsaved close until r
 });
 
 test('WebPC launches AI Agent, preserves it when minimized, applies theme and stops it on cached close', async ({ page }) => {
+  skipUnlessEnabled(test,'ai-agent');
   await modelFixture(page);await page.goto('/pc/');await page.locator('[data-shortcut="ai-agent"]').dblclick();
   const app=page.frameLocator('iframe[title="AI Agent"]');await expect(app.getByRole('heading',{name:'AI Agent',exact:true})).toBeVisible();
   await app.locator('#load-model').click();await expect(app.locator('#send')).toBeEnabled();await app.locator('#message').fill('HOLD during desktop controls');await app.locator('#send').click();await expect(app.locator('.assistant .message-body')).toBeVisible();

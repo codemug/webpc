@@ -69,4 +69,5 @@ document.addEventListener('pointerdown',()=>parent.postMessage({type:'pc:focus',
 frame.src=`/pc/vendor/${id}/index.html?webgl${standalone?`&standalone${config.nosw?'&nosw':''}`:'&host=parent&control'}${id==='lightcraft'?'&store=idb':''}`;
 // Standalone apps have no host protocol: hand the iframe its copy rules (the native
 // document pattern from releases.mjs), its documented open method and loading element.
-frame.addEventListener('load',()=>{if(standalone)frame.contentWindow?.postMessage({type:'pc:standalone',native:nativeSource(id),open:config.open||null,dirty:config.dirty||null,loading:config.loading??`${id}_loading`,appVersion:config.version},location.origin);});
+// The app version is on <body data-version> (CraftApp.astro reads it from catalog.yaml).
+frame.addEventListener('load',()=>{if(standalone)frame.contentWindow?.postMessage({type:'pc:standalone',native:nativeSource(id),open:config.open||null,dirty:config.dirty||null,loading:config.loading??`${id}_loading`,appVersion:document.body.dataset.version},location.origin);});

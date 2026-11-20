@@ -1,12 +1,14 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { unpackCheckpoint, packCheckpoint } from '../../src/scripts/pc/apps/linux-checkpoint.mjs';
+import { skipUnlessEnabled } from './catalog.mjs';
 const command = async (page, text) => { await page.locator('.xterm-helper-textarea').focus(); await page.keyboard.type(text); await page.keyboard.press('Enter'); };
 const screen = page => page.locator('.xterm-rows');
 const shellReady = async page => expect.poll(async () => (await screen(page).textContent()).trim().endsWith('webpc:~#'), { timeout:10000 }).toBe(true);
 const ready = async page => { await page.getByRole('button', { name: 'Start Linux', exact: true }).click(); await expect(page.getByRole('button', { name: 'Save session', exact: true })).toBeEnabled({ timeout: 120000 }); };
 
 test('real Linux runs tools, interrupts processes, edits files and restores 9p changes after reload', async ({ page, baseURL }, testInfo) => {
+ skipUnlessEnabled(test,'terminal');
  test.setTimeout(240000); page.on('dialog', dialog => dialog.accept());
  const external=[]; page.on('request', request => { if (/^https?:/.test(request.url()) && new URL(request.url()).origin !== new URL(baseURL).origin) external.push(request.url()); });
  await page.goto('/pc/apps/terminal/'); expect(await page.evaluate(() => crossOriginIsolated)).toBe(false);
@@ -47,6 +49,7 @@ test('real Linux runs tools, interrupts processes, edits files and restores 9p c
 });
 
 test('Linux start is lazy, failed storage remains exportable, legacy data and mobile keyboard survive', async ({page}) => {
+ skipUnlessEnabled(test,'terminal');
  test.setTimeout(180000); page.on('dialog',dialog=>dialog.accept());
  const assets=[];page.on('request',request=>{if(request.url().includes('/rootfs/')||request.url().endsWith('v86.wasm'))assets.push(request.url());});
  await page.setViewportSize({width:375,height:812});await page.goto('/pc/apps/terminal/');await page.waitForTimeout(250);expect(assets).toEqual([]);

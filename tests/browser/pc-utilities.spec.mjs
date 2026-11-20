@@ -1,9 +1,11 @@
 import { test, expect } from '@playwright/test';
 import { loadCatalog, appSources } from '../../scripts/catalog/catalog.mjs';
+import { skipUnlessEnabled } from './catalog.mjs';
 // The prepared HTML is CyberChef_v<version>.html; the version comes from catalog.yaml.
 const chef = `CyberChef_v${String(appSources(loadCatalog(), 'cyberchef', 'github-release')[0].tag).replace(/^v/, '')}.html`;
 
 test('CyberChef runs the actual local Base64 operation without external loads', async ({page,baseURL}) => {
+ skipUnlessEnabled(test,'cyberchef');
  const external=[];page.on('request',request=>{if(!request.url().startsWith(new URL(baseURL).origin)&&/^https?:/.test(request.url()))external.push(request.url());});
  await page.goto('/pc/apps/cyberchef/');await expect(page.locator('#cyberchef-loading')).toBeHidden({timeout:45000});
  const editor=page.frames().find(frame=>frame.url().includes(chef));
@@ -20,12 +22,14 @@ test('CyberChef runs the actual local Base64 operation without external loads', 
 });
 
 test('VS Code launch explicitly opens the real external app in a new tab', async ({page,context}) => {
+ skipUnlessEnabled(test,'vscode');
  await context.route('https://vscode.dev/**',route=>route.fulfill({body:'External VS Code test target'}));
  await page.goto('/pc/');await page.getByRole('button',{name:'Apps',exact:true}).click();
  const pending=context.waitForEvent('page');await page.locator('[data-app-result=vscode]').click();const popup=await pending;await popup.waitForLoadState();expect(popup.url()).toBe('https://vscode.dev/');await expect(page.locator('[data-window=vscode]')).toHaveCount(0);await popup.close();
 });
 
 test('developer utilities and expanded launcher fit narrow screens', async ({page}) => {
+ skipUnlessEnabled(test,'terminal');
  for(const width of [320,375,414,768]) {
   await page.setViewportSize({width,height:812});
   for(const app of ['terminal']){await page.goto(`/pc/apps/${app}/`);await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);}

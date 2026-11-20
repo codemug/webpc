@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import JSZip from 'jszip';
+import { skipUnlessEnabled } from './catalog.mjs';
 
 const DOCS = 'pc:docs:v1';
 async function open(page, app) { await page.goto(`/pc/apps/${app}/`); await expect(page.locator('#status')).toHaveText('Saved in this browser'); }
@@ -10,6 +11,7 @@ async function failWrites(page) { await page.evaluate(() => { window.originalSet
 async function restoreWrites(page) { await page.evaluate(() => { Storage.prototype.setItem = window.originalSetItem; }); }
 
 test('Docs edits, formats and immediately reloads with no external requests', async ({ page }) => {
+  skipUnlessEnabled(test, 'docs');
   const external = [], errors = [];
   page.on('request', r => { if (/^https?:/.test(r.url()) && new URL(r.url()).hostname !== '127.0.0.1') external.push(r.url()); });
   page.on('pageerror', e => errors.push(e.message));
@@ -27,6 +29,7 @@ test('Docs edits, formats and immediately reloads with no external requests', as
 });
 
 test('Docs DOCX and JSON roundtrip, recovery, malformed input and failed replacement preserve content', async ({ page }) => {
+  skipUnlessEnabled(test, 'docs');
   accept(page); await open(page, 'docs'); await page.locator('[contenteditable=true]').fill('Roundtrip document');
   const backup = await downloaded(page, '#backup'), docx = await downloaded(page, '#export');
   const zip = await JSZip.loadAsync(docx); expect(await zip.file('word/document.xml').async('string')).toContain('Roundtrip document');
@@ -49,6 +52,7 @@ test('Docs DOCX and JSON roundtrip, recovery, malformed input and failed replace
 });
 
 test('Docs exposes storage errors, saves edits during export, and protects corrupt startup data', async ({ page }) => {
+  skipUnlessEnabled(test, 'docs');
   await open(page, 'docs'); await failWrites(page);
   await page.locator('[contenteditable=true]').fill('Unsaved draft');
   await expect(page.locator('#error')).toContainText('Local save failed');
@@ -77,12 +81,14 @@ test('Docs exposes storage errors, saves edits during export, and protects corru
 });
 
 test('Docs load failure is visible and leaves storage untouched', async ({ page }) => {
+  skipUnlessEnabled(test, 'docs');
   await page.route('**/pc/vendor/docs/editor.js', route => route.abort());
   await page.goto('/pc/apps/docs/'); await expect(page.locator('#error')).toContainText('could not load');
   expect(await page.evaluate(key => localStorage.getItem(key), DOCS)).toBeNull();
 });
 
 test('Docs participates in desktop close/reopen and fit a narrow viewport', async ({ page }) => {
+  skipUnlessEnabled(test, 'docs');
   await page.goto('/pc/');
   for (const app of ['docs']) {
     await page.locator(`[data-shortcut="${app}"]`).dblclick();

@@ -1,6 +1,7 @@
 import {test,expect} from '@playwright/test';
 import {readFile} from 'node:fs/promises';
 import JSZip from 'jszip';
+import {skipUnlessEnabled,enabledApp} from './catalog.mjs';
 test.use({viewport:{width:1400,height:1000},launchOptions:{args:['--use-angle=swiftshader','--enable-unsafe-swiftshader']}});
 test.setTimeout(90000);
 async function open(page,id){await page.goto(`/pc/apps/${id}/`,{waitUntil:'domcontentloaded'});await expect(page.locator('#open')).toBeEnabled({timeout:60000});return page.frames().find(f=>f.url().includes(`/vendor/${id}/`));}
@@ -9,6 +10,7 @@ const light=(frame,id,params={})=>frame.evaluate(async({id,params})=>JSON.parse(
 function wav(){const n=144000,b=Buffer.alloc(44+n*2);b.write('RIFF');b.writeUInt32LE(b.length-8,4);b.write('WAVEfmt ',8);b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(1,22);b.writeUInt32LE(48000,24);b.writeUInt32LE(96000,28);b.writeUInt16LE(2,32);b.writeUInt16LE(16,34);b.write('data',36);b.writeUInt32LE(n*2,40);for(let j=0;j<n;j++)b.writeInt16LE(Math.sin(j*440*2*Math.PI/48000)*8000,44+j*2);return b;}
 
 test('LightCraft imports, edits, exports and reloads its isolated library; reset preserves other apps',async({page})=>{
+ skipUnlessEnabled(test,'lightcraft');
  page.on('dialog',d=>d.accept());const errors=[],external=[];page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(/^https?:/.test(r.url())&&new URL(r.url()).hostname!=='127.0.0.1')external.push(r.url());});
  let frame=await open(page,'lightcraft');await light(frame,'web.stats');await page.waitForTimeout(300);await page.mouse.click(780,595); // Native first-run welcome: Skip.
  await page.evaluate(async()=>{localStorage.setItem('pc:craft-isolation-sentinel','keep');const root=await navigator.storage.getDirectory(),file=await root.getFileHandle('webpc-other-app-sentinel',{create:true}),w=await file.createWritable();await w.write('other app work');await w.close();await new Promise((resolve,reject)=>{const r=indexedDB.open('webpc-other-app-sentinel',1);r.onupgradeneeded=()=>r.result.createObjectStore('data');r.onsuccess=()=>{const db=r.result,tx=db.transaction('data','readwrite');tx.objectStore('data').put('keep','sentinel');tx.oncomplete=()=>{db.close();resolve();};};r.onerror=()=>reject(r.error);});});
@@ -28,6 +30,7 @@ test('LightCraft imports, edits, exports and reloads its isolated library; reset
 });
 
 test('FigCraft native design saves real files and browser copies; spoofed events and storage errors are safe',async({page})=>{
+ skipUnlessEnabled(test,'figcraft');
  page.on('dialog',d=>d.accept());let frame=await open(page,'figcraft');await frame.evaluate(async()=>{await figcraft.execute('file.new',{name:'WebPC design'});await figcraft.execute('shape.rectangle',{x:100,y:100,width:240,height:160,name:'Real rectangle'});});
  await expect.poll(()=>page.evaluate(()=>pcBeforeClose()),{timeout:10000}).toBe(false);
  const file=await saved(page,async()=>{await frame.locator('canvas').click({position:{x:600,y:400}});await page.keyboard.press('ControlOrMeta+s');});expect(file.name).toMatch(/\.figcraft$/);await expect(page.locator('#status')).toContainText('browser copy saved');
@@ -40,6 +43,7 @@ test('FigCraft native design saves real files and browser copies; spoofed events
 });
 
 test('PDFCraft writes real PDF text, downloads and reopens its saved PDF',async({page})=>{
+ skipUnlessEnabled(test,'pdfcraft');
  let frame=await open(page,'pdfcraft');await frame.evaluate(()=>pdfcraft.execute('create.blank',{}));await frame.evaluate(()=>pdfcraft.execute('edit.text',{}));await frame.locator('canvas').click({position:{x:550,y:300}});await page.waitForTimeout(300);await page.keyboard.type('WebPC PDF text',{delay:35});await frame.locator('canvas').click({position:{x:850,y:400}});await page.waitForTimeout(200);
  const file=await saved(page,()=>frame.evaluate(()=>pdfcraft.execute('file.save',{})));expect(file.bytes.subarray(0,5).toString()).toBe('%PDF-');expect(file.bytes.toString('latin1')).toContain('WebPC PDF text');await expect(page.locator('#status')).toContainText('browser copy saved');
  await page.reload({waitUntil:'domcontentloaded'});await expect(page.locator('#restore')).toBeEnabled();frame=page.frames().find(f=>f.url().includes('/vendor/'));await page.locator('#restore').click();await expect.poll(async()=>(await frame.evaluate(()=>pdfcraft.docInspect())).documents.length).toBe(1);await page.screenshot({path:'/tmp/webpc-pdfcraft-final.png'});
@@ -47,6 +51,7 @@ test('PDFCraft writes real PDF text, downloads and reopens its saved PDF',async(
 });
 
 test('SoundCraft plays actual imported audio, exports media bundle, restores it and suspends on close',async({page})=>{
+ skipUnlessEnabled(test,'soundcraft');
  await page.addInitScript(()=>{const connect=AudioNode.prototype.connect;AudioNode.prototype.connect=function(destination,...rest){if(destination===this.context.destination&&!(this instanceof AnalyserNode)){const analyser=this.context.createAnalyser();(window.webpcTestAnalysers??=[]).push(analyser);connect.call(analyser,destination);return connect.call(this,analyser,...rest);}return connect.call(this,destination,...rest);};});
  let frame=await open(page,'soundcraft');await page.locator('#file').setInputFiles({name:'tone.wav',mimeType:'audio/wav',buffer:wav()});await page.waitForTimeout(700);
  await frame.locator('canvas').click({position:{x:500,y:300}});expect(await frame.evaluate(()=>webpcAudio.states())).toEqual(['suspended']);
@@ -71,6 +76,7 @@ test('SoundCraft plays actual imported audio, exports media bundle, restores it 
 });
 
  test('FilmCraft suspends its audio on window close and resumes it on the next editor gesture',async({page})=>{
+  skipUnlessEnabled(test,'filmcraft');
   let frame=await open(page,'filmcraft');
   await frame.locator('canvas').click({position:{x:500,y:300}});
   await expect.poll(()=>frame.evaluate(()=>webpcAudio.states().filter(x=>x!=='closed'))).toContain('running');
@@ -83,6 +89,7 @@ test('SoundCraft plays actual imported audio, exports media bundle, restores it 
  });
 
 test('Craft assets are lazy and the desktop caches SoundCraft while closing suspends audio',async({page})=>{
+ skipUnlessEnabled(test,'soundcraft');
  const requests=[];page.on('request',r=>requests.push(r.url()));await page.goto('/pc/',{waitUntil:'domcontentloaded'});expect(requests.filter(x=>/\/vendor\/(lightcraft|figcraft|pdfcraft|soundcraft)\//.test(x))).toEqual([]);
  await page.locator('[data-shortcut="soundcraft"]').dblclick();const win=page.locator('[data-window="soundcraft"]');await expect(win).toHaveAttribute('data-load','ready',{timeout:60000});const outer=await win.locator('iframe').elementHandle().then(e=>e.contentFrame()),frame=page.frames().find(f=>f.url().includes('/vendor/soundcraft/'));
  await frame.evaluate(()=>window.webpcIdentity='same cached session');await outer.locator('#audio').click();await expect.poll(()=>frame.evaluate(()=>webpcAudio.states())).toEqual(['running']);
@@ -92,6 +99,7 @@ test('Craft assets are lazy and the desktop caches SoundCraft while closing susp
 });
 
 test('VectorCraft runs standalone: the generic seam reads ready, the documented API opens a file and a native save is copied',async({page})=>{
+ skipUnlessEnabled(test,'vectorcraft');
  const external=[];page.on('request',r=>{if(/^https?:/.test(r.url())&&new URL(r.url()).hostname!=='127.0.0.1')external.push(r.url());});
  const frame=await open(page,'vectorcraft');
  await expect(page.locator('#open')).toBeEnabled();
@@ -106,6 +114,7 @@ test('VectorCraft runs standalone: the generic seam reads ready, the documented 
  const orangePng=async(page)=>Buffer.from(await page.evaluate(()=>{const c=document.createElement('canvas');c.width=c.height=64;const x=c.getContext('2d');x.fillStyle='orange';x.fillRect(0,0,64,64);return c.toDataURL().split(',')[1];}),'base64');
 
  test('PhotoCraft opens standalone and a wrapper file drop opens a document on the tab bar',async({page})=>{
+  skipUnlessEnabled(test,'photocraft');
   const external=[];page.on('request',r=>{if(/^https?:/.test(r.url())&&new URL(r.url()).hostname!=='127.0.0.1')external.push(r.url());});
   const frame=await open(page,'photocraft');
   expect(frame.url()).toContain('standalone');
@@ -122,6 +131,7 @@ test('VectorCraft runs standalone: the generic seam reads ready, the documented 
  });
 
  test('EffectCraft opens standalone, imports through addFile, and window close suspends its audio',async({page})=>{
+  skipUnlessEnabled(test,'effectcraft');
   const external=[];page.on('request',r=>{if(/^https?:/.test(r.url())&&new URL(r.url()).hostname!=='127.0.0.1')external.push(r.url());});
   const frame=await open(page,'effectcraft');
   expect(frame.url()).toContain('standalone');expect(frame.url()).toContain('nosw');
@@ -137,6 +147,7 @@ test('VectorCraft runs standalone: the generic seam reads ready, the documented 
 
  test('MaterialCraft and TextureCraft open standalone and accept wrapper file drops',async({page})=>{
   for(const id of ['materialcraft','texturecraft']){
+   if(!enabledApp(id))continue; // disabled apps are skipped inside the loop, not at test level
    const external=[];page.on('request',r=>{if(/^https?:/.test(r.url())&&new URL(r.url()).hostname!=='127.0.0.1')external.push(r.url());});
    const frame=await open(page,id);
    expect(frame.url()).toContain('standalone');

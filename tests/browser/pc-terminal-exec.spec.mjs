@@ -1,10 +1,13 @@
 import { test, expect } from '@playwright/test';
+import { skipUnlessEnabled } from './catalog.mjs';
 const screen = page => page.locator('.xterm-rows');
 const shellReady = async page => expect.poll(async () => (await screen(page).textContent()).trim().endsWith('webpc:~#'), { timeout:10000 }).toBe(true);
 const ready = async page => { await page.getByRole('button', { name: 'Start Linux', exact: true }).click(); await expect(page.getByRole('button', { name: 'Save session', exact: true })).toBeEnabled({ timeout: 120000 }); };
 const execRequest = (id, code, lang = 'sh', timeoutMs = 30000) => ({ type: 'exec-request', id, from: 'Terminal Exec Spec', lang, code, timeoutMs });
 
 test('the terminal exec service runs approved commands and reports results over BroadcastChannel', async ({ page, baseURL }, testInfo) => {
+  skipUnlessEnabled(test, 'terminal');
+  skipUnlessEnabled(test, 'files'); // the spec uses the Files page as its BroadcastChannel requester
   test.setTimeout(300000); page.on('dialog', dialog => dialog.accept());
   const external=[];
   const trackExternal = request => { if (/^https?:/.test(request.url()) && new URL(request.url()).origin !== new URL(baseURL).origin) external.push(request.url()); };
