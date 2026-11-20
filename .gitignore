@@ -31,3 +31,4 @@ src/scripts/pc/registry.generated.json
 
 # Upgrader output
 upgrade-plan.json
+upgrade-report.md
