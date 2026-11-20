@@ -1,20 +1,55 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { staticApps, isUnsafeArchivePath, rowFingerprint } from '../scripts/pc/prepare-static-apps.mjs';
+import { readFileSync } from 'node:fs';
+import { parse } from 'yaml';
+import { staticApps, staticPlan, isUnsafeArchivePath, rowFingerprint } from '../scripts/pc/prepare-static-apps.mjs';
+import { appSources } from '../scripts/catalog/catalog.mjs';
 
-test('every static-apps table row is pinned', () => {
+const base = () => parse(readFileSync(new URL('../catalog.yaml', import.meta.url), 'utf8'));
+
+test('every static-apps row keeps its behaviour; the pins come from the catalog', () => {
   assert.ok(staticApps.length > 0, 'table must not be empty');
   const ids = new Set();
   for (const app of staticApps) {
     assert.match(app.id, /^[a-z0-9][a-z0-9-]*$/, `${app.id} must be a safe vendor directory name`);
     assert.ok(!ids.has(app.id), `${app.id} appears twice`);
     ids.add(app.id);
-    assert.match(app.version, /^[0-9][\w.+-]*$/, `${app.id} missing version`);
-    assert.match(app.url, /^https:\/\//, `${app.id} must download over https`);
-    assert.match(app.sha256, /^[0-9a-f]{64}$/, `${app.id} sha256 must be 64 lowercase hex chars`);
+    assert.ok(typeof app.title === 'string' && app.title.length > 0, `${app.id} missing title`);
     assert.ok(typeof app.notice === 'string' && app.notice.length > 0, `${app.id} missing WEBPC.txt notice`);
     assert.ok(app.tweak == null || typeof app.tweak === 'function', `${app.id} tweak must be absent, null or a function`);
+    assert.ok(app.inject == null || (typeof app.inject.name === 'string' && typeof app.inject.src === 'string'), `${app.id} inject must be absent or {name, src}`);
+    assert.ok('version' in app === false && 'url' in app === false && 'sha256' in app === false, `${app.id} must not hard-code pins here; catalog.yaml does`);
   }
+});
+
+test('staticPlan merges each enabled row with its catalog pin (version = tag without a leading v)', () => {
+  const catalog = base();
+  const plan = staticPlan(catalog);
+  assert.equal(plan.length, staticApps.length, 'one plan entry per row');
+  for (const app of plan) {
+    const source = appSources(catalog, app.id, 'github-release')[0];
+    assert.equal(app.version, String(source.tag).replace(/^v/, ''), `${app.id} version from the catalog tag`);
+    assert.equal(app.url, source.url, `${app.id} url from the catalog`);
+    assert.equal(app.sha256, source.sha256, `${app.id} sha256 from the catalog`);
+    assert.equal(app.upstream, `https://github.com/${source.repo}`, `${app.id} upstream derived from the catalog repo`);
+  }
+});
+
+test('a row whose ZIP ships no licence file pins the repo licence from the catalog (path, sha256, raw tag URL)', () => {
+  const plan = staticPlan(base()).find(app => app.id === 'beepbox');
+  const source = appSources(base(), 'beepbox', 'github-release')[0];
+  assert.equal(plan.license.sha256, source.license.sha256, 'licence digest from the catalog');
+  assert.equal(plan.license.name, source.license.path, 'saved under the catalog licence path');
+  assert.equal(plan.license.url, `https://raw.githubusercontent.com/${source.repo}/${source.tag}/${source.license.path}`, 'fetched from the raw tag path');
+});
+
+test('a disabled static app leaves the plan', () => {
+  const catalog = base();
+  const rowId = staticApps[0].id;
+  catalog.apps.find(a => a.id === rowId).enabled = false;
+  const plan = staticPlan(catalog);
+  assert.ok(!plan.some(app => app.id === rowId), `the disabled app (${rowId}) is not planned`);
+  assert.equal(plan.length, staticApps.length - 1, 'the other rows are still planned');
 });
 
 test('unsafe archive paths are rejected, safe paths accepted', () => {

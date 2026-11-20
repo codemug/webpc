@@ -1,9 +1,12 @@
 import { test, expect } from '@playwright/test';
+import { loadCatalog, appSources } from '../../scripts/catalog/catalog.mjs';
+// The prepared HTML is CyberChef_v<version>.html; the version comes from catalog.yaml.
+const chef = `CyberChef_v${String(appSources(loadCatalog(), 'cyberchef', 'github-release')[0].tag).replace(/^v/, '')}.html`;
 
 test('CyberChef runs the actual local Base64 operation without external loads', async ({page,baseURL}) => {
  const external=[];page.on('request',request=>{if(!request.url().startsWith(new URL(baseURL).origin)&&/^https?:/.test(request.url()))external.push(request.url());});
  await page.goto('/pc/apps/cyberchef/');await expect(page.locator('#cyberchef-loading')).toBeHidden({timeout:45000});
- const editor=page.frames().find(frame=>frame.url().includes('CyberChef_v11.5.0.html'));
+ const editor=page.frames().find(frame=>frame.url().includes(chef));
  await editor.getByText('To Base64',{exact:true}).first().dblclick();
  await editor.locator('#input-text [contenteditable=true]').fill('Hello WebPC');
  await expect(editor.locator('#output-text .cm-content')).toHaveText('SGVsbG8gV2ViUEM=',{timeout:15000});

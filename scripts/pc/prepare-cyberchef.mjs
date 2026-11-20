@@ -4,10 +4,16 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
+import { loadCatalog, appSources, isEnabled } from '../catalog/catalog.mjs';
 const root = fileURLToPath(new URL('../../', import.meta.url));
-const version = '11.5.0';
-const digest = 'f6478925d3eaa16ec08626a85f5b85eed10d531a5e18700615fed7ecb024cccf';
-const url = 'https://github.com/gchq/CyberChef/releases/download/v11.5.0/CyberChef_8cd426dd4f40f1423912d5fad91b578a86a65112.zip';
+// Pins (version = tag minus a leading v, digest, URL) come from catalog.yaml.
+const catalog = loadCatalog();
+if (!isEnabled(catalog, 'cyberchef')) { console.log('Skipped cyberchef: disabled in catalog.yaml.'); process.exit(0); }
+const source = appSources(catalog, 'cyberchef', 'github-release')[0];
+if (!source) throw new Error('cyberchef: catalog.yaml has no github-release source');
+const version = String(source.tag).replace(/^v/, '');
+const digest = source.sha256;
+const url = source.url;
 const cache = join(root, 'node_modules/.cache/webpc');
 const output = join(root, 'public/pc/vendor/cyberchef');
 const marker = join(output, '.release.json');
