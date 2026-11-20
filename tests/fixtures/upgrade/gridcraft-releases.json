@@ -1,0 +1,102 @@
+[
+ {
+  "tag_name": "v0.19.1",
+  "draft": false,
+  "prerelease": false,
+  "published_at": "2026-11-12T00:06:29Z",
+  "assets": [
+   {
+    "name": "gridcraft-web-0.19.1.zip",
+    "browser_download_url": "https://github.com/storytold/gridcraft/releases/download/v0.19.1/gridcraft-web-0.19.1.zip"
+   },
+   {
+    "name": "gridcraft-0.19.1-freebsd-aarch64.tar.gz",
+    "browser_download_url": "https://github.com/storytold/gridcraft/releases/download/v0.19.1/gridcraft-0.19.1-freebsd-aarch64.tar.gz"
+   },
+   {
+    "name": "gridcraft-0.19.1-freebsd-x86_64.tar.gz",
+    "browser_download_url": "https://github.com/storytold/gridcraft/releases/download/v0.19.1/gridcraft-0.19.1-freebsd-x86_64.tar.gz"
+   }
+  ]
+ },
+ {
+  "tag_name": "v0.19.0",
+  "draft": false,
+  "prerelease": false,
+  "published_at": "2026-11-11T16:54:48Z",
+  "assets": [
+   {
+    "name": "gridcraft-web-0.19.0.zip",
+    "browser_download_url": "https://github.com/storytold/gridcraft/releases/download/v0.19.0/gridcraft-web-0.19.0.zip"
+   },
+   {
+    "name": "gridcraft-0.19.0-freebsd-aarch64.tar.gz",
+    "browser_download_url": "https://github.com/storytold/gridcraft/releases/download/v0.19.0/gridcraft-0.19.0-freebsd-aarch64.tar.gz"
+   },
+   {
+    "name": "gridcraft-0.19.0-freebsd-x86_64.tar.gz",
+    "browser_download_url": "https://github.com/storytold/gridcraft/releases/download/v0.19.0/gridcraft-0.19.0-freebsd-x86_64.tar.gz"
+   }
+  ]
+ },
+ {
+  "tag_name": "v0.18.0",
+  "draft": false,
+  "prerelease": false,
+  "published_at": "2026-11-09T11:51:15Z",
+  "assets": [
+   {
+    "name": "gridcraft-web-0.18.0.zip",
+    "browser_download_url": "https://github.com/storytold/gridcraft/releases/download/v0.18.0/gridcraft-web-0.18.0.zip"
+   },
+   {
+    "name": "gridcraft-0.18.0-freebsd-aarch64.tar.gz",
+    "browser_download_url": "https://github.com/storytold/gridcraft/releases/download/v0.18.0/gridcraft-0.18.0-freebsd-aarch64.tar.gz"
+   },
+   {
+    "name": "gridcraft-0.18.0-freebsd-x86_64.tar.gz",
+    "browser_download_url": "https://github.com/storytold/gridcraft/releases/download/v0.18.0/gridcraft-0.18.0-freebsd-x86_64.tar.gz"
+   }
+  ]
+ },
+ {
+  "tag_name": "v0.17.0",
+  "draft": false,
+  "prerelease": false,
+  "published_at": "2026-11-06T20:21:45Z",
+  "assets": [
+   {
+    "name": "gridcraft-web-0.17.0.zip",
+    "browser_download_url": "https://github.com/storytold/gridcraft/releases/download/v0.17.0/gridcraft-web-0.17.0.zip"
+   },
+   {
+    "name": "gridcraft-0.17.0-freebsd-aarch64.tar.gz",
+    "browser_download_url": "https://github.com/storytold/gridcraft/releases/download/v0.17.0/gridcraft-0.17.0-freebsd-aarch64.tar.gz"
+   },
+   {
+    "name": "gridcraft-0.17.0-freebsd-x86_64.tar.gz",
+    "browser_download_url": "https://github.com/storytold/gridcraft/releases/download/v0.17.0/gridcraft-0.17.0-freebsd-x86_64.tar.gz"
+   }
+  ]
+ },
+ {
+  "tag_name": "v0.16.1",
+  "draft": false,
+  "prerelease": false,
+  "published_at": "2026-11-05T01:24:51Z",
+  "assets": [
+   {
+    "name": "gridcraft-web-0.16.1.zip",
+    "browser_download_url": "https://github.com/storytold/gridcraft/releases/download/v0.16.1/gridcraft-web-0.16.1.zip"
+   },
+   {
+    "name": "gridcraft-0.16.1-freebsd-aarch64.tar.gz",
+    "browser_download_url": "https://github.com/storytold/gridcraft/releases/download/v0.16.1/gridcraft-0.16.1-freebsd-aarch64.tar.gz"
+   },
+   {
+    "name": "gridcraft-0.16.1-freebsd-x86_64.tar.gz",
+    "browser_download_url": "https://github.com/storytold/gridcraft/releases/download/v0.16.1/gridcraft-0.16.1-freebsd-x86_64.tar.gz"
+   }
+  ]
+ }
+]
