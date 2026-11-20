@@ -31,10 +31,11 @@ test('validation names the app and field for each defect', () => {
 
 test('npm pins that drift from package.json or the lockfile are reported', () => {
   const catalog = base();
-  const pkg = { dependencies: {}, devDependencies: { v86: '0.5.474' } };
-  const lock = { packages: { 'node_modules/v86': { version: '0.5.473' } } };
+  const pinned = appSources(catalog, 'terminal', 'npm', 'v86')[0].version;
+  const pkg = { dependencies: {}, devDependencies: { v86: `${pinned}-other` } };
+  const lock = { packages: { 'node_modules/v86': { version: pinned } } };
   const errors = checkNpmPins({ apps: [byId(catalog, 'terminal')] }, pkg, lock).join('\n');
-  assert.match(errors, /terminal: v86 is 0\.5\.473 in the catalog but 0\.5\.474 in package\.json/);
+  assert.ok(errors.includes(`terminal: v86 is ${pinned} in the catalog but ${pinned}-other in package.json`), errors);
   assert.match(errors, /terminal: @xterm\/xterm is missing from package\.json/);
 });
 
