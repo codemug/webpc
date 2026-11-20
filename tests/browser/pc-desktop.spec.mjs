@@ -187,3 +187,73 @@ test('Shift+F10 opens the menu, arrow keys move the selection and Escape restore
   await expect(page.getByRole('menu')).toBeHidden();
   await expect(shortcut).toBeFocused();
 });
+
+// The first free cell of the default (column-major) icon layout, desktop-relative.
+// The default layout fills cells p = 0..apps-1 in order (icon-layout.mjs column-major,
+// with the overflow row-band past the last row), so p = apps is free.
+async function freeCell(page) {
+  return page.evaluate(() => {
+    const ws = document.querySelector('#pc-workspace');
+    const apps = ws.querySelectorAll('[data-shortcut]').length;
+    const cols = Math.max(1, Math.floor((ws.clientWidth - 16) / 102));
+    const rows = Math.max(1, Math.floor((ws.clientHeight - 16) / 112));
+    const nominal = cols * rows;
+    const p = apps;
+    const cell = p < nominal
+      ? { col: Math.floor(p / rows), row: p % rows }
+      : { col: (p - nominal) % cols, row: rows + Math.floor((p - nominal) / cols) };
+    return { col: cell.col, row: cell.row, centre: { x: 16 + cell.col * 102 + 51, y: 16 + cell.row * 112 + 56 } };
+  });
+}
+async function dragIconToFreeCell(page, id) {
+  const cell = await freeCell(page);
+  const icon = page.locator(`[data-shortcut="${id}"]`);
+  const from = await icon.boundingBox();
+  const ws = await page.locator('#pc-workspace').boundingBox();
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(ws.x + cell.centre.x, ws.y + cell.centre.y, { steps: 8 });
+  await page.mouse.up();
+  return { icon, cell, ws };
+}
+
+test('dragging an icon to an empty cell persists across reload', async ({ page }) => {
+  skipUnlessEnabled(test, 'gridcraft');
+  await page.goto('/pc/');
+  const { icon, cell, ws } = await dragIconToFreeCell(page, 'gridcraft');
+  expect(await page.locator('iframe').count()).toBe(0); // a drag never opens the app
+  const after = await icon.boundingBox();
+  expect(after.x).toBe(ws.x + 16 + cell.col * 102);
+  expect(after.y).toBe(ws.y + 16 + cell.row * 112);
+  await page.reload();
+  const reloaded = await page.locator('[data-shortcut="gridcraft"]').boundingBox();
+  expect(reloaded.x).toBe(after.x);
+  expect(reloaded.y).toBe(after.y);
+});
+
+test('Arrange icons restores the default layout', async ({ page }) => {
+  skipUnlessEnabled(test, 'gridcraft');
+  await page.goto('/pc/');
+  const icon = page.locator('[data-shortcut="gridcraft"]');
+  const defaultBox = await icon.boundingBox();
+  await dragIconToFreeCell(page, 'gridcraft');
+  const moved = await icon.boundingBox();
+  expect(moved.x).not.toBe(defaultBox.x);
+  await page.locator('#pc-workspace').click({ position: { x: 4, y: 4 }, button: 'right' });
+  await page.getByRole('menuitem', { name: 'Arrange icons' }).click();
+  const restored = await icon.boundingBox();
+  expect(restored.x).toBe(defaultBox.x);
+  expect(restored.y).toBe(defaultBox.y);
+});
+
+test('Alt+ArrowRight moves the focused icon one cell to the right', async ({ page }) => {
+  skipUnlessEnabled(test, 'gridcraft');
+  await page.goto('/pc/');
+  const { icon } = await dragIconToFreeCell(page, 'gridcraft'); // park it at the first free cell
+  const before = await icon.boundingBox();
+  await icon.focus();
+  await page.keyboard.press('Alt+ArrowRight');
+  const after = await icon.boundingBox();
+  expect(after.x).toBe(before.x + 102); // CELL_W; the cell to the right of the first free cell is free
+  expect(after.y).toBe(before.y);
+});

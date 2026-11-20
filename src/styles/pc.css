@@ -46,10 +46,15 @@ body { margin: 0; }
 .pc-wallpaper-wordmark > span { font: 10px var(--font-mono); letter-spacing: .11em; color: var(--color-text-muted); }
 .pc-wallpaper-wordmark > strong { font-size: clamp(72px, 9vw, 130px); line-height: 1; font-weight: 500; letter-spacing: -.085em; color: var(--color-text-soft); }
 .pc-wallpaper-wordmark > strong span { color: var(--color-accent); }
-.pc-shortcuts { position: relative; display: grid; grid-template-columns: repeat(auto-fill, 94px); align-content: start; padding: 24px; gap: 12px; width: min(472px, 100%); max-height: calc(100% - 70px); overflow: auto; }
+.pc-shortcuts { position: relative; display: grid; grid-template-columns: repeat(auto-fill, 94px); align-content: start; padding: 24px; gap: 12px; width: 100%; max-height: calc(100% - 70px); overflow: auto; }
 .pc-shortcut { width: 94px; min-height: 100px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; padding: 8px 4px; border-radius: 8px; background: transparent; user-select: none; }
 .pc-shortcut > span { font-size: 12px; line-height: 1.5; white-space: nowrap; }
 .pc-shortcut[aria-pressed="true"] { background: var(--pc-selection); box-shadow: inset 0 0 0 1px var(--color-border-strong); }
+/* Free layout (fine pointer, >= 640 px): the desktop is the icon space; JS sets each
+   shortcut's left/top at its cell origin (icon-layout.mjs) and reorders the DOM. */
+.pc-shell[data-free-layout="true"] .pc-shortcuts { position: absolute; inset: 0; max-height: none; padding: 0; }
+.pc-shell[data-free-layout="true"] .pc-shortcut { position: absolute; }
+.pc-shell[data-free-layout="true"] .pc-shortcut.pc-shortcut-dragging { z-index: 10; cursor: grabbing; box-shadow: 0 4px 16px #00000040; }
 .pc-app-icon { width: 54px; height: 54px; border-radius: 22%; background: linear-gradient(135deg, var(--from, #94a3b8), var(--to, #475569)); box-shadow: inset 0 1px 0 #ffffff5c, inset 0 -1px 0 #00000030; color: #fff; }
 .pc-app-icon g { opacity: .95; }
 .pc-app-icon-img { display: block; flex: none; object-fit: cover; } /* upstream icon; flex: none matches .pc-shell svg */

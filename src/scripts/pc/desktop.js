@@ -2,6 +2,7 @@ import { apps } from './registry.mjs';
 import { filterApps } from './app-search.mjs';
 import { reduceDesktop, windowRect, MOBILE_WIDTH } from './window-state.mjs';
 import { showMenu } from './context-menu.mjs';
+import { gridSize, parseSaved, resolveLayout, moveIcon, cellAt, cellOrigin, visualOrder } from './icon-layout.mjs';
 
 const shell = document.querySelector('[data-pc]');
 if (shell) {
@@ -38,8 +39,9 @@ if (shell) {
     ];
   };
   const backgroundMenuItems = () => [
-    // Part B: clear pc:desktop:icons:v1 and re-apply defaultLayout (icon-layout.mjs).
-    { label: 'Arrange icons', action: () => {} },
+    // "Arrange icons": clear the stored layout and re-apply the default (re-resolving
+    // with no saved cells is the default layout); nothing is written back.
+    { label: 'Arrange icons', action: () => { try { localStorage.removeItem(iconStorageKey); } catch {} applyIconLayout(); } },
   ];
   const showAppMenu = (target, x, y) => {
     const app = appById(target.dataset.shortcut ?? target.dataset.openApp);
@@ -54,12 +56,26 @@ if (shell) {
     }
   });
   shell.addEventListener('keydown', event => {
-    if (event.key !== 'ContextMenu' && !(event.key === 'F10' && event.shiftKey)) return;
-    const shortcut = event.target instanceof Element ? event.target.closest('.pc-shortcut') : null;
-    if (!shortcut) return;
-    event.preventDefault();
-    const rect = shortcut.getBoundingClientRect();
-    showAppMenu(shortcut, rect.left + rect.width / 2, rect.bottom); // the icon
+    if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
+      const shortcut = event.target instanceof Element ? event.target.closest('.pc-shortcut') : null;
+      if (!shortcut) return;
+      event.preventDefault();
+      const rect = shortcut.getBoundingClientRect();
+      showAppMenu(shortcut, rect.left + rect.width / 2, rect.bottom); // the icon
+      return;
+    }
+    if (event.key === 'Escape' && dragState.active && dragState.button) {
+      event.preventDefault();
+      endIconDrag(dragState.button, false); // cancel the drag
+      return;
+    }
+    const cellDelta = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
+    if (cellDelta && event.altKey && !event.ctrlKey && !event.metaKey) {
+      const shortcut = event.target instanceof Element ? event.target.closest('.pc-shortcut') : null;
+      if (!shortcut || !isFreeLayout()) return;
+      event.preventDefault();
+      moveIconBy(shortcut.dataset.shortcut, cellDelta[0], cellDelta[1]);
+    }
   });
   // A 500 ms touch long-press opens the menu; the click the pointer-up then dispatches
   // is suppressed so it does not also open the app.
@@ -80,6 +96,95 @@ if (shell) {
     });
     for (const type of ['pointerup', 'pointercancel']) button.addEventListener(type, clear);
     button.addEventListener('pointermove', event => { if (timer && Math.hypot(event.clientX - startX, event.clientY - startY) > 10) clear(); });
+  };
+
+  // --- Free icon layout (fine pointer, desktop >= 640 px) ---------------------------
+  // The whole desktop is the icon space: shortcuts sit absolutely at their cell origin,
+  // resolved from localStorage (pc:desktop:icons:v1). A resize re-resolves without
+  // saving; only a user move (drop, Alt+arrow) or "Arrange icons" (which clears) writes.
+  // Coarse pointers and narrow screens keep the flow grid at full width (CSS), registry order.
+  const iconStorageKey = 'pc:desktop:icons:v1';
+  const iconIds = apps.map(app => app.id);
+  const iconContainer = shell.querySelector('.pc-shortcuts');
+  const shortcutOf = id => shell.querySelector(`[data-shortcut="${id}"]`);
+  const isFreeLayout = () => matchMedia('(hover: hover) and (pointer: fine)').matches && workspace.clientWidth >= 640;
+  const savedIcons = () => { try { return parseSaved(localStorage.getItem(iconStorageKey) ?? ''); } catch { return {}; } };
+  const storeIcons = layout => { try { localStorage.setItem(iconStorageKey, JSON.stringify(layout)); } catch {} };
+  let iconLayout = {};
+  function applyIconLayout() {
+    const { width, height } = bounds();
+    const grid = gridSize(width, height);
+    const free = isFreeLayout();
+    shell.dataset.freeLayout = String(free);
+    if (!free) {
+      for (const id of iconIds) { const button = shortcutOf(id); if (button) iconContainer.append(button); }
+      return;
+    }
+    iconLayout = resolveLayout(iconIds, savedIcons(), grid.cols, grid.rows);
+    for (const [id, cell] of Object.entries(iconLayout)) {
+      const button = shortcutOf(id);
+      if (!button) continue;
+      const origin = cellOrigin(cell);
+      button.style.left = `${origin.x}px`;
+      button.style.top = `${origin.y}px`;
+      button.style.transform = '';
+    }
+    // DOM order is the Tab order: column-major over the resolved cells.
+    for (const id of visualOrder(iconLayout)) { const button = shortcutOf(id); if (button) iconContainer.append(button); }
+  }
+  const commitIconMove = (id, cell) => {
+    const { width, height } = bounds();
+    const grid = gridSize(width, height);
+    iconLayout = moveIcon(iconLayout, id, cell, grid.cols, grid.rows);
+    storeIcons(iconLayout);
+    applyIconLayout();
+  };
+  const moveIconBy = (id, dCol, dRow) => {
+    const cell = iconLayout[id] ?? { col: 0, row: 0 };
+    commitIconMove(id, { col: cell.col + dCol, row: cell.row + dRow });
+  };
+  const dragState = { button: null, active: false, x: 0, y: 0 };
+  const dragClick = { button: null, until: 0 };
+  const clicksSuppressed = button => button === dragClick.button && Date.now() < dragClick.until;
+  const endIconDrag = (button, commit) => {
+    // Measure the drop point while the icon is still translated, then reset it.
+    const rect = button.getBoundingClientRect();
+    button.classList.remove('pc-shortcut-dragging');
+    button.style.transform = '';
+    const wasDrag = dragState.active;
+    dragState.button = null;
+    dragState.active = false;
+    if (!wasDrag) return;
+    // The click/dblclick the pointer-up then dispatches must not open the app.
+    dragClick.button = button;
+    dragClick.until = Date.now() + 700;
+    if (!commit) return;
+    const ws = workspace.getBoundingClientRect();
+    commitIconMove(button.dataset.shortcut, cellAt(rect.left + rect.width / 2 - ws.left, rect.top + rect.height / 2 - ws.top));
+  };
+  const wireIconDrag = button => {
+    button.addEventListener('pointerdown', event => {
+      if (!isFreeLayout() || event.pointerType !== 'mouse' || event.button !== 0) return;
+      dragState.button = button;
+      dragState.active = false;
+      dragState.x = event.clientX;
+      dragState.y = event.clientY;
+      // Capture now, so a fast first move that leaves the icon still reaches it.
+      button.setPointerCapture(event.pointerId);
+    });
+    button.addEventListener('pointermove', event => {
+      if (dragState.button !== button) return;
+      const dx = event.clientX - dragState.x, dy = event.clientY - dragState.y;
+      if (!dragState.active && Math.hypot(dx, dy) > 5) {
+        dragState.active = true;
+        button.classList.add('pc-shortcut-dragging');
+      }
+      if (!dragState.active) return;
+      button.style.transform = `translate(${dx}px, ${dy}px)`;
+      event.preventDefault();
+    });
+    button.addEventListener('pointerup', () => endIconDrag(button, true));
+    button.addEventListener('pointercancel', () => endIconDrag(button, false));
   };
 
   function dispatch(action) {
@@ -311,10 +416,12 @@ if (shell) {
     button.addEventListener('click', event => {
       shell.querySelectorAll('[data-shortcut]').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
       if (suppressedClick === button) { suppressedClick = null; return; } // long-press opened the menu
+      if (clicksSuppressed(button)) return; // a drag just ended; it must not open the app
       if (event.detail === 0 || event.pointerType === 'touch' || matchMedia('(pointer: coarse)').matches) openApp(button.dataset.shortcut);
     });
-    button.addEventListener('dblclick', () => openApp(button.dataset.shortcut));
+    button.addEventListener('dblclick', () => { if (clicksSuppressed(button)) return; openApp(button.dataset.shortcut); });
     wireLongPress(button);
+    wireIconDrag(button);
   });
   shell.querySelectorAll('[data-open-app]').forEach(button => button.addEventListener('click', () => {
     if (suppressedClick === button) { suppressedClick = null; return; }
@@ -343,7 +450,8 @@ if (shell) {
     }
     if (event.data.type === 'pc:focus' && state.windows.some(win => win.id === view.app.id && !win.minimized)) dispatch({ type: 'focus', id: view.app.id });
   });
-  new ResizeObserver(() => dispatch({ type: 'bounds' })).observe(workspace);
+  new ResizeObserver(() => { dispatch({ type: 'bounds' }); applyIconLayout(); }).observe(workspace);
+  applyIconLayout(); // the initial layout before the observer's first callback
   shell.querySelector('[data-theme-toggle]').addEventListener('click', () => {
     const theme = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
     document.documentElement.dataset.theme = theme;
