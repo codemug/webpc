@@ -18,6 +18,7 @@
   <a href="https://github.com/codemug/webpc/actions/workflows/ci.yml"><img src="https://github.com/codemug/webpc/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/codemug/webpc/actions/workflows/upgrade.yml"><img src="https://github.com/codemug/webpc/actions/workflows/upgrade.yml/badge.svg" alt="Weekly app upgrades"></a>
   <a href="https://github.com/codemug/webpc/releases/tag/latest-dist"><img src="https://img.shields.io/badge/build-latest--dist-0e7490" alt="Latest build"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16a34a" alt="MIT licence"></a>
 </p>
 
 ---
@@ -145,6 +146,10 @@ npm run test:browser   # Playwright suite against the build (Chromium)
 A clean build caches the pinned downloads in `node_modules/.cache/webpc/`.
 
 To host WebPC on your own static site, download `webpc-dist.tar.gz` from [`latest-dist`](https://github.com/codemug/webpc/releases/tag/latest-dist) and verify it against `webpc-dist.tar.gz.sha256`. Then extract it into your build output. It contains `pc/` and `third-party/`.
+
+## License
+
+WebPC's own code is released under the [MIT License](LICENSE). The apps it bundles keep their own licences: each one's licence, notices and the changes WebPC made are under [`public/third-party/`](public/third-party/).
 
 ## Credits
 

@@ -2,6 +2,8 @@
   "name": "webpc",
   "type": "module",
   "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
   "engines": {
     "node": ">=22.12.0"
   },
@@ -45,6 +47,5 @@
     "semver": "7.8.6",
     "v86": "0.5.473",
     "yaml": "2.9.1"
-  },
-  "private": true
+  }
 }
