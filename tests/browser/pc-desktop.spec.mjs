@@ -158,3 +158,32 @@ test('WebPC launcher filters apps and launches a keyboard search result', async 
   await expect(win(page, 'gridcraft')).toHaveAttribute('data-load', 'ready');
   expect(loads()).toBe(1);
 });
+
+test('right-click on a shortcut offers Open in new window and the popup loads the app', async ({ page }) => {
+  skipUnlessEnabled(test, 'gridcraft');
+  await page.goto('/pc/');
+  const popup = page.waitForEvent('popup');
+  await page.locator('[data-shortcut="gridcraft"]').click({ button: 'right' });
+  await expect(page.getByRole('menu')).toBeVisible();
+  await page.getByRole('menuitem', { name: 'Open in new window' }).click();
+  const window = await popup;
+  expect(new URL(window.url()).pathname).toBe('/pc/apps/gridcraft/');
+  await window.close();
+});
+
+test('Shift+F10 opens the menu, arrow keys move the selection and Escape restores focus', async ({ page }) => {
+  skipUnlessEnabled(test, 'gridcraft');
+  await page.goto('/pc/');
+  const shortcut = page.locator('[data-shortcut="gridcraft"]');
+  await shortcut.focus();
+  await page.keyboard.press('Shift+F10');
+  await expect(page.getByRole('menu')).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Open', exact: true })).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('menuitem', { name: 'Open in new window' })).toBeFocused();
+  await page.keyboard.press('ArrowUp');
+  await expect(page.getByRole('menuitem', { name: 'Open', exact: true })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu')).toBeHidden();
+  await expect(shortcut).toBeFocused();
+});

@@ -1,6 +1,7 @@
 import { apps } from './registry.mjs';
 import { filterApps } from './app-search.mjs';
 import { reduceDesktop, windowRect, MOBILE_WIDTH } from './window-state.mjs';
+import { showMenu } from './context-menu.mjs';
 
 const shell = document.querySelector('[data-pc]');
 if (shell) {
@@ -18,6 +19,68 @@ if (shell) {
   const announce = text => { announcement.textContent = text; };
   const icon = id => shell.querySelector(`[data-shortcut="${id}"] .pc-app-icon`).cloneNode(true);
   const appById = id => apps.find(app => app.id === id);
+
+  // Right-click (or Shift+F10 / the ContextMenu key on a focused shortcut, or a 500 ms
+  // touch long-press) opens a context menu for shortcuts, launcher entries and the
+  // desktop background. Windows, the taskbar and everything else keep the native menu.
+  const appMenuItems = app => {
+    const openWindow = () => window.open(app.src, 'webpc-' + app.id, `popup=yes,width=${app.width ?? 1180},height=${app.height ?? 760}${app.kind === 'external' ? ',noopener' : ''}`);
+    const openTab = () => window.open(app.src, '_blank', 'noopener');
+    if (app.kind === 'external') return [
+      { label: 'Open in new tab', action: openTab },
+      { label: 'Open in new window', action: openWindow },
+    ];
+    if (app.kind === 'about') return [{ label: 'Open', action: () => openApp(app.id) }];
+    return [
+      { label: 'Open', action: () => openApp(app.id) },
+      { label: 'Open in new window', action: openWindow },
+      { label: 'Open in new tab', action: openTab },
+    ];
+  };
+  const backgroundMenuItems = () => [
+    // Part B: clear pc:desktop:icons:v1 and re-apply defaultLayout (icon-layout.mjs).
+    { label: 'Arrange icons', action: () => {} },
+  ];
+  const showAppMenu = (target, x, y) => {
+    const app = appById(target.dataset.shortcut ?? target.dataset.openApp);
+    if (app) showMenu({ x, y, items: appMenuItems(app), returnFocus: target });
+  };
+  shell.addEventListener('contextmenu', event => {
+    const target = event.target instanceof Element ? event.target.closest('.pc-shortcut, .pc-launcher-app') : null;
+    if (target) { event.preventDefault(); showAppMenu(target, event.clientX, event.clientY); return; }
+    if (event.target instanceof Element && event.target.closest('#pc-workspace') && !event.target.closest('[data-windows]')) {
+      event.preventDefault();
+      showMenu({ x: event.clientX, y: event.clientY, items: backgroundMenuItems(), returnFocus: null });
+    }
+  });
+  shell.addEventListener('keydown', event => {
+    if (event.key !== 'ContextMenu' && !(event.key === 'F10' && event.shiftKey)) return;
+    const shortcut = event.target instanceof Element ? event.target.closest('.pc-shortcut') : null;
+    if (!shortcut) return;
+    event.preventDefault();
+    const rect = shortcut.getBoundingClientRect();
+    showAppMenu(shortcut, rect.left + rect.width / 2, rect.bottom); // the icon
+  });
+  // A 500 ms touch long-press opens the menu; the click the pointer-up then dispatches
+  // is suppressed so it does not also open the app.
+  let suppressedClick = null;
+  const wireLongPress = button => {
+    let timer = null, startX = 0, startY = 0;
+    const clear = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    button.addEventListener('pointerdown', event => {
+      if (event.pointerType !== 'touch' || event.button !== 0) return;
+      startX = event.clientX; startY = event.clientY;
+      clear();
+      timer = setTimeout(() => {
+        timer = null;
+        suppressedClick = button;
+        const rect = button.getBoundingClientRect();
+        showAppMenu(button, rect.left + rect.width / 2, rect.top + rect.height / 2);
+      }, 500);
+    });
+    for (const type of ['pointerup', 'pointercancel']) button.addEventListener(type, clear);
+    button.addEventListener('pointermove', event => { if (timer && Math.hypot(event.clientX - startX, event.clientY - startY) > 10) clear(); });
+  };
 
   function dispatch(action) {
     state = reduceDesktop(state, action, bounds());
@@ -247,11 +310,17 @@ if (shell) {
   shell.querySelectorAll('[data-shortcut]').forEach(button => {
     button.addEventListener('click', event => {
       shell.querySelectorAll('[data-shortcut]').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+      if (suppressedClick === button) { suppressedClick = null; return; } // long-press opened the menu
       if (event.detail === 0 || event.pointerType === 'touch' || matchMedia('(pointer: coarse)').matches) openApp(button.dataset.shortcut);
     });
     button.addEventListener('dblclick', () => openApp(button.dataset.shortcut));
+    wireLongPress(button);
   });
-  shell.querySelectorAll('[data-open-app]').forEach(button => button.addEventListener('click', () => openApp(button.dataset.openApp)));
+  shell.querySelectorAll('[data-open-app]').forEach(button => button.addEventListener('click', () => {
+    if (suppressedClick === button) { suppressedClick = null; return; }
+    openApp(button.dataset.openApp);
+  }));
+  shell.querySelectorAll('.pc-launcher-app').forEach(wireLongPress);
   launcherToggle.addEventListener('click', () => toggleLauncher());
   document.addEventListener('pointerdown', event => {
     if (!launcher.hidden && !launcher.contains(event.target) && !launcherToggle.contains(event.target)) toggleLauncher(false);
