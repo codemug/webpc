@@ -77,3 +77,13 @@ test('binary files are refused by readText', async () => {
   await code(ctx.readText('/pic.png'), 'not_a_file');
   await code(files.readText('/nope.txt'), 'not_found');
 });
+
+test('readBytes and writeBytes round-trip binary files with the exists guard and a size cap', async () => {
+  const { files } = setup();
+  const bytes = new Uint8Array([0, 1, 2, 250]);
+  assert.equal((await files.writeBytes('/pic.bin', bytes)).size, 4);
+  await code(files.writeBytes('/pic.bin', bytes), 'exists');
+  assert.deepEqual([...(await files.readBytes('/pic.bin')).bytes], [0, 1, 2, 250]);
+  await code(files.readBytes('/pic.bin', { maxBytes: 2 }), 'too_large');
+  await code(files.readBytes('/nope.bin'), 'not_found');
+});

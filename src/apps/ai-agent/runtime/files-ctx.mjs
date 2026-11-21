@@ -60,6 +60,26 @@ export function createFilesCtx(store, { broadcast = () => {}, maxFind = 500 } = 
       await store.write(dir, name, data); broadcast(toPath(dir, name));
       return { path: toPath(dir, name), size: data.size, created: kind !== 'file' };
     }),
+    // Binary files for app open/save tools: bytes in, bytes out (Uint8Array), capped at maxBytes.
+    readBytes: (path, { maxBytes = 512 * 1024 * 1024 } = {}) => wrap(async () => {
+      const { dir, name } = splitPath(path);
+      const kind = await store.exists(dir, name);
+      if (kind !== 'file') throw fail(kind ? 'not_a_file' : 'not_found', `${toPath(dir, name)} is not a file.`);
+      const { data } = await store.read(dir, name);
+      if (data.size > maxBytes) throw fail('too_large', `${name} is ${Math.round(data.size / 1048576)} MB; the limit is ${Math.round(maxBytes / 1048576)} MB.`);
+      return { path: toPath(dir, name), name, bytes: new Uint8Array(await data.arrayBuffer()), size: data.size };
+    }),
+    writeBytes: (path, bytes, { overwrite = false, type = 'application/octet-stream' } = {}) => wrap(async () => {
+      const { dir, name } = splitPath(path);
+      if (!name) throw fail('invalid_name', 'Give a file name.');
+      if (dir && (await kindOf(`/${dir}`)) !== 'folder') throw fail('not_found', `The folder /${dir} does not exist; make it first.`);
+      const kind = await store.exists(dir, name);
+      if (kind === 'folder') throw fail('not_a_file', `${toPath(dir, name)} is a folder.`);
+      if (kind === 'file' && !overwrite) throw fail('exists', `${toPath(dir, name)} already exists.`);
+      const data = bytes instanceof Blob ? bytes : new Blob([bytes], { type });
+      await store.write(dir, name, data); broadcast(toPath(dir, name));
+      return { path: toPath(dir, name), size: data.size, created: kind !== 'file' };
+    }),
     appendText: (path, text) => wrap(async () => {
       const { dir, name } = splitPath(path);
       const before = (await store.exists(dir, name)) === 'file' ? await (await store.read(dir, name)).data.text() : '';
