@@ -4,7 +4,8 @@
 // Run: node --test tests/agent-craft-adapter.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { craftApi, METHODS } from '../agent/shared/craft.js';
+import { craftApi, METHODS, NO_DOCUMENT, noDoc, noDocResult, teachApp } from '../agent/shared/craft.js';
+import { ToolError } from '../src/apps/ai-agent/runtime/args.mjs';
 
 // A fake app-window API recording every call, like window.gridcraft does.
 const makeApi = () => {
@@ -135,6 +136,108 @@ test('a second craftApi object has its own commands cache', async () => {
   assert.equal(api.calls.filter(call => call[0] === 'commands').length, 2);
 });
 
-test('METHODS maps gridcraft to the craft-web-api default names', () => {
-  assert.deepEqual(METHODS.gridcraft, { request: 'request', execute: 'execute', commands: 'commands', inspect: 'docInspect', screenshot: 'screenshot' });
+test('METHODS maps the craft apps to the craft-web-api default names, with the batch 2 exceptions', () => {
+  const defaultNames = { request: 'request', execute: 'execute', commands: 'commands', inspect: 'docInspect', screenshot: 'screenshot' };
+  for (const id of ['cadcraft', 'deckcraft', 'figcraft', 'gridcraft', 'pdfcraft', 'vectorcraft']) {
+    assert.deepEqual(METHODS[id], defaultNames, `${id} entry`);
+  }
+  // FilmCraft's Methods table has doc_inspect: None, so PageApi installs no docInspect; the
+  // page's own uiInspect (ui.inspect) is the inspect. EffectCraft's page installs its own
+  // inspect instead of the PageApi pair (vendor index.html).
+  for (const [id, inspect] of [['filmcraft', 'uiInspect'], ['effectcraft', 'inspect']]) {
+    assert.deepEqual(METHODS[id], { ...defaultNames, inspect }, `${id} entry`);
+  }
+  assert.equal(METHODS.lightcraft, undefined); // lightcraft.command only: no PageApi surface
+});
+
+test('commands() normalises the page reply to a plain array: array, {commands}, object map, empty', async () => {
+  const rows = [{ id: 'page.rotate', label: 'Rotate', menu: 'Page', enabled: true }, { id: 'edit.find', label: 'Find', menu: 'Edit', enabled: true }];
+  const cases = [
+    [rows, ['page.rotate', 'edit.find']], // most apps answer an array
+    [{ commands: rows }, ['page.rotate', 'edit.find']], // pdfcraft answers {commands: [...]} (control/host.rs:184)
+    [{ 'page.rotate': { label: 'Rotate', enabled: true }, 'edit.find': { label: 'Find', enabled: true } }, ['page.rotate', 'edit.find']], // object map keyed by id
+    [null, []], // anything else: empty list
+  ];
+  for (const [shape, ids] of cases) {
+    const api = makeApi();
+    api.commands = () => Promise.resolve(shape);
+    const { wrapper, sleep } = makeWindow(api);
+    const app = await craftApi(wrapper, 'gridcraft', { sleep });
+    assert.deepEqual((await app.commands()).map(row => row.id), ids, `shape ${JSON.stringify(shape)}`);
+  }
+});
+
+test('NO_DOCUMENT matches every app no-document wording, including the live probe messages', () => {
+  for (const message of [
+    'no drawing open',
+    'no open document',
+    'no active document',
+    'no document open',
+    'file.properties is disabled right now',
+    'command circle is not available right now: no drawing open', // cadcraft live probe (in-band)
+    'command shape.rectangle is not available right now: no document open', // vectorcraft live probe
+  ]) {
+    assert.ok(NO_DOCUMENT.test(message), message);
+  }
+  assert.ok(!NO_DOCUMENT.test('cell out of range'));
+});
+
+test('noDoc turns the no-document rejection into the teaching ToolError, passes the rest through', async () => {
+  const appError = message => Object.assign(new Error(message), { code: 'app_error' });
+  for (const message of ['no drawing open', 'no open document', 'no active document', 'no document open', 'file.properties is disabled right now']) {
+    await assert.rejects(noDoc(() => Promise.reject(appError(message)), 'No doc open.', 'the-fix'), error => {
+      assert.ok(error instanceof ToolError);
+      assert.equal(error.type, 'not_available');
+      assert.equal(error.message, 'No doc open.');
+      assert.equal(error.fix, 'the-fix');
+      return true;
+    });
+  }
+  const other = appError('cell out of range');
+  await assert.rejects(noDoc(() => Promise.reject(other), 'No doc open.', 'the-fix'), error => error === other); // unchanged
+  assert.deepEqual(await noDoc(async () => ({ ok: 1 }), 'No doc open.', 'the-fix'), { ok: 1 });
+});
+
+test('noDocResult turns the in-band error field into a ToolError', () => {
+  const state = { accept: null, error: 'command circle is not available right now: no drawing open' };
+  assert.throws(() => noDocResult(state, 'No doc open.', 'the-fix'), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'not_available');
+    assert.equal(error.fix, 'the-fix');
+    return true;
+  });
+  assert.throws(() => noDocResult({ output: [], error: 'bad point' }, 'No doc open.', 'the-fix'), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'app_error');
+    assert.equal(error.message, 'bad point');
+    return true;
+  });
+  assert.deepEqual(noDocResult({ accept: null, output: [] }, 'No doc open.', 'the-fix'), { accept: null, output: [] }); // no error field
+  assert.equal(noDocResult('plain', 'No doc open.', 'the-fix'), 'plain'); // non-object passes through
+});
+
+test('teachApp guards rejection and in-band wording on the unified calls, leaves the rest untouched', async () => {
+  const appError = message => Object.assign(new Error(message), { code: 'app_error' });
+  const failing = {
+    request: () => Promise.resolve({ error: 'no drawing open' }),
+    execute: () => Promise.reject(appError('no open document')),
+    commands: async () => [{ id: 'a' }],
+    inspect: async () => ({}),
+  };
+  const guarded = teachApp(failing, 'No doc open.', 'the-fix');
+  await assert.rejects(guarded.request('cmdline.input', {}), error => error instanceof ToolError && error.type === 'not_available' && error.fix === 'the-fix');
+  await assert.rejects(guarded.execute('entities', {}), error => error instanceof ToolError && error.type === 'not_available' && error.message === 'No doc open.');
+  assert.deepEqual(await guarded.commands(), [{ id: 'a' }]); // passthrough
+  const clean = {
+    request: async () => ({ output: [] }),
+    execute: async () => ({ ok: 1 }),
+    commands: async () => [{ id: 'a' }],
+    inspect: async () => ({}),
+  };
+  const ok = teachApp(clean, 'No doc open.', 'the-fix');
+  assert.deepEqual(await ok.request('cmdline.state', {}), { output: [] });
+  assert.deepEqual(await ok.execute('entities', {}), { ok: 1 });
+  const passthrough = teachApp({ request: () => Promise.reject('timeout'), execute: () => Promise.reject(appError('other')) }, 'No doc open.', 'the-fix');
+  await assert.rejects(passthrough.request('x', {}), error => error === 'timeout');
+  await assert.rejects(passthrough.execute('x', {}), error => error.code === 'app_error');
 });
