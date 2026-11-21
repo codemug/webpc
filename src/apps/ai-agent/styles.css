@@ -11,3 +11,28 @@
 #cloud-provider .check{margin-right:14px;white-space:nowrap}
 #cloud-model,#cloud-base{min-width:230px;max-width:320px}
 #cloud-key{min-width:230px;max-width:320px}
+/* M3: the chats list (fits the 480 px panel) and the in-chat approval cards */
+#chats-panel{position:absolute;top:0;left:0;bottom:0;width:min(300px,80%);background:var(--panel);border-right:1px solid var(--line);box-shadow:var(--shadow);z-index:30;display:flex;flex-direction:column}
+#chats-panel[hidden]{display:none}
+.chats-head{display:flex;align-items:center;gap:8px;padding:12px 12px 10px;border-bottom:1px solid var(--line)}
+.chats-head h2{font-size:14px;margin:0;flex:1}
+.chats-head button{font-size:12px;padding:5px 9px}
+#chats-list{overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:5px}
+.chat-row{display:flex;align-items:center;gap:5px;border:1px solid var(--line);border-radius:6px;padding:5px 7px;background:var(--panel)}
+.chat-row.active{border-color:var(--accent);background:var(--tint)}
+.chat-open{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:1px;text-align:left;border:none;background:none;padding:2px 4px}
+.chat-title{max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:650}
+.chat-time{font-size:10px;color:var(--muted)}
+.chip{font-size:9px;padding:2px 6px;border-radius:9px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.chip.running{color:var(--accent);border-color:var(--accent)}
+.chip.needs_you{color:var(--error);border-color:var(--error);font-weight:650}
+.chip.failed{color:var(--error);border-color:var(--error)}
+.chip.interrupted{color:var(--muted);border-style:dashed}
+.chat-rename,.chat-delete{border:none;background:none;color:var(--muted);font-size:11px;padding:3px 4px;white-space:nowrap}
+.chat-rename:hover,.chat-delete:hover{color:var(--text);background:var(--tint)}
+.chat-rename-input{width:170px;padding:2px 5px;border:1px solid var(--accent);border-radius:4px;background:var(--panel);color:var(--text);font-size:12px}
+.chats-empty{color:var(--muted);font-size:11px;padding:8px 4px}
+.approval{border:1px solid var(--accent);background:var(--tint);border-radius:8px;padding:10px 12px;margin:8px 0}
+.approval p{margin:0 0 6px;font-weight:650}
+.approval pre{margin:0 0 8px;white-space:pre-wrap;font-size:11px;font-family:var(--font-mono);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+.approval-actions{display:flex;gap:8px;justify-content:flex-end}

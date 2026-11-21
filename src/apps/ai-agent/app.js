@@ -17,20 +17,23 @@ import { BGBM_ENGINES, ocrTextResult, nobgName, nobgTarget, downscalePlan, OCR_M
 import { createExecClient } from './exec-client.js';
 import { createAgent, createPolicy, craftApi } from './runtime/index.mjs';
 import { createFilesCtx } from './runtime/files-ctx.mjs';
+import { createThreadStore, ThreadLimitError } from './threads.js';
+import { createSharedModel } from './shared-model.js';
 const $ = id => document.getElementById(id);
 // Cloud models are opt-in per session: the key lives only in CloudClient's memory and is never persisted.
 const CLOUD_MODELS = { 'cloud:anthropic': 'Claude · cloud (your key)', 'cloud:openai': 'OpenAI-compatible · cloud (your key)' };
 const isCloud = key => Boolean(CLOUD_MODELS[key]);
 const CHROME_MODEL = 'chrome:builtin'; const isChrome = key => key === CHROME_MODEL;
 const store = new ConversationStore(); let initialized = false, loading = false, loadVersion = 0, selected = DEFAULT_MODEL, pendingImage = null;
+let threads = null; // the thread store, built at startup from idb-keyval (see the startup section)
 try { const saved = localStorage.getItem(MODEL_KEY) ?? localStorage.getItem(LEGACY_MODEL_KEY); if (MODELS[saved]) selected = saved; } catch {}
 for (const [key, model] of Object.entries(MODELS)) $('model').add(new Option(`${model.label} · ${model.size}`, key));
 for (const [key, label] of Object.entries(CLOUD_MODELS)) $('model').add(new Option(label, key));
 $('model').value = selected;
 const cloud = new CloudClient();
 const chrome = new ChromeModelClient(self);
-// The session talks to whichever backend is active: the local worker, the BYOK cloud client or Chrome's on-device model.
-function bindClient() { session.client = isChrome(selected) ? chrome : isCloud(selected) ? cloud : client; }
+// The facade (with clientRef, defined below) points every thread at whichever backend is active:
+// the local worker, the BYOK cloud client or Chrome's on-device model.
 const status = text => { $('status').textContent = text; };
 const error = text => { $('error').textContent = text; $('error').hidden = !text; };
 function storageError(text) { $('storage-warning').hidden = false; $('storage-warning').querySelector('span').textContent = `${text} Your chat is still in memory; export it before closing.`; $('save-state').textContent = 'Not saved — export your chat'; }
@@ -38,7 +41,7 @@ function controls() {
   $('load-model').disabled = !initialized || loading || Boolean(session.active) || client.ready || isCloud(selected) || (isChrome(selected) && chrome.ready);
   $('stop').disabled = !(loading || session.active || client.ready || cloud.ready || chrome.ready);
   $('send').disabled = !initialized || !session.client.ready || Boolean(session.active) || loading;
-  $('new-chat').disabled = !initialized; $('import').disabled = !initialized; $('previous').disabled = !initialized;
+  $('new-chat').disabled = !initialized; $('import').disabled = !initialized; $('previous').disabled = !initialized; $('chats').disabled = !initialized;
   $('model-state').textContent = loading ? 'Loading…' : cloud.ready ? `Cloud · ${cloud.host}` : isChrome(selected) && chrome.ready ? 'Chrome · on device' : client.ready ? session.active ? 'Working locally' : 'Ready · on device' : 'Not loaded';
   imageInputControls();
 }
@@ -133,7 +136,7 @@ async function chromeDownloadTool(toolKey, api) {
 }
 // ---------- files (grants + search index, AI-2/AI-3) ----------
 // Grants are per session: they live only in this page's memory and are cleared on reload (fresh
-// page), New chat and close. They are never written to IndexedDB, localStorage or exports.
+// page) and when the app closes. They are never written to IndexedDB, localStorage or exports.
 const fileGrants = [];
 const fileHost = createFileHost({ grants: fileGrants, confirm: text => confirm(text), note: status });
 const fileTools = { grants: null };
@@ -346,33 +349,296 @@ const runCode = (lang, code, timeoutMs) => exec.run(lang, code, timeoutMs);
 // Agent mode: Buddy reaches the desktop, Files and every app pack through the six meta tools.
 // The desktop API exists only when Buddy runs inside WebPC (same-origin parent with pcHost).
 // The safety policy follows the live backend (cloud models need Files grants) on every call.
-const backendNow = () => (session?.client === cloud ? 'cloud' : session?.client === chrome ? 'chrome' : 'local');
+const backendNow = () => (isChrome(selected) ? 'chrome' : isCloud(selected) ? 'cloud' : 'local');
 const livePolicy = () => createPolicy({ backend: backendNow(), grants: fileGrants.map(g => g.root) });
 const agent = createAgent({ policy: { newTurn: text => livePolicy().newTurn(text), decide: (...a) => livePolicy().decide(...a), noteResult: (...a) => livePolicy().noteResult(...a) } });
 const desktopHost = () => { try { return parent !== window && parent.pcHost ? parent.pcHost : null; } catch { return null; } };
 const filesCtx = createFilesCtx(fileStore, { broadcast: path => filesChangeChannel?.postMessage({ type: 'changed', path }) });
-// M1 approvals use the native dialog; M3 replaces it with in-chat cards so background chats can wait.
-const approve = async ({ preview, reason }) => confirm(`Buddy wants to do this:\n\n${reason}\n${preview}\n\nAllow it?`);
 // ctx.craft(id): an ArtCraft app's page API (window.<id> inside its editor frame), opened if needed.
 const craft = async id => craftApi(await desktopHost().appWindow(id), id);
-const session = new AgentSession({ client, store, webSearch, httpGet, runJavaScript, runCode, chrome: chromeTools, files: fileTools, vision: visionTools, agent, host: desktopHost, filesCtx, craft, approve, proxyAllowed: () => $('reader-proxy').checked, emit(type, data) {
-  if (type === 'busy') { controls(); if (!data) status(client.ready ? 'Ready for your next question.' : 'Load a model to continue.'); }
-  else if (type === 'status') status(data);
-  else if (type === 'error') error(data);
-  else if (type === 'saved') { $('storage-warning').hidden = true; $('save-state').textContent = 'Saved in this browser'; }
-  else if (type === 'storage-error') storageError(data);
-  else if (type === 'reset') render(data);
-  else if (type === 'user') message('user', data.content);
-  else if (type === 'reply-start') data.element = message('assistant');
-  else if (type === 'reply-token') { const near = nearBottom(); data.bubble.element.textContent = data.text; follow(near); }
-  else if (type === 'tool-start') toolCard(data);
-  else if (type === 'tool-result') toolResult(data.toolCard, data.result);
-} });
-function cancel(text = isCloud(selected) || isChrome(selected) ? 'Stopped. Send the message again to continue.' : 'Stopped. Load the model again to continue; cached downloads are kept.') {
-  loadVersion++; loading = false; session.cancel(); visionWorkerStop(); exec.cancelAll(); $('progress').hidden = true;
+// M3: one AgentSession per open thread, each saving through the thread store. `session` is the
+// visible one, so the single-session code paths (controls, composer, export) keep reading it.
+// Every thread's model work goes through the shared model (part A): per-thread scheduling and
+// per-request worker interrupts, so stopping one thread never ends another thread's work and
+// never kills the worker. A model switch retargets every session's client (rebindSessions).
+const clientRef = { current: client };
+const sharedModels = {
+  local: createSharedModel(client, { concurrency: 1 }),
+  cloud: createSharedModel(cloud, { concurrency: 3 }),
+  chrome: createSharedModel(chrome, { concurrency: 1 }),
+};
+const sharedFor = () => (isChrome(selected) ? sharedModels.chrome : isCloud(selected) ? sharedModels.cloud : sharedModels.local);
+// The facade manager the agent layer expects (part A contract): forThread builds the thread's
+// facade on the active backend's shared model; cancelThread stops one thread only (queued jobs
+// dropped, in-flight request interrupted).
+const shared = {
+  forThread: (id) => sharedFor().forThread(id),
+  cancelThread: (id) => sharedFor().cancelThread(id),
+};
+function bindClient() { clientRef.current = isChrome(selected) ? chrome : isCloud(selected) ? cloud : client; }
+// A model switch moves every live session's client to the new backend's shared model. The
+// placeholder session never sends, so it keeps the facade it was built with.
+function rebindSessions() {
+  for (const s of sessions.values()) s.client = shared.forThread(s.threadId);
+}
+const sessions = new Map(); // thread id -> AgentSession
+let visibleId = null;
+let session = makePlaceholderSession();
+const statusMap = new Map(); // thread id -> last known status
+const approvals = new Map(); // thread id -> { resolve, reason, preview }
+const ACTIVE_STATUSES = ['running', 'needs_you'];
+const CHIP_LABEL = { running: 'running', waiting: 'waiting', needs_you: 'needs you', done: 'done', failed: 'failed', interrupted: 'interrupted' };
+// Holds the controls live before the first thread opens: its store is a no-op (it never writes)
+// and its events go nowhere, so it is safe to cancel, export or persist.
+function makePlaceholderSession() {
+  return new AgentSession({ client: shared.forThread('placeholder'), store: { save: async () => {} }, webSearch, httpGet, runJavaScript, runCode, chrome: chromeTools, files: fileTools, vision: visionTools, agent, host: desktopHost, filesCtx, craft, approve: async () => false, proxyAllowed: () => false, emit: () => {} });
+}
+function makeSession(id, record) {
+  const s = new AgentSession({ client: shared.forThread(id), store: { save: value => verifiedSave(id, value) }, webSearch, httpGet, runJavaScript, runCode, chrome: chromeTools, files: fileTools, vision: visionTools, agent, host: desktopHost, filesCtx, craft, approve: makeApprove(id), proxyAllowed: () => $('reader-proxy').checked, emit: (type, data) => onEvent(s, type, data) });
+  s.threadId = id; s.history = record.history; s.summary = record.summary;
+  return s;
+}
+// M3 approvals: approve() resolves when a button in the thread's in-chat card is clicked. A card
+// in a background thread waits until that thread is opened; Stop resolves it as Deny.
+function makeApprove(id) {
+  return ({ preview, reason }) => new Promise(resolve => {
+    approvals.set(id, { resolve, reason, preview });
+    setThreadStatus(id, 'needs_you');
+    if (visibleId === id) renderApprovalCard(id);
+    postBadge();
+  });
+}
+function renderApprovalCard(id) {
+  const entry = approvals.get(id);
+  if (!entry || visibleId !== id) return;
+  const root = document.createElement('div'); root.className = 'approval';
+  const text = document.createElement('p'); text.textContent = entry.reason ?? 'Buddy needs your approval.';
+  const pre = document.createElement('pre'); pre.textContent = entry.preview ?? '';
+  const actions = document.createElement('div'); actions.className = 'approval-actions';
+  const allow = document.createElement('button'); allow.className = 'primary approve-allow'; allow.textContent = 'Allow';
+  const deny = document.createElement('button'); deny.className = 'approve-deny'; deny.textContent = 'Deny';
+  allow.addEventListener('click', () => resolveApproval(id, true));
+  deny.addEventListener('click', () => resolveApproval(id, false));
+  actions.append(allow, deny);
+  root.append(text, pre, actions);
+  $('messages').append(root);
+  $('conversation').scrollTop = $('conversation').scrollHeight;
+}
+function resolveApproval(id, ok) {
+  const entry = approvals.get(id);
+  if (!entry) return;
+  approvals.delete(id);
+  entry.resolve(ok);
+  if (visibleId === id) $('messages').querySelector('.approval')?.remove();
+  setThreadStatus(id, 'running');
+}
+function denyApproval(id) {
+  const entry = approvals.get(id);
+  if (!entry) return;
+  approvals.delete(id);
+  entry.resolve(false);
+  if (visibleId === id) $('messages').querySelector('.approval')?.remove();
+}
+function onEvent(s, type, data) {
+  const id = s.threadId;
+  if (type === 'busy') {
+    if (data) setThreadStatus(id, 'running');
+    else if (ACTIVE_STATUSES.includes(statusMap.get(id) ?? 'idle')) setThreadStatus(id, 'done');
+    if (s === session) { controls(); if (!data) status(clientRef.current.ready ? 'Ready for your next question.' : 'Load a model to continue.'); }
+    return;
+  }
+  if (type === 'error') { setThreadStatus(id, 'failed'); if (s === session) error(data); return; }
+  if (type === 'saved') { if (s === session) { $('storage-warning').hidden = true; $('save-state').textContent = 'Saved in this browser'; } return; }
+  if (type === 'storage-error') { if (s === session) storageError(data); return; }
+  if (s !== session) return; // a background thread: its history updates inside the session, the DOM waits for the switch
+  switch (type) {
+    case 'status': status(data); break;
+    case 'reset': render(s); break;
+    case 'user': message('user', data.content); break;
+    case 'reply-start': data.element = message('assistant'); break;
+    case 'reply-token': { const near = nearBottom(); data.bubble.element.textContent = data.text; follow(near); } break;
+    case 'tool-start': toolCard(data); break;
+    case 'tool-result': toolResult(data.toolCard, data.result); break;
+  }
+}
+// A put can resolve even when the write never becomes visible (seen once in the field, not
+// reproducible locally): the thread's row then keeps its old title and status. Both verified
+// writers re-read through the store's own list() and repeat the write after short delays until
+// the value is visible. list() only shows rows whose record loads, so a visible row proves the
+// record write and the index write both committed; a failed check only triggers a re-save.
+const VERIFY_RETRIES = [75, 150];
+async function verifiedSave(id, value) {
+  if (!threads) throw new Error('Storage is unavailable.');
+  const before = Date.now();
+  await threads.save(id, value);
+  for (const wait of VERIFY_RETRIES) {
+    const row = (await threads.list()).find(r => r.id === id);
+    if (row && row.updatedAt >= before) return;
+    if (!sessions.has(id)) return; // the thread was deleted meanwhile: do not resurrect its row
+    await new Promise(resolve => setTimeout(resolve, wait));
+    await threads.save(id, value);
+  }
+}
+async function verifiedSetStatus(id, status) {
+  if (!threads) return;
+  await threads.setStatus(id, status);
+  for (const wait of VERIFY_RETRIES) {
+    const row = (await threads.list()).find(r => r.id === id);
+    if (row && row.status === status) return;
+    if (!sessions.has(id)) return;
+    await new Promise(resolve => setTimeout(resolve, wait));
+    await threads.setStatus(id, status);
+  }
+}
+async function setThreadStatus(id, status) {
+  if ((statusMap.get(id) ?? 'idle') === status) return;
+  statusMap.set(id, status);
+  postBadge(); updateChips();
+  try { await verifiedSetStatus(id, status); } catch {}
+}
+let lastBadge = null;
+// Post the counts to the desktop whenever they change; the lead wires the desktop side.
+function postBadge() {
+  if (parent === window) return;
+  let running = 0, needsYou = 0;
+  for (const st of statusMap.values()) { if (st === 'running') running++; else if (st === 'needs_you') needsYou++; }
+  if (lastBadge && lastBadge.running === running && lastBadge.needsYou === needsYou) return;
+  lastBadge = { running, needsYou };
+  parent.postMessage({ type: 'pc:buddy-status', running, needsYou }, location.origin);
+}
+function updateChips() {
+  if ($('chats-panel').hidden) return;
+  for (const el of document.querySelectorAll('#chats-list .chat-row')) {
+    const chip = el.querySelector('.chip');
+    if (!chip) continue;
+    const st = statusMap.get(el.dataset.id) ?? 'idle';
+    chip.className = `chip ${st}`; chip.hidden = st === 'idle'; chip.textContent = CHIP_LABEL[st] ?? st;
+  }
+}
+const relTime = at => {
+  const mins = Math.max(0, Math.floor((Date.now() - at) / 60000));
+  if (mins < 1) return 'now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+};
+async function renderChats() {
+  const box = $('chats-list');
+  box.replaceChildren();
+  let rows = [];
+  try { rows = await threads?.list() ?? []; } catch {}
+  for (const row of rows) { statusMap.set(row.id, row.status); box.append(chatRow(row)); }
+  if (!rows.length) { const empty = document.createElement('p'); empty.className = 'chats-empty'; empty.textContent = 'No chats yet. Start one with New chat.'; box.append(empty); }
+  postBadge();
+}
+function chatRow(row) {
+  const el = document.createElement('div'); el.className = `chat-row${row.id === visibleId ? ' active' : ''}`; el.dataset.id = row.id;
+  const open = document.createElement('button'); open.className = 'chat-open';
+  const title = document.createElement('span'); title.className = 'chat-title'; title.textContent = row.title;
+  const time = document.createElement('span'); time.className = 'chat-time'; time.textContent = relTime(row.updatedAt);
+  open.append(title, time);
+  open.addEventListener('click', () => openThread(row.id).then(() => closeChats()));
+  const chip = document.createElement('span'); chip.className = `chip ${row.status}`; chip.textContent = CHIP_LABEL[row.status] ?? row.status; if (row.status === 'idle') chip.hidden = true;
+  const rename = document.createElement('button'); rename.className = 'chat-rename'; rename.textContent = 'Rename'; rename.title = 'Rename this chat';
+  rename.addEventListener('click', () => beginRename(el, row));
+  const del = document.createElement('button'); del.className = 'chat-delete'; del.textContent = 'Delete'; del.title = 'Delete this chat';
+  del.addEventListener('click', () => deleteThread(row.id));
+  el.append(open, chip, rename, del);
+  return el;
+}
+function beginRename(el, row) {
+  const titleEl = el.querySelector('.chat-title');
+  if (!titleEl) return;
+  const input = document.createElement('input'); input.className = 'chat-rename-input'; input.value = row.title; input.maxLength = 60;
+  titleEl.replaceWith(input); input.focus(); input.select();
+  let done = false;
+  const commit = async save => {
+    if (done) return; done = true;
+    if (save) { try { await threads.rename(row.id, input.value); } catch (err) { error(err.message); } }
+    await renderChats();
+  };
+  input.addEventListener('keydown', event => { if (event.key === 'Enter') commit(true); else if (event.key === 'Escape') commit(false); });
+  input.addEventListener('blur', () => commit(true));
+}
+async function deleteThread(id) {
+  if (!confirm('Delete this chat? Its messages cannot be recovered.')) return;
+  await threads.remove(id).catch(() => {});
+  statusMap.delete(id);
+  denyApproval(id);
+  sessions.delete(id);
+  if (visibleId === id) {
+    visibleId = null; session = null;
+    const rows = await threads.list().catch(() => []);
+    if (rows.length) await openThread(rows[0].id);
+    else await newThread();
+  }
+  await renderChats();
+  postBadge();
+}
+// Opening a thread never cancels anything: other threads keep running, their tokens keep
+// landing in their own history, and this one re-renders from what is already committed.
+async function openThread(id) {
+  let s = sessions.get(id);
+  if (!s) {
+    const rec = await threads.load(id);
+    if (!rec) { await threads.remove(id).catch(() => {}); return; }
+    s = makeSession(id, rec); sessions.set(id, s);
+  }
+  visibleId = id; session = s;
+  document.body.dataset.thread = id;
+  // Remember the open thread so a reload reopens it (falling back to the newest at startup).
+  try { localStorage.setItem('buddy:openThread', id); } catch {}
+  render(s); controls(); renderApprovalCard(id);
+}
+async function newThread() {
+  error('');
+  let row;
+  try { row = await threads.create({ backend: backendNow() }); }
+  catch (err) { error(err instanceof ThreadLimitError ? 'The chat limit of 200 is reached. Delete a chat to start a new one.' : err.message); return; }
+  sessions.set(row.id, makeSession(row.id, { history: [], summary: '' }));
+  statusMap.set(row.id, 'idle');
+  await openThread(row.id);
+  closeChats(); postBadge(); await renderChats();
+  $('message').focus();
+}
+function closeChats() { $('chats-panel').hidden = true; }
+$('chats').addEventListener('click', () => {
+  // The panel is absolutely positioned: anchor it below the app header so the header buttons
+  // (Chats, New chat, Export, Settings) stay visible and clickable while the list is open.
+  if ($('chats-panel').hidden) { $('chats-panel').style.top = $('app-header').offsetHeight + 'px'; $('chats-panel').hidden = false; renderChats(); }
+  else closeChats();
+});
+$('chats-close').addEventListener('click', closeChats);
+$('chats-new').addEventListener('click', () => newThread());
+// Stop ends the visible thread's work: resolves its pending approval as Deny and marks it
+// interrupted when it had work. The other threads keep running: their jobs stay queued or in
+// flight and the shared worker survives, so the stop interrupts only this thread's in-flight
+// request. With killWorker the shared worker ends too, and every in-flight local request ends
+// with it: the Stop button does that only while a model is loading, because no chat has
+// started on that model yet; model change, load and page close kill it the same way.
+function stopVisible(text = isCloud(selected) || isChrome(selected) ? 'Stopped. Send the message again to continue.' : 'Stopped. Load the model again to continue; cached downloads are kept.', killWorker = false) {
+  if (session) {
+    const hadWork = Boolean(session.active) || approvals.has(session.threadId);
+    denyApproval(session.threadId);
+    if (hadWork) setThreadStatus(session.threadId, 'interrupted');
+  }
+  loadVersion++; loading = false; session?.cancel(); visionWorkerStop(); exec.cancelAll(); if (killWorker) clientRef.current.stop(); $('progress').hidden = true;
   document.querySelectorAll('.message-body:empty').forEach(el => { el.textContent = 'Stopped.'; });
   document.querySelectorAll('.tool summary').forEach(el => { if (el.textContent.endsWith('· running')) el.textContent = el.textContent.replace('· running', '· stopped'); });
   controls(); status(text);
+}
+// Closing the page ends every thread's work, visible or not, and the shared worker with them.
+function cancelAll(text) {
+  for (const s of sessions.values()) {
+    const hadWork = Boolean(s.active) || approvals.has(s.threadId);
+    denyApproval(s.threadId);
+    if (hadWork) setThreadStatus(s.threadId, 'interrupted');
+    s.cancel();
+  }
+  loadVersion++; loading = false; visionWorkerStop(); exec.cancelAll(); clientRef.current.stop(); $('progress').hidden = true;
+  if (text) status(text);
+  controls();
 }
 function modelInfo() {
   if (isCloud(selected)) {
@@ -391,7 +657,7 @@ function modelInfo() {
   $('model-license').replaceChildren(link, document.createTextNode('. Model weights have their own license. Sizes are approximate; small models may miss tools or return incorrect answers.'));
 }
 async function doLoad(vision) {
-  cancel(); const version = ++loadVersion; loading = true; controls(); error(''); $('progress').hidden = false; $('progress').removeAttribute('value');
+  stopVisible(undefined, true); const version = ++loadVersion; loading = true; controls(); error(''); $('progress').hidden = false; $('progress').removeAttribute('value');
   if (isChrome(selected)) {
     // The click is the user gesture Chrome's create() needs; its monitor drives the status line.
     status('Loading Chrome’s on-device model…');
@@ -417,20 +683,21 @@ async function doLoad(vision) {
   finally { if (version === loadVersion) { loading = false; $('progress').hidden = true; controls(); } }
 }
 $('load-model').addEventListener('click', () => doLoad($('image-input').checked));
-$('stop').addEventListener('click', () => cancel());
+$('stop').addEventListener('click', () => stopVisible(undefined, loading));
 $('model').addEventListener('change', () => {
-  cancel('Model changed. Load it when you’re ready.');
+  stopVisible('Model changed. Load it when you’re ready.', true);
   selected = $('model').value;
-  cloud.clear(); bindClient();
+  cloud.clear(); bindClient(); rebindSessions();
   // Cloud and on-device selections are per session only: never persisted to MODEL_KEY.
   if (!isCloud(selected) && !isChrome(selected)) { try { localStorage.setItem(MODEL_KEY, selected); } catch {} if (!MODELS[selected]?.vision) clearPendingImage(); }
   modelInfo(); controls();
 });
+// New chat never stops, cancels or kills anything: it creates a thread and switches to it.
+// Running chats keep running (their status chip says so); the worker and the cloud key are
+// untouched (the key still clears on reload, page close and a model switch).
 $('new-chat').addEventListener('click', async () => {
-  if ((session.history.length || session.active) && !confirm('Start a new chat? The current stored chat will be kept as the previous record. Export it first if you need a permanent copy.')) return;
-  cancel(); error(''); cloud.clear(); indexAbort?.abort(); indexAbort = null; searchHost.dispose(); embedClient.stop(); visionWorkerStop(); fileGrants.length = 0; applyFileGates(); renderFileGrants(); bindClient(); await session.newChat();
-  if (isCloud(selected)) status('New chat started. The cloud key was cleared — confirm the cloud model in Settings to continue.');
-  controls(); $('message').focus();
+  await newThread();
+  controls();
 });
 $('composer').addEventListener('submit', async event => {
   event.preventDefault(); if ($('send').disabled) return;
@@ -507,7 +774,7 @@ $('image-input').addEventListener('change', async () => {
 const cloudProvider = () => document.querySelector('input[name="cloud-provider"]:checked').value;
 function cloudNotice() {
   const host = cloudProvider() === 'anthropic' ? 'api.anthropic.com' : 'the host in your base URL';
-  $('cloud-notice').textContent = `By confirming, you agree that your prompts, tool results and any attached image are sent to ${host}. The key is kept in memory only and cleared on reload or New chat.`;
+  $('cloud-notice').textContent = `By confirming, you agree that your prompts, tool results and any attached image are sent to ${host}. The key is kept in memory only and cleared on reload, when the app closes and when the model is switched.`;
   $('cloud-model').placeholder = cloudProvider() === 'anthropic' ? 'claude-opus-5-5 (cheaper: claude-sonnet-5-5, claude-haiku-5-5)' : 'model name served by this endpoint';
   $('cloud-base-row').hidden = cloudProvider() !== 'openai';
   $('cloud-effort').hidden = cloudProvider() !== 'anthropic';
@@ -535,17 +802,22 @@ $('retry-save').addEventListener('click', () => session.persist());
 $('settings').addEventListener('click', () => $('settings-dialog').showModal());
 $('close-settings').addEventListener('click', () => $('settings-dialog').close());
 $('import').addEventListener('click', () => $('file').click());
-async function replaceConversation(value) {
-  const valid = validateConversation(value);
-  if (!confirm('Open this conversation? The current stored record will be kept for recovery.')) return;
-  cancel(); error(''); await session.newChat(valid); $('settings-dialog').close(); controls();
+// Import opens the backup as a NEW thread: nothing is replaced or lost, so no confirm is needed.
+async function openImported(value) {
+  const clean = validateConversation(value);
+  const row = await threads.create({ backend: backendNow() });
+  await threads.save(row.id, { history: clean.history, summary: clean.summary });
+  sessions.set(row.id, makeSession(row.id, { history: clean.history, summary: clean.summary }));
+  statusMap.set(row.id, 'idle');
+  await openThread(row.id);
+  $('settings-dialog').close(); controls();
 }
 $('file').addEventListener('change', async () => {
   const file = $('file').files[0]; $('file').value = ''; if (!file) return;
-  try { if (file.size > 5_000_000) throw new Error('Backups must be smaller than 5 MB.'); const data = JSON.parse(await file.text()); await replaceConversation(data.history ? data : data.current ?? data.legacy ?? data.previous); }
+  try { if (file.size > 5_000_000) throw new Error('Backups must be smaller than 5 MB.'); const data = JSON.parse(await file.text()); await openImported(data.history ? data : data.current ?? data.legacy ?? data.previous); }
   catch (err) { error(`Backup was not opened: ${err.message}`); $('settings-dialog').close(); }
 });
-$('previous').addEventListener('click', async () => { try { const raw = await store.raw(); if (!raw.previous) throw new Error('No previous record is stored.'); await replaceConversation(raw.previous); } catch (err) { error(err.message); $('settings-dialog').close(); } });
+$('previous').addEventListener('click', async () => { try { const raw = await store.raw(); if (!raw.previous) throw new Error('No previous record is stored.'); await openImported(raw.previous); } catch (err) { error(err.message); $('settings-dialog').close(); } });
 // Accept desktop messages only from the same-origin parent. No conversation data is posted to it.
 const theme = value => { document.documentElement.dataset.theme = value === 'light' ? 'light' : 'dark'; };
 try { theme(localStorage.getItem('theme') ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')); } catch { theme('dark'); }
@@ -554,9 +826,13 @@ document.addEventListener('pointerdown', () => { if (parent !== window) parent.p
 if (parent !== window) parent.postMessage({ type: 'pc:ready', appId: 'ai-agent' }, location.origin);
 // In the desktop panel, the header's close button closes it (the panel has no chrome of its own).
 if (parent !== window) { $('panel-close').hidden = false; $('panel-close').addEventListener('click', () => parent.postMessage({ type: 'pc:panel-close', appId: 'ai-agent' }, location.origin)); }
-// Escape closes the desktop panel; skip while a dialog is open (it closes itself), and never
-// preventDefault, so Escape still reaches dialogs and the Stop control.
-document.addEventListener('keydown', event => { if (event.key === 'Escape' && parent !== window && !document.querySelector('dialog[open]')) parent.postMessage({ type: 'pc:panel-close', appId: 'ai-agent' }, location.origin); });
+// Escape closes the chats list first, then the desktop panel; skip while a dialog is open (it
+// closes itself), and never preventDefault, so Escape still reaches dialogs and the Stop control.
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape' || parent === window) return;
+  if (!$('chats-panel').hidden) { closeChats(); return; }
+  if (!document.querySelector('dialog[open]')) parent.postMessage({ type: 'pc:panel-close', appId: 'ai-agent' }, location.origin);
+});
 const unsaved = () => Boolean(store.pending) || (session.savedRevision < session.revision && session.exportedRevision !== session.revision);
 window.pcFlush = () => {
   if (!initialized) { error('Wait for stored data to finish opening before closing.'); return false; }
@@ -564,13 +840,33 @@ window.pcFlush = () => {
   return true;
 };
 // pcFlush() FIRST: it may refuse the close (pending work), and nothing must be cleared then.
-window.pcBeforeClose = () => { if (!window.pcFlush()) return false; cancel('App closed. Load the model again to continue.'); $('reader-proxy').checked = false; cloud.clear(); indexAbort = null; searchHost.dispose(); embedClient.stop(); visionWorkerStop(); fileGrants.length = 0; bindClient(); return true; };
+window.pcBeforeClose = () => { if (!window.pcFlush()) return false; cancelAll('App closed. Load the model again to continue.'); $('reader-proxy').checked = false; cloud.clear(); indexAbort = null; searchHost.dispose(); embedClient.stop(); visionWorkerStop(); fileGrants.length = 0; return true; };
 addEventListener('beforeunload', event => { if (unsaved()) { event.preventDefault(); event.returnValue = ''; } });
-addEventListener('pagehide', () => { loadVersion++; cloud.clear(); indexAbort = null; searchHost.dispose(); embedClient.stop(); visionWorkerStop(); fileGrants.length = 0; session.cancel(); });
+addEventListener('pagehide', () => { cancelAll(); cloud.clear(); indexAbort = null; searchHost.dispose(); embedClient.stop(); fileGrants.length = 0; });
 modelInfo(); cloudNotice(); renderVisionEngine(); bindClient(); controls();
+// Startup: build the thread store over idb-keyval, flip stale active threads to interrupted,
+// copy the legacy single-conversation records into threads, then open the newest thread.
 try {
-  const { value, migrated } = await store.restore(); session.history = value.history; session.summary = value.summary; render(value);
-  if (migrated) status('Previous conversation copied safely. The original record was kept. Load a model to continue.');
-} catch (err) { storageError(`Could not restore stored data: ${err.message}`); }
-initialized = true; controls();
+  const idb = await import('./vendor/idb-keyval.js');
+  threads = createThreadStore({ kv: { get: idb.get, set: idb.set, del: idb.del }, now: Date.now, newId: () => crypto.randomUUID() });
+  await store.restore();
+  await threads.markInterrupted();
+  const created = await threads.migrateLegacy(await store.raw());
+  if (created) status('Previous conversation copied safely. The original record was kept. Load a model to continue.');
+} catch (err) { storageError(`Could not open stored chats: ${err.message}`); }
+try {
+  const rows = await threads?.list() ?? [];
+  for (const row of rows) statusMap.set(row.id, row.status);
+  if (rows.length) {
+    // Reopen the chat the user was viewing (remembered on every openThread); fall back to the newest.
+    let openId = null; try { openId = localStorage.getItem('buddy:openThread'); } catch {}
+    await openThread(rows.some(r => r.id === openId) ? openId : rows[0].id);
+  } else {
+    const row = await threads.create({ backend: backendNow() });
+    sessions.set(row.id, makeSession(row.id, { history: [], summary: '' }));
+    statusMap.set(row.id, 'idle');
+    await openThread(row.id);
+  }
+} catch (err) { storageError(`Could not open stored chats: ${err.message}`); }
+initialized = true; controls(); postBadge();
 if (!navigator.gpu) status('WebGPU is unavailable here. You can still read, export, and recover saved conversations.');
