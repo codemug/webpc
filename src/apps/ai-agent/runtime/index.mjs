@@ -77,7 +77,8 @@ export function createAgent({ policy = defaultPolicy(), data = { catalogJson, sk
     if (decision.action === 'ask') {
       const yes = await (ctx.approve?.({ tool: name, preview: decision.preview, reason: decision.reason }) ?? false);
       if (!yes) throw new ToolError('needs_approval_denied', 'The user did not approve this. Ask what they want instead.', '');
-      ctx.turn?.approvedOnce?.add(decision.preview);
+      // The default policy records the approval here; createPolicy records it in noteResult (keyed by callLine).
+      if (!policy.recordsApprovals) ctx.turn?.approvedOnce?.add(callLine(name, args));
     }
     const result = await impl.run(args, ctx);
     policy.noteResult(effective, args, ctx.turn);
