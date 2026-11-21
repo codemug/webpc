@@ -3,6 +3,7 @@ import { filterApps } from './app-search.mjs';
 import { reduceDesktop, windowRect, MOBILE_WIDTH } from './window-state.mjs';
 import { showMenu } from './context-menu.mjs';
 import { gridSize, parseSaved, resolveLayout, moveIcon, cellAt, cellOrigin, visualOrder } from './icon-layout.mjs';
+import { fail, checkAppId, checkNumber, checkLayout, checkTheme, checkOpenHow, tileRects } from './host-api.mjs';
 
 const shell = document.querySelector('[data-pc]');
 if (shell) {
@@ -24,24 +25,23 @@ if (shell) {
   // Right-click (or Shift+F10 / the ContextMenu key on a focused shortcut, or a 500 ms
   // touch long-press) opens a context menu for shortcuts, launcher entries and the
   // desktop background. Windows, the taskbar and everything else keep the native menu.
+  // The context menu's Open in new tab / Open in new window, shared with the host API.
+  const openAppTab = app => window.open(app.src, '_blank', 'noopener');
+  const openAppWindow = app => window.open(app.src, 'webpc-' + app.id, `popup=yes,width=${app.width ?? 1180},height=${app.height ?? 760}${app.kind === 'external' ? ',noopener' : ''}`);
   const appMenuItems = app => {
-    const openWindow = () => window.open(app.src, 'webpc-' + app.id, `popup=yes,width=${app.width ?? 1180},height=${app.height ?? 760}${app.kind === 'external' ? ',noopener' : ''}`);
-    const openTab = () => window.open(app.src, '_blank', 'noopener');
     if (app.kind === 'external') return [
-      { label: 'Open in new tab', action: openTab },
-      { label: 'Open in new window', action: openWindow },
+      { label: 'Open in new tab', action: () => openAppTab(app) },
+      { label: 'Open in new window', action: () => openAppWindow(app) },
     ];
     if (app.kind === 'about') return [{ label: 'Open', action: () => openApp(app.id) }];
     return [
       { label: 'Open', action: () => openApp(app.id) },
-      { label: 'Open in new window', action: openWindow },
-      { label: 'Open in new tab', action: openTab },
+      { label: 'Open in new window', action: () => openAppWindow(app) },
+      { label: 'Open in new tab', action: () => openAppTab(app) },
     ];
   };
   const backgroundMenuItems = () => [
-    // "Arrange icons": clear the stored layout and re-apply the default (re-resolving
-    // with no saved cells is the default layout); nothing is written back.
-    { label: 'Arrange icons', action: () => { try { localStorage.removeItem(iconStorageKey); } catch {} applyIconLayout(); } },
+    { label: 'Arrange icons', action: arrangeIcons },
   ];
   const showAppMenu = (target, x, y) => {
     const app = appById(target.dataset.shortcut ?? target.dataset.openApp);
@@ -132,6 +132,9 @@ if (shell) {
     // DOM order is the Tab order: column-major over the resolved cells.
     for (const id of visualOrder(iconLayout)) { const button = shortcutOf(id); if (button) iconContainer.append(button); }
   }
+  // "Arrange icons": clear the stored layout and re-apply the default (re-resolving
+  // with no saved cells is the default layout); nothing is written back.
+  const arrangeIcons = () => { try { localStorage.removeItem(iconStorageKey); } catch {} applyIconLayout(); };
   const commitIconMove = (id, cell) => {
     const { width, height } = bounds();
     const grid = gridSize(width, height);
@@ -475,11 +478,13 @@ if (shell) {
     if (event.key !== 'Escape') return; // Escape inside Buddy arrives as pc:panel-close
     if (!launcher.hidden) { toggleLauncher(false); launcherToggle.focus(); }
   });
-  shell.querySelector('[data-show-desktop]').addEventListener('click', () => {
+  // The taskbar show-desktop button, shared with the host API's showDesktop().
+  const showDesktop = () => {
     state.windows.forEach(win => { state = reduceDesktop(state, { type: 'minimize', id: win.id }, bounds()); });
     render();
     announce('All windows minimized');
-  });
+  };
+  shell.querySelector('[data-show-desktop]').addEventListener('click', showDesktop);
   window.addEventListener('message', event => {
     if (event.origin !== location.origin) return;
     const view = views.get(event.data?.appId);
@@ -492,12 +497,137 @@ if (shell) {
   });
   new ResizeObserver(() => { dispatch({ type: 'bounds' }); applyIconLayout(); }).observe(workspace);
   applyIconLayout(); // the initial layout before the observer's first callback
-  shell.querySelector('[data-theme-toggle]').addEventListener('click', () => {
-    const theme = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+  // Apply a theme everywhere (the DOM, localStorage and every open frame, including
+  // Buddy); shared with the host API's setTheme().
+  const applyTheme = theme => {
     document.documentElement.dataset.theme = theme;
     try { localStorage.setItem('theme', theme); } catch {}
     for (const view of views.values()) view.frame?.contentWindow?.postMessage({ type: 'pc:theme', theme }, location.origin);
     if (buddyFrame?.isConnected) buddyFrame.contentWindow.postMessage({ type: 'pc:theme', theme }, location.origin);
+  };
+  shell.querySelector('[data-theme-toggle]').addEventListener('click', () => {
+    const theme = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+    applyTheme(theme);
+  });
+  // --- Host API (window.pcHost) -----------------------------------------------------------
+  // A small frozen object the Buddy agent calls as parent.pcHost. Every method is a
+  // Promise; rejections carry a `code`: unknown_app, not_open, not_iframe, timeout or
+  // invalid_argument. Built on the existing openApp, dispatch and views, so the window
+  // logic stays in one place. Installed only on the desktop page (this `shell` guard).
+  const hostRow = win => ({
+    id: win.id,
+    title: appById(win.id).title,
+    state: win.maximized ? 'maximized' : win.minimized ? 'minimized' : 'normal',
+    active: state.activeId === win.id,
+    ...windowRect(win, bounds()),
+  });
+  const hostWindow = id => state.windows.find(win => win.id === id);
+  const requireWindow = id => {
+    const win = hostWindow(id);
+    if (!win) throw fail('not_open', `window "${id}" is not open; open it first with open("${id}")`);
+    return win;
+  };
+  window.pcHost = Object.freeze({
+    version: 1,
+    /** All registry apps in registry order (the Buddy panel is not an app window). */
+    apps: async () => apps.map(app => ({ id: app.id, title: app.title, category: app.category, kind: app.kind, description: app.description })),
+    /** Open windows in z order, top first. */
+    windows: async () => [...state.windows].reverse().map(hostRow),
+    /** Open an app; an external app opens a tab, as the desktop does. */
+    open: async id => {
+      const app = checkAppId(apps, id);
+      openApp(app.id);
+      return app.kind === 'external' ? { id: app.id, external: true } : { id: app.id, opened: true };
+    },
+    /** Focus a window (also un-minimizes it). */
+    focus: async id => { checkAppId(apps, id); requireWindow(id); dispatch({ type: 'focus', id }); return hostRow(hostWindow(id)); },
+    /** Minimize a window. */
+    minimize: async id => { checkAppId(apps, id); requireWindow(id); dispatch({ type: 'minimize', id }); return hostRow(hostWindow(id)); },
+    /** Un-maximize or un-minimize a window; a no-op for a normal window. */
+    restore: async id => {
+      checkAppId(apps, id);
+      const win = requireWindow(id);
+      if (win.maximized) dispatch({ type: 'maximize', id });
+      else if (win.minimized) dispatch({ type: 'focus', id });
+      return hostRow(hostWindow(id));
+    },
+    /** Maximize a window; idempotent (the reducer action toggles). */
+    maximize: async id => {
+      checkAppId(apps, id);
+      const win = requireWindow(id);
+      if (!win.maximized) dispatch({ type: 'maximize', id });
+      return hostRow(hostWindow(id));
+    },
+    /** Close a window, running pcBeforeClose like the close button unless force is set. */
+    close: async (id, { force = false } = {}) => {
+      const app = checkAppId(apps, id);
+      requireWindow(id);
+      if (!force) {
+        let blocked = false;
+        try { if (views.get(id)?.frame?.contentWindow?.pcBeforeClose?.() === false) blocked = true; } catch { blocked = true; }
+        if (blocked) { announce(`${app.title} could not save. Keep this window open and export a backup.`); return { id: app.id, closed: false, dirty: true }; }
+      }
+      dispatch({ type: 'close', id: app.id });
+      announce(`${app.title} closed`);
+      return { id: app.id, closed: true };
+    },
+    /** Move a window, clamped like a drag; a no-op while maximized or on mobile. */
+    move: async (id, x, y) => {
+      checkAppId(apps, id);
+      const win = requireWindow(id);
+      checkNumber('x', x, { min: 0 });
+      checkNumber('y', y, { min: 0 });
+      dispatch({ type: 'rect', id, rect: { ...win.rect, x, y } });
+      return hostRow(hostWindow(id));
+    },
+    /** Resize a window, clamped like the resize handle; a no-op while maximized or on mobile. */
+    resize: async (id, width, height) => {
+      checkAppId(apps, id);
+      const win = requireWindow(id);
+      checkNumber('width', width, { positive: true });
+      checkNumber('height', height, { positive: true });
+      dispatch({ type: 'rect', id, rect: { ...win.rect, width, height } });
+      return hostRow(hostWindow(id));
+    },
+    /** Arrange the visible windows (layout: 'left-right', 'grid' or 'cascade'). */
+    tile: async layout => {
+      checkLayout(layout);
+      for (const rect of tileRects(layout, state.windows, bounds())) dispatch({ type: 'rect', id: rect.id, rect });
+      return [...state.windows].reverse().map(hostRow);
+    },
+    /** Minimize every window, like the taskbar show-desktop button. */
+    showDesktop: async () => { showDesktop(); return [...state.windows].reverse().map(hostRow); },
+    /** The current theme. */
+    theme: async () => document.documentElement.dataset.theme ?? 'dark',
+    /** Set the theme; posts pc:theme to every open frame, like the toggle does. */
+    setTheme: async theme => { checkTheme(theme); applyTheme(theme); return theme; },
+    /** Re-apply the default icon layout, like the desktop menu's Arrange icons. */
+    arrangeIcons: async () => { arrangeIcons(); return true; },
+    /** Open an app in a new tab or a popup window, like the context menu does. */
+    openExternal: async (id, how) => {
+      const app = checkAppId(apps, id);
+      checkOpenHow(how);
+      if (how === 'tab') openAppTab(app); else openAppWindow(app);
+      return { id: app.id, how };
+    },
+    /** The app iframe's contentWindow once the app posted pc:ready (opens it first if needed). */
+    appWindow: async (id, { timeoutMs } = {}) => {
+      const app = checkAppId(apps, id);
+      if (app.kind === 'external' || app.kind === 'about') throw fail('not_iframe', `app "${app.id}" has no iframe window (kind "${app.kind}")`);
+      if (timeoutMs !== undefined) checkNumber('timeoutMs', timeoutMs, { positive: true });
+      const timeout = timeoutMs ?? app.loadTimeout ?? 30000;
+      if (!hostWindow(app.id)) openApp(app.id);
+      const deadline = Date.now() + timeout;
+      for (;;) {
+        if (!hostWindow(app.id)) throw fail('not_open', `window "${app.id}" was closed while it was loading`);
+        const view = views.get(app.id);
+        const load = view?.element?.dataset?.load;
+        if (load === 'ready') return view.frame.contentWindow;
+        if (load === 'error') throw fail('timeout', `app "${app.id}" failed to load (limit ${timeout} ms)`);
+        if (Date.now() >= deadline) throw fail('timeout', `app "${app.id}" did not finish loading within ${timeout} ms`);
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+    },
   });
   const clock = shell.querySelector('[data-clock]');
   const updateClock = () => {
