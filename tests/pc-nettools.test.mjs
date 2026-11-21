@@ -81,14 +81,21 @@ test('buildPtrName: v4 and v6 reverse names; throws on non-IP', () => {
   assert.throws(() => buildPtrName('nope'), /valid IP/);
 });
 
-test('formatDnsAnswer: A, TXT (array), MX, NS, CAA, SOA and empty', () => {
-  assert.deepEqual(formatDnsAnswer({ Answer: [{ Type: 1, Data: '93.184.216.34' }] }), ['93.184.216.34']);
-  assert.deepEqual(formatDnsAnswer({ Answer: [{ Type: 16, Data: ['v=spf1 -all', 'other'] }] }), ['v=spf1 -all  other']);
-  assert.deepEqual(formatDnsAnswer({ Answer: [{ Type: 15, Data: 'mail.example.com' }] }), ['mail.example.com']);
-  assert.deepEqual(formatDnsAnswer({ Answer: [{ Type: 2, Data: ['ns1.example.com', 'ns2.example.com'] }] }), ['ns1.example.com, ns2.example.com']);
-  assert.deepEqual(formatDnsAnswer({ Answer: [{ Type: 51, Data: [{ flag: 0, tag: 'issue', value: 'letsencrypt.org' }] }] }), ['0 issue "letsencrypt.org"']);
-  const soa = { Type: 6, Data: { ns: 'ns1.example.com', hostmaster: 'admin.example.com', serial: 1, refresh: 3600 } };
-  assert.deepEqual(formatDnsAnswer({ Answer: [soa] }), [JSON.stringify(soa.Data)]);
+// Answer records exactly as Cloudflare and Google DoH return them (captured 2026-11-21 with curl
+// -H 'accept: application/dns-json'): lowercase type and data, and data is always a string.
+// The old fixture used Type/Data with arrays and objects, which no real reply has, so the app
+// showed "NOERROR:" with empty lines for every lookup.
+test('formatDnsAnswer: real DoH records (A, TXT, MX, NS, CAA, SOA) and empty', () => {
+  const real = {
+    A: { name: 'example.com', type: 1, TTL: 186, data: '104.20.23.154' },
+    TXT: { name: 'google.com', type: 16, TTL: 187, data: '"google-site-verification=TV9-DBe4R80X4v0M4U_bd_J9cpOJM0nikft0jAgjmsQ"' },
+    MX: { name: 'google.com', type: 15, TTL: 85, data: '10 smtp.google.com.' },
+    NS: { name: 'google.com', type: 2, TTL: 337412, data: 'ns4.google.com.' },
+    CAA: { name: 'google.com', type: 257, TTL: 86400, data: '0 issue "pki.goog"' },
+    SOA: { name: 'google.com', type: 6, TTL: 29, data: 'ns1.google.com. dns-admin.google.com. 1026338024 900 900 1800 60' },
+  };
+  for (const rec of Object.values(real)) assert.deepEqual(formatDnsAnswer({ Status: 0, Answer: [rec] }), [rec.data]);
+  assert.deepEqual(formatDnsAnswer({ Answer: [real.A, { ...real.A, data: '172.66.147.243' }] }), ['104.20.23.154', '172.66.147.243']);
   assert.deepEqual(formatDnsAnswer({}), []);
   assert.deepEqual(formatDnsAnswer(null), []);
 });

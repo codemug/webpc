@@ -101,18 +101,12 @@ export function buildPtrName(ip) {
 }
 
 // Format a DNS-over-HTTPS JSON response ({ Status, Answer: [...] }) into display strings.
-// Type codes: A=1, NS=2, CNAME=5, SOA=6, MX=15, TXT=16, AAAA=28, CAA=51.
+// Type codes: A=1, NS=2, CNAME=5, SOA=6, MX=15, TXT=16, AAAA=28, CAA=257.
 export function formatDnsAnswer(resp) {
+  // Cloudflare and Google DoH JSON: each Answer record is { name, type, TTL, data }, and data is
+  // already the presentation string ("10 smtp.google.com.", '"v=spf1 -all"', '0 issue "pki.goog"').
   const answers = Array.isArray(resp?.Answer) ? resp.Answer : [];
-  return answers.map(rec => {
-    const d = rec.Data;
-    switch (rec.Type) {
-      case 16: return Array.isArray(d) ? d.join('  ') : String(d);
-      case 2: return Array.isArray(d) ? d.join(', ') : String(d);
-      case 51: return Array.isArray(d) ? d.map(c => (c.flag !== undefined ? `${c.flag} ` : '') + `${c.tag} "${c.value}"`).join('; ') : String(d);
-      default: return typeof d === 'string' ? d : JSON.stringify(d);
-    }
-  });
+  return answers.map(rec => String(rec?.data ?? ''));
 }
 
 // Fetch a URL and parse JSON, with the WebPC fetch policy. GET by default; pass `method:
