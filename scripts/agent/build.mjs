@@ -63,7 +63,7 @@ export async function buildAgent(root = ROOT, { write = true } = {}) {
   const tools = [...cat.tools.values()].map(({ run, ...t }) => ({ ...t, pack: t.name.split('.')[0] }));
   const skillDocs = skills.map(s => ({ id: s.path, path: s.path, title: s.title, summary: s.summary, keywords: s.keywords, body: [s.when, ...s.steps.map(st => st.line), s.check, s.gotchas].filter(Boolean).join('\n') }));
   const out = {
-    'catalog.json': JSON.stringify({ tools, docs: cat.docs }),
+    'catalog.json': JSON.stringify({ tools, docs: cat.docs, apps: catalog.apps.filter(a => a.enabled && a.kind !== 'panel').map(a => ({ id: a.id, title: a.title, category: a.category })) }),
     'skills.json': JSON.stringify(skills),
     'search-tools.json': buildIndex(cat.docs, { store: ['name', 'purpose'] }),
     'search-skills.json': buildIndex(skillDocs, { store: ['path', 'title', 'summary'] }),

@@ -15,6 +15,8 @@ import * as fileStore from './store.mjs';
 import { resolveInGrants } from './file-tools.js';
 import { BGBM_ENGINES, ocrTextResult, nobgName, nobgTarget, downscalePlan, OCR_MAX_DIM, MAX_IMAGE_BYTES, validateImageFile, visionToolsEnabled } from './vision-tools.js';
 import { createExecClient } from './exec-client.js';
+import { createAgent } from './runtime/index.mjs';
+import { createFilesCtx } from './runtime/files-ctx.mjs';
 const $ = id => document.getElementById(id);
 // Cloud models are opt-in per session: the key lives only in CloudClient's memory and is never persisted.
 const CLOUD_MODELS = { 'cloud:anthropic': 'Claude · cloud (your key)', 'cloud:openai': 'OpenAI-compatible · cloud (your key)' };
@@ -341,7 +343,14 @@ applyFileGates(); renderFileGrants();
 const execChannel = new BroadcastChannel('webpc-terminal');
 const exec = createExecClient(execChannel);
 const runCode = (lang, code, timeoutMs) => exec.run(lang, code, timeoutMs);
-const session = new AgentSession({ client, store, webSearch, httpGet, runJavaScript, runCode, chrome: chromeTools, files: fileTools, vision: visionTools, proxyAllowed: () => $('reader-proxy').checked, emit(type, data) {
+// Agent mode: Buddy reaches the desktop, Files and every app pack through the six meta tools.
+// The desktop API exists only when Buddy runs inside WebPC (same-origin parent with pcHost).
+const agent = createAgent();
+const desktopHost = () => { try { return parent !== window && parent.pcHost ? parent.pcHost : null; } catch { return null; } };
+const filesCtx = createFilesCtx(fileStore, { broadcast: path => filesChangeChannel?.postMessage({ type: 'changed', path }) });
+// M1 approvals use the native dialog; M3 replaces it with in-chat cards so background chats can wait.
+const approve = async ({ preview, reason }) => confirm(`Buddy wants to do this:\n\n${reason}\n${preview}\n\nAllow it?`);
+const session = new AgentSession({ client, store, webSearch, httpGet, runJavaScript, runCode, chrome: chromeTools, files: fileTools, vision: visionTools, agent, host: desktopHost, filesCtx, approve, proxyAllowed: () => $('reader-proxy').checked, emit(type, data) {
   if (type === 'busy') { controls(); if (!data) status(client.ready ? 'Ready for your next question.' : 'Load a model to continue.'); }
   else if (type === 'status') status(data);
   else if (type === 'error') error(data);
