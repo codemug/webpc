@@ -16,6 +16,12 @@ function unquote(value) {
   const text = String(value).trim(); return text.length >= 2 && ((text[0] === '"' && text.at(-1) === '"') || (text[0] === "'" && text.at(-1) === "'")) ? text.slice(1, -1).trim() : text;
 }
 
+/** Parse a string as a JSON array; null (never throws) when it is not one. */
+function jsonArray(text) {
+  try { const parsed = JSON.parse(text); return Array.isArray(parsed) ? parsed : null; }
+  catch { return null; }
+}
+
 /** Show a raw value in an error message, capped so long text does not flood the context. */
 function display(value) {
   const text = typeof value === 'string' ? value : JSON.stringify(value) ?? String(value); return text.length > DISPLAY_MAX ? `${text.slice(0, DISPLAY_MAX - 3)}...` : text;
@@ -61,12 +67,7 @@ function lineValue(value) {
 
 /** ToolError carries a type and one corrected example call (fix) for the runtime. */
 export class ToolError extends Error {
-  constructor(type, message, fix) {
-    super(message);
-    this.name = 'ToolError';
-    this.type = type;
-    this.fix = fix;
-  }
+  constructor(type, message, fix) { super(message); this.name = 'ToolError'; this.type = type; this.fix = fix; }
 }
 
 /** A tool's params spec (tools.js `params`) -> list of problems with the spec itself ([] when fine). Used by the build. */
@@ -77,19 +78,13 @@ export function specErrors(params) {
     const at = `params.${name}`;
     if (spec == null || typeof spec !== 'object' || Array.isArray(spec)) { problems.push(`${at}: the spec must be an object`); continue; }
     for (const field of Object.keys(spec)) if (!SPEC_FIELDS.includes(field)) problems.push(`${at}: unknown field '${field}'`);
-    if (typeof spec.type !== 'string' || !TYPES.includes(spec.type)) {
-      problems.push(['object', 'array', 'nested'].includes(spec.type) ? `${at}: the type '${spec.type}' is nested, params are flat` : `${at}: the type must be one of ${TYPES.join(', ')}`);
-      continue;
-    }
+    if (typeof spec.type !== 'string' || !TYPES.includes(spec.type)) { problems.push(['object', 'array', 'nested'].includes(spec.type) ? `${at}: the type '${spec.type}' is nested, params are flat` : `${at}: the type must be one of ${TYPES.join(', ')}`); continue; }
     if (typeof spec.description !== 'string' || !spec.description.trim()) problems.push(`${at}: a description is required`);
     if (spec.required !== undefined && typeof spec.required !== 'boolean') problems.push(`${at}: required must be a boolean`);
     if (spec.type === 'enum') {
-      if (spec.values === undefined) problems.push(`${at}: an enum needs values`);
-      else if (typeof spec.values === 'string' && !['apps', 'windows'].includes(spec.values)) problems.push(`${at}: live values must be 'apps' or 'windows'`);
-      else if (!Array.isArray(spec.values) || spec.values.some(v => typeof v !== 'string' || !v.trim())) problems.push(`${at}: values must be an array of non-empty strings or 'apps'/'windows'`);
+      if (spec.values === undefined) problems.push(`${at}: an enum needs values`); else if (typeof spec.values === 'string') { if (!['apps', 'windows'].includes(spec.values)) problems.push(`${at}: live values must be 'apps' or 'windows'`); } else if (!Array.isArray(spec.values) || spec.values.some(v => typeof v !== 'string' || !v.trim())) problems.push(`${at}: values must be an array of non-empty strings or 'apps'/'windows'`);
     } else if (spec.values !== undefined) problems.push(`${at}: values is only allowed on an enum`);
-    for (const bound of ['min', 'max']) {
-      if (spec[bound] === undefined) continue;
+    for (const bound of ['min', 'max']) if (spec[bound] !== undefined) {
       if (spec.type !== 'integer' && spec.type !== 'number') { problems.push(`${at}: ${bound} is only allowed on integer and number`); continue; }
       if (typeof spec[bound] !== 'number' || !Number.isFinite(spec[bound])) problems.push(`${at}: ${bound} must be a finite number`);
     }
@@ -100,10 +95,7 @@ export function specErrors(params) {
 
 /** Canonical enum values: a static array, or the live list behind 'apps'/'windows'. */
 function enumValues(spec, choices) {
-  if (typeof spec.values === 'string') {
-    const live = choices(spec.values);
-    return Array.isArray(live) ? live.filter(v => typeof v === 'string' && v.trim()) : [];
-  }
+  if (typeof spec.values === 'string') { const live = choices(spec.values); return Array.isArray(live) ? live.filter(v => typeof v === 'string' && v.trim()) : []; }
   return spec.values ?? [];
 }
 
@@ -145,48 +137,48 @@ function coerce(spec, value, values, aliases) {
       if (spec.min !== undefined && num < spec.min || spec.max !== undefined && num > spec.max) return { ok: false, article, bounds: parts, closest: num < spec.min ? spec.min : spec.max };
       return { ok: true, value: num };
     }
-    case 'boolean':
+    case 'boolean': {
       if (typeof value === 'boolean') return { ok: true, value };
       if (value === 1 || value === 0) return { ok: true, value: value === 1 };
-      if (typeof value === 'string') {
-        const text = unquote(value).toLowerCase();
-        if (text in BOOL_TRUE) return { ok: true, value: true };
-        if (text in BOOL_FALSE) return { ok: true, value: false };
-      }
+      if (typeof value === 'string') { const text = unquote(value).toLowerCase(); if (text in BOOL_TRUE) return { ok: true, value: true }; if (text in BOOL_FALSE) return { ok: true, value: false }; }
       return { ok: false };
+    }
     case 'enum': {
       const text = unquote(String(value));
       const hit = values.find(candidate => candidate.toLowerCase() === text.toLowerCase() || aliases[text.toLowerCase()]?.toLowerCase() === candidate.toLowerCase());
       return hit ? { ok: true, value: hit } : { ok: false, closest: closest(text, values, 1)[0] };
     }
     case 'list': {
+      // A string that parses as a JSON array (cloud models) wins over text splitting.
+      const source = typeof value === 'string' ? (jsonArray(unquote(value)) ?? value) : value;
       let items;
-      if (typeof value === 'string') {
-        const text = unquote(value);
-        items = (text.includes('\n') ? text.split('\n') : text.split(',')).map(part => part.trim()).filter(part => part !== '');
-      } else if (Array.isArray(value)) {
+      if (Array.isArray(source)) {
         items = [];
-        for (const item of value) {
+        for (const item of source) {
           if (typeof item === 'string') { const text = item.trim(); if (text) items.push(text); }
           else if (typeof item === 'number' || typeof item === 'boolean') items.push(String(item));
           else return { ok: false };
         }
+      } else if (typeof source === 'string') {
+        const text = unquote(source);
+        items = (text.includes('\n') ? text.split('\n') : text.split(',')).map(part => part.trim()).filter(part => part !== '');
       } else return { ok: false };
       return { ok: true, value: items };
     }
     case 'table': {
+      const source = typeof value === 'string' ? (jsonArray(unquote(value)) ?? value) : value;
       let rows;
-      if (typeof value === 'string') {
-        rows = value.split('\n').map(line => line.trim()).filter(line => line !== '').map(line => splitRow(line, line.includes('\t') ? '\t' : ','));
-      } else if (Array.isArray(value)) {
+      if (Array.isArray(source)) {
         rows = [];
-        for (const row of value) {
+        for (const row of source) {
           if (typeof row === 'string') rows.push(splitRow(row.trim(), row.includes('\t') ? '\t' : ','));
           else if (Array.isArray(row)) {
             if (row.some(cell => typeof cell !== 'string' && typeof cell !== 'number' && typeof cell !== 'boolean')) return { ok: false };
             rows.push(row.map(cell => (typeof cell === 'string' ? cell.trim() : String(cell))));
           } else return { ok: false };
         }
+      } else if (typeof source === 'string') {
+        rows = source.split('\n').map(line => line.trim()).filter(line => line !== '').map(line => splitRow(line, line.includes('\t') ? '\t' : ','));
       } else return { ok: false };
       return { ok: true, value: rows };
     }
@@ -240,9 +232,7 @@ export function checkArgs(tool, raw, { choices = () => [], aliases = {} } = {}) 
     const values = spec.type === 'enum' ? enumValues(spec, choices) : [];
     const out = coerce(spec, value, values, aliases);
     if (!out.ok) {
-      const message = out.bounds
-        ? `${key} must be ${out.article} ${out.bounds.join(' and ')}; got "${display(value)}"`
-        : `${key} must be ${expected(spec, values)}; got "${display(value)}"${out.closest ? `; did you mean ${out.closest}?` : ''}`;
+      const message = out.bounds ? `${key} must be ${out.article} ${out.bounds.join(' and ')}; got "${display(value)}"` : `${key} must be ${expected(spec, values)}; got "${display(value)}"${out.closest ? `; did you mean ${out.closest}?` : ''}`;
       return { ok: false, error: { type: 'invalid_argument', message, fix: fixLine(tool, key, out.closest) } };
     }
     args[key] = out.value;

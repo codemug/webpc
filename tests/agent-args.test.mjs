@@ -127,6 +127,17 @@ test('table rows split on newlines, cells on tabs or quoted commas', () => {
   assert.deepEqual(checkArgs(tool, { name: 'n', grid: ['x,y', 'z,w'] }).args.grid, [['x', 'y'], ['z', 'w']], 'array rows still parse cells');
 });
 
+test('list and table accept a string that parses as a JSON array', () => {
+  assert.deepEqual(checkArgs(tool, { name: 'n', tags: '["Total"]' }).args.tags, ['Total']);
+  assert.deepEqual(checkArgs(tool, { name: 'n', tags: '[1, 2]' }).args.tags, ['1', '2']);
+  assert.deepEqual(checkArgs(tool, { name: 'n', tags: '  ["a", "b"]  ' }).args.tags, ['a', 'b']);
+  assert.deepEqual(checkArgs(tool, { name: 'n', grid: '["Total"]' }).args.grid, [['Total']], 'a flat JSON array is one row');
+  assert.deepEqual(checkArgs(tool, { name: 'n', grid: '[[\"a\",\"b\"],[\"c\",\"d\"]]' }).args.grid, [['a', 'b'], ['c', 'd']]);
+  assert.deepEqual(checkArgs(tool, { name: 'n', grid: '"[[\"a\",\"b\"]]"' }).args.grid, [['a', 'b']], 'a quoted JSON array still parses');
+  assert.deepEqual(checkArgs(tool, { name: 'n', tags: 'a, [b' }).args.tags, ['a', '[b'], 'invalid JSON falls back to text parsing');
+  assert.deepEqual(checkArgs(tool, { name: 'n', grid: 'x\ny' }).args.grid, [['x'], ['y']], 'plain text keeps the old parsing');
+});
+
 test('path normalises to a leading slash and rejects unsafe values', () => {
   const pathTool = { name: 't7', params: { where: { type: 'path', required: true, description: 'Files path' } }, examples: [{ args: { where: '/x' } }] };
   assert.equal(checkArgs(pathTool, { where: 'docs/a.txt' }).args.where, '/docs/a.txt');
@@ -207,4 +218,10 @@ test('missing wins over later params and defaults only apply to absent optional 
   const twoRequired = { name: 't6', params: { a: { type: 'string', required: true, description: 'A' }, b: { type: 'string', required: true, description: 'B', default: 'db' } }, examples: [] };
   const error = checkArgs(twoRequired, { b: 'x' }).error;
   assert.equal(error.message, 't6 needs a (A)');
+});
+
+test('specErrors accepts live enums and rejects unknown live names', () => {
+  assert.deepEqual(specErrors({ app: { type: 'enum', values: 'apps', description: 'App id' } }), []);
+  assert.deepEqual(specErrors({ win: { type: 'enum', values: 'windows', description: 'Window id' } }), []);
+  assert.match(specErrors({ app: { type: 'enum', values: 'files', description: 'App id' } }).join('\n'), /live values must be 'apps' or 'windows'/);
 });
