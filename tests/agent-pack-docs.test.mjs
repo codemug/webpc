@@ -32,10 +32,10 @@ const DEL = { name: 'deletion' };
 // insert_text, the plain insertText steps from find_replace) applies to it, so it is what
 // docs.get_text reads. By contrast getPageContent is a STALE paged view: it returns the initial
 // content and never reflects edits, mirroring the real editor where the page layout lags the model.
-const fakeDocs = (overrides = {}) => {
+const fakeDocs = (overrides = {}, { initial } = {}) => {
   const calls = [];
   const viewDispatches = [];
-  const paragraphs = [
+  const paragraphs = initial ?? [
     { paraId: 'p1', segs: [{ text: 'First draft', mark: null, dead: false }] },
     { paraId: 'p2', segs: [{ text: 'Second line', mark: null, dead: false }] },
   ];
@@ -52,7 +52,7 @@ const fakeDocs = (overrides = {}) => {
     descendants: f => {
       let pos = 0;
       for (const para of paragraphs) {
-        f({ isTextblock: true, isText: false, attrs: { paraId: para.paraId }, get textContent() { return liveText(para.segs); } });
+        f({ isTextblock: true, isText: false, attrs: { paraId: para.paraId }, content: { size: liveText(para.segs).length }, get textContent() { return liveText(para.segs); } }, pos);
         for (const seg of para.segs) {
           if (!seg.dead) f({ isTextblock: false, isText: true, text: seg.text, marks: seg.mark ? [{ type: seg.mark }] : [] }, pos);
           pos += seg.text.length;
@@ -102,6 +102,9 @@ const fakeDocs = (overrides = {}) => {
         // node (the tool only matches inside a single node), so rewrite that segment in place and
         // keep the paragraph whole, the way ProseMirror replaces the range in the doc.
         const [, text, from, to] = step;
+        // Typing into an empty paragraph (a fresh document): no text node holds the position.
+        const empty = paragraphs.find(p => liveText(p.segs) === '');
+        if (to === undefined && empty) { empty.segs.push({ text, mark: null, dead: false }); continue; }
         segs.forEach((seg, i) => {
           const s = st[i], e = s + seg.text.length;
           if (from < s || to > e) return;
@@ -258,6 +261,21 @@ test('docs.insert_text inserts, accepts the change, so get_text shows the new te
   // accepts it on getView().dispatch, so the paragraph becomes accepted text get_text reads back.
   const after = await docs.runTool('docs.get_text', {});
   assert.ok(after.text.includes('New para'), `get_text should include the accepted insert, got: ${after.text}`);
+});
+
+test('docs.insert_text types into the empty paragraph of a fresh document (no paraId yet)', async () => {
+  // Live probe of a fresh Docs window: one paragraph, content size 0, paraId null.
+  const docs = fakeDocs({ getSelection: () => null }, { initial: [{ paraId: null, segs: [] }] });
+  const result = await docs.runTool('docs.insert_text', { text: 'Meeting notes' });
+  assert.deepEqual(result, { insertedAfter: null, text: 'Meeting notes' });
+  assert.ok(!docs.calls.some(c => c[0] === 'insertParagraphAfter'), 'no paraId to insert after');
+  assert.deepEqual(docs.viewDispatches[0].steps[0], ['insertText', 'Meeting notes', 1, undefined], 'typed at the start of the empty paragraph');
+  assert.ok((await docs.runTool('docs.get_text', {})).text.includes('Meeting notes'));
+});
+
+test('docs.insert_text without a paraId and without an empty paragraph still teaches', async () => {
+  const docs = fakeDocs({ getSelection: () => null }, { initial: [{ paraId: null, segs: [{ text: 'Old', mark: null, dead: false }] }] });
+  await assert.rejects(docs.runTool('docs.insert_text', { text: 'x' }), e => e instanceof ToolError && /no paragraph to add after/.test(e.message));
 });
 
 test('docs.insert_text inserts after a given paragraph id and accepts it too', async () => {

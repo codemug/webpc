@@ -40,6 +40,18 @@ const endParaId = ed => {
   return last;
 };
 
+// A fresh document is one empty paragraph with no paraId yet (live probe: size 0, paraId null),
+// which insertParagraphAfter cannot address. Type the text into that paragraph on the live view
+// (getEditorRef().getView(), the same view find_replace edits). False when the last paragraph has text.
+const typeIntoEmpty = (ed, text) => {
+  const view = ed.getEditorRef?.()?.getView?.();
+  let last = null;
+  view?.state?.doc?.descendants((node, pos) => { if (node.isTextblock) last = { node, pos }; });
+  if (!last || last.node.content?.size !== 0) return false;
+  view.dispatch(view.state.tr.insertText(text, last.pos + 1));
+  return true;
+};
+
 // insertParagraphAfter and proposeChange apply the insertion mark, so the new text is a pending
 // tracked suggestion, not document text. Accept every tracked change with the editor's own
 // "Accept all changes" command, which the UI runs as Zf()(view.state, view.dispatch) on the
@@ -110,7 +122,11 @@ export const tools = [
     run: async (args, ctx) => call(ctx, async host => {
       const ed = editor(await host.appWindow(APP));
       const paraId = args.para_id ?? (ed.getSelection()?.paraId ?? await endParaId(ed));
-      if (!paraId) throw new ToolError('app_error', 'the document has no paragraphs yet; open it and type something first', '');
+      if (!paraId) {
+        if (!typeIntoEmpty(ed, args.text)) throw new ToolError('app_error', 'there is no paragraph to add after; read the paragraphs with docs.get_text and pass one as para_id', 'call_tool tool=docs.get_text');
+        acceptAllChanges(ed);
+        return { insertedAfter: null, text: args.text };
+      }
       if (!ed.insertParagraphAfter({ paraId, text: args.text, author: AUTHOR })) throw new ToolError('app_error', `could not insert after paragraph ${paraId}`, '');
       acceptAllChanges(ed);
       return { insertedAfter: paraId, text: args.text };
