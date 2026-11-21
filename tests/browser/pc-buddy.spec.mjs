@@ -82,3 +82,26 @@ test('at a 390 px viewport the open panel takes the full width', async ({ page }
   expect(box.width).toBeCloseTo(390, 0);
   expect(box.x).toBeCloseTo(0, 0);
 });
+
+test('the Buddy button shows background chats from pc:buddy-status', async ({ page }) => {
+  skipUnlessEnabled(test, 'ai-agent');
+  await page.goto('/pc/');
+  await button(page).click();
+  await expect(frame(page).locator('html')).toHaveAttribute('data-theme', /light|dark/);
+  const badge = page.locator('[data-buddy-badge]');
+  await expect(badge).toBeHidden();
+  const post = data => page.evaluate(d => document.querySelector('#pc-buddy iframe').contentWindow.parent.postMessage(d, location.origin), data);
+  // Messages must come from the Buddy frame itself: post from inside it.
+  const postFromBuddy = data => page.frames().find(f => f.url().includes('/pc/apps/ai-agent/')).evaluate(d => parent.postMessage(d, location.origin), data);
+  await postFromBuddy({ type: 'pc:buddy-status', running: 2, needsYou: 0 });
+  await expect(badge).toHaveText('2');
+  await expect(button(page)).toHaveAttribute('aria-label', 'Buddy, 2 chats running');
+  await postFromBuddy({ type: 'pc:buddy-status', running: 1, needsYou: 1 });
+  await expect(badge).toHaveText('1');
+  await expect(badge).toHaveAttribute('data-kind', 'needs-you');
+  await expect(button(page)).toHaveAttribute('aria-label', 'Buddy, 1 chat running, 1 needs you');
+  await post({ type: 'pc:buddy-status', running: 9, needsYou: 9 }); // from the desktop page itself: ignored
+  await expect(badge).toHaveText('1');
+  await postFromBuddy({ type: 'pc:buddy-status', running: 0, needsYou: 0 });
+  await expect(badge).toBeHidden();
+});

@@ -119,6 +119,9 @@ body { margin: 0; }
 .pc-launcher-button[aria-expanded="true"] { background: var(--pc-selection); box-shadow: inset 0 0 0 1px var(--color-accent-muted); }
 .pc-buddy-button { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 9px; height: 44px; padding: 0 14px; font-size: 12px !important; font-weight: 600 !important; border-radius: 6px; background: var(--color-surface-2); }
 .pc-buddy-button img { width: 24px; height: 24px; border-radius: 6px; object-fit: cover; }
+.pc-buddy-button { position: relative; }
+.pc-buddy-badge { position: absolute; top: 3px; left: 28px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; font: 700 10px/16px var(--font-sans); text-align: center; color: var(--color-surface); background: var(--color-accent); box-shadow: 0 0 0 2px var(--color-surface); }
+.pc-buddy-badge[data-kind="needs-you"] { background: #e0a100; color: #1a1300; }
 .pc-buddy-button[aria-expanded="true"] { background: var(--pc-selection); box-shadow: inset 0 0 0 1px var(--color-accent-muted); }
 .pc-taskbar-divider { width: 1px; align-self: stretch; margin: 6px 2px; background: var(--color-border); }
 .pc-tasks { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; overflow-x: auto; }

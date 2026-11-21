@@ -200,6 +200,17 @@ if (shell) {
   const buddyPanel = shell.querySelector('#pc-buddy');
   let buddyFrame = null;
   const isBuddyOpen = () => buddyPanel?.dataset.open === 'true';
+  // Background chats: Buddy posts how many are running and how many need the user.
+  const showBuddyStatus = ({ running = 0, needsYou = 0 }) => {
+    const badge = buddyButton?.querySelector('[data-buddy-badge]');
+    if (!badge) return;
+    const run = Math.max(0, Math.trunc(Number(running)) || 0), need = Math.max(0, Math.trunc(Number(needsYou)) || 0);
+    badge.hidden = run + need === 0;
+    badge.textContent = need ? String(need) : run ? String(run) : '';
+    badge.dataset.kind = need ? 'needs-you' : 'running';
+    const parts = [run && `${run} chat${run === 1 ? '' : 's'} running`, need && `${need} need${need === 1 ? 's' : ''} you`].filter(Boolean);
+    buddyButton.setAttribute('aria-label', parts.length ? `Buddy, ${parts.join(', ')}` : 'Buddy');
+  };
   const ensureBuddyFrame = () => {
     if (buddyFrame?.isConnected) return buddyFrame;
     const frame = document.createElement('iframe');
@@ -226,6 +237,7 @@ if (shell) {
       if (event.origin !== location.origin || !buddyFrame || event.source !== buddyFrame.contentWindow) return;
       if (event.data?.type === 'pc:ready') buddyFrame.contentWindow.postMessage({ type: 'pc:theme', theme: document.documentElement.dataset.theme ?? 'dark' }, location.origin);
       if (event.data?.type === 'pc:panel-close') closeBuddy();
+      if (event.data?.type === 'pc:buddy-status') showBuddyStatus(event.data);
     });
   }
 
