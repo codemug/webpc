@@ -15,7 +15,7 @@ import * as fileStore from './store.mjs';
 import { resolveInGrants } from './file-tools.js';
 import { BGBM_ENGINES, ocrTextResult, nobgName, nobgTarget, downscalePlan, OCR_MAX_DIM, MAX_IMAGE_BYTES, validateImageFile, visionToolsEnabled } from './vision-tools.js';
 import { createExecClient } from './exec-client.js';
-import { createAgent } from './runtime/index.mjs';
+import { createAgent, createPolicy } from './runtime/index.mjs';
 import { createFilesCtx } from './runtime/files-ctx.mjs';
 const $ = id => document.getElementById(id);
 // Cloud models are opt-in per session: the key lives only in CloudClient's memory and is never persisted.
@@ -345,7 +345,10 @@ const exec = createExecClient(execChannel);
 const runCode = (lang, code, timeoutMs) => exec.run(lang, code, timeoutMs);
 // Agent mode: Buddy reaches the desktop, Files and every app pack through the six meta tools.
 // The desktop API exists only when Buddy runs inside WebPC (same-origin parent with pcHost).
-const agent = createAgent();
+// The safety policy follows the live backend (cloud models need Files grants) on every call.
+const backendNow = () => (session?.client === cloud ? 'cloud' : session?.client === chrome ? 'chrome' : 'local');
+const livePolicy = () => createPolicy({ backend: backendNow(), grants: fileGrants.map(g => g.root) });
+const agent = createAgent({ policy: { newTurn: text => livePolicy().newTurn(text), decide: (...a) => livePolicy().decide(...a), noteResult: (...a) => livePolicy().noteResult(...a) } });
 const desktopHost = () => { try { return parent !== window && parent.pcHost ? parent.pcHost : null; } catch { return null; } };
 const filesCtx = createFilesCtx(fileStore, { broadcast: path => filesChangeChannel?.postMessage({ type: 'changed', path }) });
 // M1 approvals use the native dialog; M3 replaces it with in-chat cards so background chats can wait.

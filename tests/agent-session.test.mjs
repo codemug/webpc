@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { AgentSession } from '../src/apps/ai-agent/session.js';
-import { createAgent, META_TOOL_NAMES } from '../src/apps/ai-agent/runtime/index.mjs';
+import { createAgent, createPolicy, META_TOOL_NAMES } from '../src/apps/ai-agent/runtime/index.mjs';
 
 const call = (name, args) => `<tool_call><function=${name}>${Object.entries(args).map(([k, v]) => `<parameter=${k}>${v}</parameter>`).join('')}</function></tool_call>`;
 function setup(outputs, { approve = async () => true } = {}) {
@@ -87,4 +87,16 @@ test('prefetch skips skills that only share filler words with the request', asyn
   assert.match(agent.prefetch('What is 6 times 7?'), /system\.calculate|Work out a sum/);
   assert.doesNotMatch(agent.prefetch('What is 6 times 7?'), /see-what-is-open/);
   assert.equal(agent.prefetch('zzz qqq'), '');
+});
+
+test('with the real policy, a cloud model cannot touch ungranted Files and a web read taints later changes', async () => {
+  const outputs = [call('call_tool', { tool: 'files.mkdir', path: '/Secret' }), 'Done.'];
+  const { session, seen } = setup(outputs);
+  session.agent = createAgent({ policy: createPolicy({ backend: 'cloud', grants: ['/Shared'] }) });
+  await session.send('Make a folder called Secret');
+  assert.equal(seen.files.length, 0);
+  assert.equal(toolMessages(session)[0].error.type, 'not_allowed');
+  const policy = createPolicy({ backend: 'local' }); const turn = policy.newTurn('read this page');
+  policy.noteResult({ name: 'system.http_get', effect: 'read', untrusted: true }, { url: 'https://example.com/' }, turn);
+  assert.equal(policy.decide({ name: 'desktop.open_app', effect: 'change', purpose: 'Open an app window.' }, { app: 'docs' }, turn).action, 'ask');
 });

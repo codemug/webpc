@@ -13,6 +13,9 @@ import { repairCall } from './repair.mjs';
 import { ToolError, callLine } from './args.mjs';
 
 export { META_TOOL_NAMES };
+// Re-exported so app.js can reach it: the served runtime/ folder holds only the bundles.
+export { createPolicy } from './policy.mjs';
+export { createScheduler } from './scheduler.mjs';
 
 /** The simple default policy; createPolicy (policy.mjs) replaces it when passed in. */
 export function defaultPolicy() {
