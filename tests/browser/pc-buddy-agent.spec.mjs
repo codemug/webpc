@@ -19,6 +19,7 @@ async function scriptedModel(page) {
       else if (user.includes('Open the Files app')) text = call('call_tool', { tool: 'desktop.open_app', app: 'files' });
       else if (user.includes('dark mode')) text = call('call_tool', { tool: 'desktop.set_theme(theme: light|dark)', theme: 'dark' });
       else if (user.includes('folder called BuddyTest')) text = call('call_tool', { tool: 'files.mkdir', path: 'BuddyTest' });
+      else if (user.includes('Total in A1')) text = call('call_tool', { tool: 'gridcraft.set_cells', start: 'A1', values: 'Total' });
       else text = 'A plain answer.';
       postMessage({ type: 'token', id: data.id, text }); postMessage({ type: 'done', id: data.id, text });
     };` }));
@@ -32,10 +33,10 @@ async function openBuddy(page) {
   await expect(buddy.locator('#send')).toBeEnabled();
   return buddy;
 }
-async function ask(buddy, text) {
+async function ask(buddy, text, timeout = 15000) {
   // A tool round and the answer round each add an assistant bubble; wait for the answer.
   await buddy.locator('#message').fill(text); await buddy.locator('#send').click();
-  await expect(buddy.locator('.message.assistant').last()).toContainText('DONE', { timeout: 15000 });
+  await expect(buddy.locator('.message.assistant').last()).toContainText('DONE', { timeout });
   return buddy.locator('.message.assistant').last().innerText();
 }
 
@@ -72,4 +73,19 @@ test('Buddy creates a folder in the real Files store', async ({ page }) => {
     try { await root.getDirectoryHandle('BuddyTest'); return true; } catch { return false; }
   });
   expect(exists).toBe(true);
+});
+
+test('Buddy writes a cell in the real GridCraft through its page API', async ({ page }) => {
+  skipUnlessEnabled(test, 'ai-agent'); skipUnlessEnabled(test, 'gridcraft');
+  test.setTimeout(120000);
+  await scriptedModel(page);
+  const buddy = await openBuddy(page);
+  const reply = await ask(buddy, 'Put Total in A1 of my spreadsheet', 90000);
+  expect(reply).toContain('"ok":true');
+  await expect(page.locator('[data-window="gridcraft"]')).toBeVisible();
+  const cell = await page.evaluate(async () => {
+    const editor = document.querySelector('[data-window="gridcraft"] iframe').contentDocument.getElementById('editor').contentWindow;
+    return (await editor.gridcraft.request('cell.get', { cell: 'A1' })).input;
+  });
+  expect(cell).toBe('Total');
 });

@@ -16,6 +16,7 @@ export { META_TOOL_NAMES };
 // Re-exported so app.js can reach it: the served runtime/ folder holds only the bundles.
 export { createPolicy } from './policy.mjs';
 export { createScheduler } from './scheduler.mjs';
+export { craftApi } from '../../../../agent/shared/craft.js';
 
 /** The simple default policy; createPolicy (policy.mjs) replaces it when passed in. */
 export function defaultPolicy() {
@@ -69,7 +70,9 @@ export function createAgent({ policy = defaultPolicy(), data = { catalogJson, sk
       const ok = kind === 'legacy' ? Boolean(ctx.legacy?.[value]) : kind === 'app' ? appIds.includes(value) && Boolean(ctx.host) : NEED_CHECKS[kind] ? NEED_CHECKS[kind](ctx) : true;
       if (!ok) throw new ToolError('not_available', `${name} is not available here (it needs ${need}).`, '');
     }
-    const decision = policy.decide(meta, args, ctx.turn);
+    // A tool may compute its effect from its arguments (a generic run_command that can delete).
+    const effective = typeof impl.effectFor === 'function' ? { ...meta, effect: impl.effectFor(args) } : meta;
+    const decision = policy.decide(effective, args, ctx.turn);
     if (decision.action === 'deny') throw new ToolError('not_allowed', decision.reason, '');
     if (decision.action === 'ask') {
       const yes = await (ctx.approve?.({ tool: name, preview: decision.preview, reason: decision.reason }) ?? false);
@@ -77,7 +80,7 @@ export function createAgent({ policy = defaultPolicy(), data = { catalogJson, sk
       ctx.turn?.approvedOnce?.add(decision.preview);
     }
     const result = await impl.run(args, ctx);
-    policy.noteResult(meta, args, ctx.turn);
+    policy.noteResult(effective, args, ctx.turn);
     return result;
   }
   const skillPathsFor = name => skills.filter(s => s.tools.includes(name)).map(s => s.path);

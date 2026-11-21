@@ -15,7 +15,7 @@ import * as fileStore from './store.mjs';
 import { resolveInGrants } from './file-tools.js';
 import { BGBM_ENGINES, ocrTextResult, nobgName, nobgTarget, downscalePlan, OCR_MAX_DIM, MAX_IMAGE_BYTES, validateImageFile, visionToolsEnabled } from './vision-tools.js';
 import { createExecClient } from './exec-client.js';
-import { createAgent, createPolicy } from './runtime/index.mjs';
+import { createAgent, createPolicy, craftApi } from './runtime/index.mjs';
 import { createFilesCtx } from './runtime/files-ctx.mjs';
 const $ = id => document.getElementById(id);
 // Cloud models are opt-in per session: the key lives only in CloudClient's memory and is never persisted.
@@ -353,7 +353,9 @@ const desktopHost = () => { try { return parent !== window && parent.pcHost ? pa
 const filesCtx = createFilesCtx(fileStore, { broadcast: path => filesChangeChannel?.postMessage({ type: 'changed', path }) });
 // M1 approvals use the native dialog; M3 replaces it with in-chat cards so background chats can wait.
 const approve = async ({ preview, reason }) => confirm(`Buddy wants to do this:\n\n${reason}\n${preview}\n\nAllow it?`);
-const session = new AgentSession({ client, store, webSearch, httpGet, runJavaScript, runCode, chrome: chromeTools, files: fileTools, vision: visionTools, agent, host: desktopHost, filesCtx, approve, proxyAllowed: () => $('reader-proxy').checked, emit(type, data) {
+// ctx.craft(id): an ArtCraft app's page API (window.<id> inside its editor frame), opened if needed.
+const craft = async id => craftApi(await desktopHost().appWindow(id), id);
+const session = new AgentSession({ client, store, webSearch, httpGet, runJavaScript, runCode, chrome: chromeTools, files: fileTools, vision: visionTools, agent, host: desktopHost, filesCtx, craft, approve, proxyAllowed: () => $('reader-proxy').checked, emit(type, data) {
   if (type === 'busy') { controls(); if (!data) status(client.ready ? 'Ready for your next question.' : 'Load a model to continue.'); }
   else if (type === 'status') status(data);
   else if (type === 'error') error(data);

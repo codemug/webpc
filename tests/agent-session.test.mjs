@@ -100,3 +100,13 @@ test('with the real policy, a cloud model cannot touch ungranted Files and a web
   policy.noteResult({ name: 'system.http_get', effect: 'read', untrusted: true }, { url: 'https://example.com/' }, turn);
   assert.equal(policy.decide({ name: 'desktop.open_app', effect: 'change', purpose: 'Open an app window.' }, { app: 'docs' }, turn).action, 'ask');
 });
+
+test('a generic run_command that deletes asks first, through the tool effectFor', async () => {
+  const { session, seen } = setup([call('call_tool', { tool: 'gridcraft.run_command', command: 'sheet.delete', params: 'sheet=Sheet2' }), 'OK.'], { approve: async () => false });
+  const sent = [];
+  session.craft = async () => ({ commands: async () => [{ id: 'sheet.delete', label: 'Delete sheet', params: '{sheet}' }], execute: async (...a) => { sent.push(a); return {}; } });
+  await session.send('Delete Sheet2 in GridCraft');
+  assert.equal(seen.approvals.length, 1);
+  assert.equal(sent.length, 0);
+  assert.equal(toolMessages(session)[0].error.type, 'needs_approval_denied');
+});
