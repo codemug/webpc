@@ -81,6 +81,12 @@ export function repairCall(raw, { known, apps = [], verbs = WINDOW_VERBS } = {})
     // 5. Case and separators: lowercase, spaces and / become ., - becomes _.
     const normalized = name.toLowerCase().replace(/[\s/]+/g, '.').replace(/-+/g, '_');
     if (normalized !== name) { name = normalized; repairs.push('normalised tool name'); }
+    // 6b. Names built from skill paths: try known variants (drop _app/_window, add _app)
+    // before the window-verb alias below.
+    if (!isKnown(name)) {
+      const candidates = [name.endsWith('_app') ? name.slice(0, -4) : null, name.endsWith('_window') ? name.slice(0, -7) : null, `${name}_app`].filter(Boolean);
+      for (const candidate of candidates) if (isKnown(candidate)) { name = candidate; repairs.push(`matched ${candidate}`); break; }
+    }
     // 6. Window-verb aliases for the app packs, only when the rewritten name is known.
     if (!isKnown(name)) {
       const dot = name.indexOf('.');

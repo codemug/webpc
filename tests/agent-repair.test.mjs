@@ -101,6 +101,19 @@ test('explicit keys win over inline pairs', () => {
   assert.ok(out.repairs.includes('parsed inline pairs from tool'));
 });
 
+test('skill-path derived names match a known variant (rule 6b)', () => {
+  const closeDash = repairCall({ tool: 'desktop.close-app' }, OPTS);
+  assert.equal(closeDash.tool, 'desktop.close');
+  assert.deepEqual(closeDash.repairs, ['normalised tool name', 'matched desktop.close']);
+  assert.equal(repairCall({ tool: 'desktop.close_app' }, OPTS).tool, 'desktop.close');
+  const open = repairCall({ tool: 'desktop.open' }, OPTS);
+  assert.equal(open.tool, 'desktop.open_app');
+  assert.deepEqual(open.repairs, ['matched desktop.open_app']);
+  assert.equal(repairCall({ tool: 'gridcraft.set-cells' }, OPTS).tool, 'gridcraft.set_cells', 'dashes are already fixed by the separator rule');
+  const noVariant = repairCall({ tool: 'ghost.thing' }, OPTS);
+  assert.equal(noVariant.tool, 'ghost.thing', 'no known variant means the name is left alone');
+});
+
 test('an unknown app prefix is not aliased and a non-known rewrite is kept', () => {
   const ghost = repairCall({ tool: 'ghost.close' }, { ...OPTS, apps: ['docs'] });
   assert.equal(ghost.tool, 'ghost.close');
