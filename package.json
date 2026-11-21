@@ -8,7 +8,7 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "catalog": "node scripts/catalog/catalog.mjs",
+    "catalog": "node scripts/catalog/catalog.mjs && node scripts/agent/build.mjs",
     "predev": "npm run catalog",
     "dev": "npm run assets:pc && astro dev",
     "prebuild": "npm run catalog",

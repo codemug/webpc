@@ -28,6 +28,7 @@ public/pc/vendor/
 
 # Generated from catalog.yaml (npm run catalog)
 src/scripts/pc/registry.generated.json
+src/apps/ai-agent/generated/
 
 # Upgrader output
 upgrade-plan.json
