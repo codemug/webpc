@@ -227,12 +227,27 @@ async function generateImage({ id, messages, images }) {
 
 // Serialize requests. The host terminates this worker on cancellation, including model download and prefill.
 let queue = Promise.resolve();
+// Per-request interrupt ({ type: "interrupt", id }): that generation ends early through the shared
+// stopper (a normal done with the partial text); a queued id is dropped with an aborted error.
+// The global "stop" stays the kill-everything path.
+let runningId = null;
+const queuedIds = new Set();
 self.onmessage = ({ data }) => {
   if (data.type === "stop") return stopper.interrupt();
+  if (data.type === "interrupt") {
+    if (data.id === runningId) stopper.interrupt();
+    else if (queuedIds.delete(data.id)) postMessage({ type: "error", id: data.id, message: "aborted" });
+    return;
+  }
+  if (data.type === "generate") queuedIds.add(data.id);
   queue = queue.then(async () => {
     try {
       if (data.type === "load") await load(data.key, data.vision);
-      else if (data.type === "generate") await generate(data);
+      else if (data.type === "generate") {
+        queuedIds.delete(data.id);
+        runningId = data.id;
+        try { await generate(data); } finally { runningId = null; }
+      }
       else if (data.type === "count") await count(data);
     } catch (err) {
       postMessage({ type: "error", id: data.id, key: data.key, message: String(err?.message ?? err) });
