@@ -59,6 +59,25 @@ export function callLine(name, args = {}) {
   return parts.join(' ');
 }
 
+/**
+ * A call line with a <name> placeholder for each argument and no values. Discovery surfaces
+ * (find_tool, describe_tool, the prefetch note, skill steps) show this instead of an example,
+ * because small models copy example values verbatim (eval M6).
+ */
+export function templateLine(name, keys = []) {
+  return [`call_tool tool=${name}`, ...keys.map(key => `${key}=<${key}>`)].join(' ');
+}
+
+/** A skill step line with every call_tool value replaced by its placeholder; other lines unchanged. */
+export function templateStep(line) {
+  const text = String(line);
+  const call = text.match(/call_tool tool=(\S+)/);
+  if (!call) return text;
+  const rest = text.slice(call.index + call[0].length);
+  const keys = rest.split(/\s+(?=[A-Za-z_]\w*=)/).map(pair => pair.trim().match(/^([A-Za-z_]\w*)=/)?.[1]).filter(Boolean);
+  return text.slice(0, call.index) + templateLine(call[1], keys);
+}
+
 // Values in a call line stay on one line: newlines and tabs are escaped like skills.md step lines.
 function lineValue(value) {
   if (value != null && typeof value === 'object') return JSON.stringify(value);
@@ -198,11 +217,14 @@ function coerce(spec, value, values, aliases) {
 /** One corrected callLine from the tool's first example, with the bad value replaced. */
 function fixLine(tool, param, replacement) {
   const example = tool?.examples?.[0]?.args ?? {};
-  const args = { ...example };
+  // A path in a fix line is always a placeholder: the model copies fix lines, and an example
+  // path ("/PDFCraft/contract.pdf") sent it to a file that does not exist (eval M6, B16).
+  const isPath = key => tool.params?.[key]?.type === 'path';
+  const args = Object.fromEntries(Object.entries(example).map(([key, value]) => [key, isPath(key) ? `<${key}>` : value]));
   if (param) {
     const spec = tool.params?.[param];
     const placeholder = spec?.type === 'enum' ? (enumValues(spec, () => []))[0] ?? '' : spec?.type === 'boolean' ? 'true' : spec && ['integer', 'number'].includes(spec.type) ? (spec.min ?? 0) : spec?.type === 'path' ? '/' : spec && ['list', 'table'].includes(spec.type) ? 'a' : '';
-    args[param] = replacement !== undefined ? replacement : example[param] ?? placeholder;
+    args[param] = replacement !== undefined ? replacement : isPath(param) ? `<${param}>` : example[param] ?? placeholder;
   }
   return callLine(tool.name, args);
 }
@@ -229,6 +251,7 @@ export function checkArgs(tool, raw, { choices = () => [], aliases = {} } = {}) 
     const spec = params[key];
     if (!spec) return { ok: false, error: { type: 'unknown_argument', message: `${tool.name} has no parameter ${key}; it takes: ${Object.keys(params).join(', ')}`, fix: fixLine(tool) } };
     if (absent(key)) continue; // an empty or null slot counts as absent: required params error, optional params get their default
+    if (typeof value === 'string' && unquote(value) === `<${key}>`) return { ok: false, error: { type: 'placeholder', message: `${key}=<${key}> is a placeholder: put the user's own ${key} there (${spec.description ?? spec.type}).`, fix: '' } };
     const values = spec.type === 'enum' ? enumValues(spec, choices) : [];
     const out = coerce(spec, value, values, aliases);
     if (!out.ok) {

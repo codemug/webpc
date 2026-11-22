@@ -210,3 +210,24 @@ export function excerpt(text, query, max = 200) {
   const start = Math.max(0, Math.min(at - Math.floor(cap / 2), source.length - cap));
   return source.slice(start, start + cap);
 }
+
+// The packs every request may use; anything else is one app's own pack.
+const GENERAL_PACKS = new Set(['system', 'desktop', 'files']);
+const words = text => ` ${String(text ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()} `;
+
+/** App ids the text names by id or title as whole words: "Open LightCraft" -> ['lightcraft']. */
+export function namedApps(text, apps = []) {
+  const hay = words(text);
+  return apps.filter(app => [app.id, app.title].some(name => name && hay.includes(words(name)))).map(app => app.id);
+}
+
+/**
+ * Hit ids ("<pack>/<slug>" or "<pack>.<tool>") reordered for a request that names apps: other
+ * apps' hits move after the named apps' and the general packs' hits; each group keeps its order.
+ * Eval M6: "open LightCraft" ranked terminal/open-the-terminal first and the model opened the Terminal.
+ */
+export function preferNamed(ids, named = []) {
+  if (!named.length) return ids;
+  const rank = id => { const pack = String(id).split(/[/.]/)[0]; return named.includes(pack) || GENERAL_PACKS.has(pack) ? 0 : 1; };
+  return ids.map((id, i) => [id, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map(([id]) => id);
+}

@@ -3,10 +3,10 @@
 // search handles and the executor are all injected through deps, so this module stays pure
 // and testable. repairCall comes from repair.mjs, which another lane is writing in
 // parallel: it is an injected dependency with the identity default below, never imported.
-import { closest, callLine, checkArgs, ToolError } from './args.mjs';
-import { describe } from './catalog.mjs';
+import { closest, checkArgs, ToolError, templateLine, templateStep } from './args.mjs';
+import { describe, templateKeys } from './catalog.mjs';
 import { renderSkill } from './skills.mjs';
-import { search, excerpt } from './search.mjs';
+import { search, excerpt, namedApps, preferNamed } from './search.mjs';
 
 /** The meta tool names in the order the tool table presents them. */
 export const META_TOOL_NAMES = ['lookup_skill_index', 'read_skill', 'find_in_skill', 'find_tool', 'describe_tool', 'call_tool'];
@@ -53,17 +53,16 @@ function closestNames(query, all, index, docs) {
   return [...fromSearch, ...rest].slice(0, 3);
 }
 
-// The closest tool names for an unknown tool, with the best one and its example line for
-// the fix: describe_tool fixes with its own call, call_tool with the best tool's example.
+// The closest tool names for an unknown tool, with the best one and its call template for
+// the fix: describe_tool fixes with its own call, call_tool with the best tool's template.
 function closestTools(name, catalog, index, docs) {
   const close = closestNames(String(name ?? ''), [...catalog.tools.keys()], index, docs);
   const best = close[0];
   const bestTool = best ? catalog.tools.get(best) : null;
-  const exampleArgs = bestTool?.examples?.[0]?.args;
   return {
     message: `unknown tool '${String(name ?? '')}'${close.length > 0 ? `; closest: ${close.join(', ')}` : ''}`,
     best,
-    exampleFix: best ? (exampleArgs !== undefined ? callLine(best, exampleArgs) : `call_tool tool=${best}`) : undefined
+    exampleFix: best ? templateLine(best, templateKeys(bestTool)) : undefined
   };
 }
 
@@ -109,6 +108,7 @@ export function createMetaTools(deps) {
   const choices = deps.choices ?? (() => []);
   const aliases = deps.aliases ?? {};
   const skillPathsFor = deps.skillPathsFor ?? (() => []);
+  const apps = deps.apps ?? []; // [{ id, title }]: lookup_skill_index ranks the apps a query names first
 
   return {
     lookup_skill_index: {
@@ -122,11 +122,17 @@ export function createMetaTools(deps) {
         required: ['query']
       },
       run: async (args) => {
-        const { hits, more } = search(skillIndex, String(args?.query ?? ''), {
-          mode: args?.mode ?? 'auto', limit: HITS_LIMIT, docs: skillDocs
+        const query = String(args?.query ?? '');
+        // Search wider, then rank the apps the query names first, so a common word ("open")
+        // cannot put another app's skill on top; nothing is dropped.
+        const named = namedApps(query, apps);
+        const { hits: wide, more } = search(skillIndex, query, {
+          mode: args?.mode ?? 'auto', limit: named.length ? HITS_LIMIT * 4 : HITS_LIMIT, docs: skillDocs
         });
-        if (hits.length === 0) return { hits: [], note: 'No skill matches. Try find_tool.' };
-        return { hits: hits.map(hit => ({ path: hit.id, title: hit.title, summary: hit.summary })), more };
+        if (wide.length === 0) return { hits: [], note: 'No skill matches. Try find_tool.' };
+        const order = preferNamed(wide.map(hit => hit.id), named);
+        const hits = order.slice(0, HITS_LIMIT).map(id => wide.find(hit => hit.id === id));
+        return { hits: hits.map(hit => ({ path: hit.id, title: hit.title, summary: hit.summary })), more: more || wide.length > HITS_LIMIT };
       }
     },
     read_skill: {
@@ -143,7 +149,7 @@ export function createMetaTools(deps) {
         const path = normalisePath(args?.path);
         const skill = skills.find(candidate => candidate.path === path);
         if (!skill) return unknownSkillError(path, skills);
-        return { path: skill.path, text: renderSkill(skill, args?.section) };
+        return { path: skill.path, text: renderSkill(skill, args?.section).split('\n').map(templateStep).join('\n') };
       }
     },
     find_in_skill: {
@@ -189,8 +195,8 @@ export function createMetaTools(deps) {
         return {
           hits: matched.slice(0, HITS_LIMIT).map(line => ({
             section: line.section,
-            line: line.text,
-            excerpt: excerpt(line.text, query, 200)
+            line: templateStep(line.text),
+            excerpt: templateStep(excerpt(line.text, query, 200))
           }))
         };
       }
@@ -222,18 +228,14 @@ export function createMetaTools(deps) {
         return {
           hits: hits.map(hit => {
             const tool = catalog.tools.get(hit.id);
-            const exampleArgs = tool?.examples?.[0]?.args;
-            return {
-              tool: hit.id,
-              does: hit.purpose ?? tool?.purpose ?? '',
-              ...(exampleArgs !== undefined ? { example: callLine(hit.id, exampleArgs) } : {})
-            };
+            // A template, not the example: small models copy example values verbatim (eval M6).
+            return { tool: hit.id, does: hit.purpose ?? tool?.purpose ?? '', call: templateLine(hit.id, templateKeys(tool)) };
           })
         };
       }
     },
     describe_tool: {
-      description: "Show a tool's full parameter list, effect, one example call and the related skills. Use before call_tool.",
+      description: "Show a tool's full parameter list, effect, its call template and the related skills. Use before call_tool.",
       parameters: {
         type: 'object',
         properties: {

@@ -10,7 +10,8 @@ import { packs } from '../generated/packs.mjs';
 import { loadIndex, search } from './search.mjs';
 import { createMetaTools, META_TOOL_NAMES } from './meta-tools.mjs';
 import { repairCall } from './repair.mjs';
-import { ToolError, callLine } from './args.mjs';
+import { ToolError, callLine, templateLine, templateStep } from './args.mjs';
+import { templateKeys } from './catalog.mjs';
 
 export { META_TOOL_NAMES };
 // Re-exported so app.js can reach it: the served runtime/ folder holds only the bundles.
@@ -85,7 +86,7 @@ export function createAgent({ policy = defaultPolicy(), data = { catalogJson, sk
     return result;
   }
   const skillPathsFor = name => skills.filter(s => s.tools.includes(name)).map(s => s.path);
-  const metaTools = createMetaTools({ catalog, skills, toolIndex, skillIndex, toolDocs: catalog.docs, skillDocs, run, repairCall: repair, choices, aliases, skillPathsFor });
+  const metaTools = createMetaTools({ catalog, skills, toolIndex, skillIndex, toolDocs: catalog.docs, skillDocs, run, repairCall: repair, choices, aliases, skillPathsFor, apps });
 
   return {
     metaTools, catalog, apps, policy,
@@ -100,9 +101,9 @@ export function createAgent({ policy = defaultPolicy(), data = { catalogJson, sk
     prefetch(text) {
       const skill = search(skillIndex, text, { limit: 3, docs: skillDocs }).hits.map(h => skills.find(s => s.path === h.id))
         .find(s => s && sharesWord(text, `${s.title} ${s.keywords.join(' ')} ${s.summary}`)) ?? null;
-      if (skill) return `Note: matching skill "${skill.title}" (${skill.path}). Steps:\n${skill.steps.map(st => st.line).join('\n')}`;
+      if (skill) return `Note: matching skill "${skill.title}" (${skill.path}). Steps (fill each <placeholder> with the user's own values):\n${skill.steps.map(st => templateStep(st.line)).join('\n')}`;
       const toolsHit = search(toolIndex, text, { limit: 3, docs: catalog.docs }).hits.map(h => tools.get(h.id)).filter(t => t && sharesWord(text, `${t.name.replace(/[._]/g, ' ')} ${t.purpose} ${t.when}`));
-      return toolsHit.length ? `Note: possibly useful tools:\n${toolsHit.map(t => `${callLine(t.name, t.examples?.[0]?.args ?? {})} (${t.purpose})`).join('\n')}` : '';
+      return toolsHit.length ? `Note: possibly useful tools (fill each <placeholder> with the user's own values):\n${toolsHit.map(t => `${templateLine(t.name, templateKeys(t))} (${t.purpose})`).join('\n')}` : '';
     },
     appsLine: `Apps: ${apps.map(a => `${a.id} (${a.title})`).join(', ')}.`,
   };

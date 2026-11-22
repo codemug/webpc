@@ -35,7 +35,7 @@ test('prefetch puts the best skill in the prompt but never in the saved history'
   const { session, seen } = setup([call('call_tool', { tool: 'desktop.open_app', app: 'gridcraft' }), 'GridCraft is open.']);
   await session.send('Open GridCraft');
   const user = seen.prompts[0].at(-1).content;
-  assert.match(user, /Note: matching skill .* Steps:\n1\. call_tool tool=desktop\.open_app/);
+  assert.match(user, /Note: matching skill .* Steps \(fill each <placeholder> with the user's own values\):\n1\. call_tool tool=desktop\.open_app app=<app>/);
   assert.doesNotMatch(session.history.find(m => m.role === 'user').content, /Note:/);
   assert.deepEqual(seen.host[0], ['open', 'gridcraft']);
   assert.equal(toolMessages(session)[0].ok, true);
@@ -110,3 +110,13 @@ test('a generic run_command that deletes asks first, through the tool effectFor'
   assert.equal(sent.length, 0);
   assert.equal(toolMessages(session)[0].error.type, 'needs_approval_denied');
 });
+
+test('lookup_skill_index: "open LightCraft" never ranks another app\'s skill above the named app or the general packs (eval M6, B17)', async () => {
+  const { createAgent } = await import('../src/apps/ai-agent/runtime/index.mjs');
+  const { hits } = await createAgent().metaTools.lookup_skill_index.run({ query: 'open LightCraft' });
+  const packs = hits.map(h => h.path.split('/')[0]);
+  const firstOther = packs.findIndex(p => !['lightcraft', 'system', 'desktop', 'files'].includes(p));
+  if (firstOther >= 0) assert.ok(packs.slice(firstOther).every(p => !['lightcraft', 'system', 'desktop', 'files'].includes(p)), JSON.stringify(hits.map(h => h.path)));
+  assert.ok(['lightcraft', 'desktop'].includes(packs[0]), JSON.stringify(hits.map(h => h.path)));
+});
+

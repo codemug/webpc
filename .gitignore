@@ -36,3 +36,6 @@ upgrade-report.md
 
 # Upstream app icons placed by scripts/catalog/icons.mjs (pinned in catalog.yaml)
 public/pc/icons/
+
+# Buddy eval run results (scripts/agent/eval.mjs)
+tests/agent-eval/results/

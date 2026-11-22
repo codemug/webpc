@@ -65,6 +65,21 @@
 | **Developer** | Terminal (Alpine Linux) · Packet Viewer (Wireshark dissectors) · VS Code (opens vscode.dev) |
 | **Utilities** | Files · Media Player · SQLiteViz · CyberChef · Network Tools (DNS, RDAP, global ping, subnets, password strength, age encryption) · VERT (opens vert.sh) |
 
+## Buddy
+
+Buddy is the assistant behind the taskbar's Buddy button: a panel over the right third of the desktop, not a window. It runs a local model by default (Qwen3.5 0.8B or 2B, or LFM3 1.7B, the default; the weights download once after you load the model and are cached in this browser) and can use an optional cloud model with your own key, opt-in per session and never persisted.
+
+Buddy acts through a tool catalog of 257 tools in 25 packs, built by `npm run catalog` from the source packs in `agent/`: the desktop and its windows, the Files area, and every enabled app. It finds what to do with six meta tools:
+
+- `lookup_skill_index`: search the skill wiki for how to do a task.
+- `read_skill`: read one skill by path, or one of its sections.
+- `find_in_skill`: find matching lines inside one skill.
+- `find_tool`: search the tool catalog for what a tool does.
+- `describe_tool`: show a tool's full parameter list, effect and call template.
+- `call_tool`: call a catalog tool with its own parameters.
+
+The action policy allows reads and asks before destructive or external actions, and asks before a change in a turn that took in untrusted content, such as a file read whose name was not in the user's message; an approval already given this turn for the same call is not asked again (`src/apps/ai-agent/runtime/policy.mjs`). `scripts/agent/eval.mjs` runs 60 tasks from `tests/agent-eval/tasks.yaml` against a running preview; the contributor guide for the packs is [agent/README.md](agent/README.md).
+
 ## How it ships
 
 ```mermaid

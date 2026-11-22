@@ -144,7 +144,8 @@ test('read_skill: the full render carries every section', async () => {
 test('read_skill: a section renders only that section', async () => {
   const result = await tools.read_skill.run({ path: 'gridcraft/chart-from-range', section: 'steps' });
   assert.ok(result.text.startsWith('Steps:'), result.text.slice(0, 20));
-  assert.ok(result.text.includes('1. call_tool tool=desktop.open_app app=gridcraft'));
+  assert.ok(result.text.includes('1. call_tool tool=desktop.open_app app=<app>'), result.text);
+  assert.ok(result.text.includes('2. call_tool tool=gridcraft.select range=<range>'), 'step values are templated');
   assert.ok(!result.text.includes('Gotchas:'), 'no other section leaks in');
 });
 
@@ -174,14 +175,14 @@ test('find_in_skill: a matching line comes with its section and a capped excerpt
 
 test('find_in_skill: a step line is attributed to the Steps section', async () => {
   const result = await tools.find_in_skill.run({ path: 'gridcraft/chart-from-range', query: 'insert_chart' });
-  const hit = result.hits.find(h => h.line.includes('insert_chart kind=bar'));
+  const hit = result.hits.find(h => h.line.includes('insert_chart kind=<kind>'));
   assert.ok(hit, JSON.stringify(result.hits));
   assert.equal(hit.section, 'Steps');
 });
 
 test('find_in_skill: regex mode, an invalid regex and an over-long one never throw', async () => {
   const found = await tools.find_in_skill.run({ path: 'gridcraft/chart-from-range', query: 'kind=(bar|pie)', mode: 'regex' });
-  assert.ok(found.hits.some(hit => hit.line.includes('kind=bar')), JSON.stringify(found));
+  assert.ok(found.hits.some(hit => hit.line.includes('kind=<kind>')), 'the regex matches the raw step; the returned line is templated');
   const invalid = await tools.find_in_skill.run({ path: 'gridcraft/chart-from-range', query: '([unclosed', mode: 'regex' });
   assert.equal(invalid.ok, false);
   assert.equal(invalid.error.type, 'invalid_regex');
@@ -201,13 +202,14 @@ test('find_in_skill: at most five lines are returned', async () => {
   assert.equal(result.hits.length, 5, 'six lines mention chart, the cap is five');
 });
 
-test('find_tool: a hit is the name, the purpose and a copyable example line', async () => {
+test('find_tool: a hit is the name, the purpose and a call template with no example values', async () => {
   const result = await tools.find_tool.run({ query: 'cells' });
   const hit = result.hits.find(h => h.tool === 'gridcraft.set_cells');
   assert.ok(hit, JSON.stringify(result));
-  assert.deepEqual(Object.keys(hit).sort(), ['does', 'example', 'tool']);
+  assert.deepEqual(Object.keys(hit).sort(), ['call', 'does', 'tool']);
   assert.equal(hit.does, 'Write values or formulas into a block of cells.');
-  assert.equal(hit.example, 'call_tool tool=gridcraft.set_cells start=A1 values=Total\\n42');
+  assert.equal(hit.call, 'call_tool tool=gridcraft.set_cells start=<start> values=<values>');
+  assert.ok(!JSON.stringify(result).includes('Total'), 'no example value reaches the model');
   assert.ok(!JSON.stringify(hit).includes('('), 'no parenthesised signature next to the name');
 });
 
@@ -228,12 +230,13 @@ test('find_tool: nothing found gives the note', async () => {
   assert.deepEqual(await tools.find_tool.run({ query: 'zebraquantum' }), { hits: [], note: 'No tool matches. Try lookup_skill_index.' });
 });
 
-test('describe_tool: a known tool shows params, effect, example and no unrelated skills', async () => {
+test('describe_tool: a known tool shows params, effect, a call template and no unrelated skills', async () => {
   const result = await tools.describe_tool.run({ tool: 'gridcraft.set_cells' });
   assert.equal(result.tool, 'gridcraft.set_cells');
-  for (const needle of ['gridcraft.set_cells - Write values or formulas', 'start: string', 'Effect: change', 'Example: call_tool tool=gridcraft.set_cells']) {
+  for (const needle of ['gridcraft.set_cells - Write values or formulas', 'start: string', 'Effect: change', 'Call: call_tool tool=gridcraft.set_cells start=<start> values=<values>']) {
     assert.ok(result.text.includes(needle), 'missing: ' + needle);
   }
+  assert.ok(!result.text.includes('Total'), 'no example value in the describe text');
   assert.ok(!result.text.includes('Skills:'), 'set_cells has no related skills in this fixture');
 });
 
@@ -305,12 +308,12 @@ test('call_tool: an unknown argument fails and names the taken parameters', asyn
   assert.ok(result.error.message.includes('no parameter bogus'), result.error.message);
 });
 
-test('call_tool: an unknown tool fails with the closest names and the best example as fix', async () => {
+test('call_tool: an unknown tool fails with the closest names and the best tool template as fix', async () => {
   const result = await tools.call_tool.run({ tool: 'gridcraft.set_cellzz' });
   assert.equal(result.ok, false);
   assert.equal(result.error.type, 'unknown_tool');
   assert.ok(result.error.message.includes('gridcraft.set_cells'), result.error.message);
-  assert.equal(result.error.fix, 'call_tool tool=gridcraft.set_cells start=A1 values=Total\\n42');
+  assert.equal(result.error.fix, 'call_tool tool=gridcraft.set_cells start=<start> values=<values>');
 });
 
 test('call_tool: a ToolError from the executor keeps its type, message and fix', async () => {

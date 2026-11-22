@@ -2,7 +2,7 @@
 // effect, needs, the params spec, and every example against checkArgs), and builds the
 // search docs plus the one-line signatures the meta tools show.
 // args.mjs belongs to another lane: imported here, never edited.
-import { checkArgs, specErrors, callLine } from './args.mjs';
+import { checkArgs, specErrors, templateLine } from './args.mjs';
 
 const EFFECTS = ['read', 'change', 'destructive', 'external'];
 const DESCRIBE_MAX = 1200;
@@ -111,10 +111,17 @@ function searchDoc(pack, tool) {
 
 /**
  * describe_tool text for a tool, at most 1200 characters: the name and purpose, the params
- * with types, choices and descriptions, the effect, one example callLine (the first
- * example) and the related skill paths. When the text is too long it is cut at a line
+ * with types, choices and descriptions, the effect, a call template (placeholders, no example
+ * values: small models copy them) and the related skill paths. When the text is too long it is cut at a line
  * boundary (or hard at 1200 when a single line is longer).
  */
+/** The argument names a call template shows: the first example's keys, else the required params. */
+export function templateKeys(tool) {
+  const exampleArgs = (tool?.examples ?? [])[0]?.args;
+  if (exampleArgs) return Object.keys(exampleArgs);
+  return Object.entries(tool?.params ?? {}).filter(([, spec]) => spec.required).map(([key]) => key);
+}
+
 export function describe(tool, skillPaths = []) {
   const lines = [`${tool.name} - ${tool.purpose ?? ''}`];
   const entries = Object.entries(tool?.params ?? {});
@@ -125,8 +132,7 @@ export function describe(tool, skillPaths = []) {
     }
   }
   lines.push(`Effect: ${tool.effect}`);
-  const exampleArgs = (tool.examples ?? [])[0]?.args;
-  if (exampleArgs !== undefined) lines.push(`Example: ${callLine(tool.name, exampleArgs)}`);
+  lines.push(`Call: ${templateLine(tool.name, templateKeys(tool))}`);
   if (skillPaths.length > 0) lines.push(`Skills: ${skillPaths.join(', ')}`);
   const text = lines.join('\n');
   if (text.length <= DESCRIBE_MAX) return text;

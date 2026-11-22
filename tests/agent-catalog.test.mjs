@@ -226,14 +226,15 @@ test('signature: live enums show the list kind, and a tool without params is jus
   assert.equal(signature(bareTool('desktop.bare')), 'desktop.bare() - A purpose line.');
 });
 
-test('describe: the full text has the purpose, params, effect, one example and the skill paths', () => {
+test('describe: the full text has the purpose, params, effect, a call template and the skill paths', () => {
   const tool = buildCatalog([gridcraftPack], { choices: appChoices }).tools.get('gridcraft.set_cells');
   const out = describe(tool, ['gridcraft/chart-from-range', 'desktop/open-app']);
   assert.ok(out.startsWith('gridcraft.set_cells - Write values or formulas into a block of cells.'), out.slice(0, 60));
   assert.ok(out.includes('start: string - Top-left cell, e.g. A1'), out);
   assert.ok(out.includes('values: table - Rows and cells as text'), out);
   assert.ok(out.includes('Effect: change'), out);
-  assert.ok(out.includes('Example: call_tool tool=gridcraft.set_cells start=A1 values=Name,Score\\nAda,9'), out);
+  assert.ok(out.includes('Call: call_tool tool=gridcraft.set_cells start=<start> values=<values>'), out);
+  assert.ok(!out.includes('Ada'), 'no example value in the describe text');
   assert.ok(out.includes('Skills: gridcraft/chart-from-range, desktop/open-app'), out);
   assert.ok(out.length <= 1200, `length ${out.length}`);
 });

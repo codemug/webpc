@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { checkArgs, closest, callLine, specErrors, ToolError } from '../src/apps/ai-agent/runtime/args.mjs';
+import { checkArgs, closest, callLine, specErrors, ToolError, templateLine, templateStep } from '../src/apps/ai-agent/runtime/args.mjs';
 
 // One tool exercising every flat type, with a first example the fix lines build from.
 const tool = {
@@ -77,7 +77,7 @@ test('an invalid enum message lists the choices and suggests the closest', () =>
   const error = checkArgs(tool, { name: 'n', mode: 'fasst' }).error;
   assert.equal(error.type, 'invalid_argument');
   assert.equal(error.message, 'mode must be one of fast|slow|dark; got "fasst"; did you mean fast?');
-  assert.equal(error.fix, 'call_tool tool=demo.set name=ada count=3 mode=fast tags=a,b grid=x,y\\n1,2 where=/tmp/x flag=true rate=1.5 note=hi');
+  assert.equal(error.fix, 'call_tool tool=demo.set name=ada count=3 mode=fast tags=a,b grid=x,y\\n1,2 where=<where> flag=true rate=1.5 note=hi');
 });
 
 test('closest ranks by edit distance and breaks ties by input order', () => {
@@ -91,7 +91,7 @@ test('unknown_argument reports the extra key and fixes it with the first example
   const error = checkArgs(tool, { name: 'ada', bogus: 'x' }).error;
   assert.equal(error.type, 'unknown_argument');
   assert.equal(error.message, 'demo.set has no parameter bogus; it takes: name, count, rate, flag, mode, tags, grid, where, note');
-  assert.equal(error.fix, 'call_tool tool=demo.set name=ada count=3 mode=fast tags=a,b grid=x,y\\n1,2 where=/tmp/x flag=true rate=1.5 note=hi');
+  assert.equal(error.fix, 'call_tool tool=demo.set name=ada count=3 mode=fast tags=a,b grid=x,y\\n1,2 where=<where> flag=true rate=1.5 note=hi');
   const bare = checkArgs(calc, { nope: 1 }).error;
   assert.equal(bare.fix, 'call_tool tool=demo2.calc n=1 d=1');
 });
@@ -225,3 +225,40 @@ test('specErrors accepts live enums and rejects unknown live names', () => {
   assert.deepEqual(specErrors({ win: { type: 'enum', values: 'windows', description: 'Window id' } }), []);
   assert.match(specErrors({ app: { type: 'enum', values: 'files', description: 'App id' } }).join('\n'), /live values must be 'apps' or 'windows'/);
 });
+
+// Small models copy example values into their calls (eval M6: "Second draft notes" for any
+// Docs text). Discovery surfaces show templates instead, and an unfilled placeholder is refused.
+test('templateLine names each argument with a placeholder, no values', () => {
+  assert.equal(templateLine('docs.insert_text', ['text']), 'call_tool tool=docs.insert_text text=<text>');
+  assert.equal(templateLine('excalidraw.list_elements', []), 'call_tool tool=excalidraw.list_elements');
+});
+
+test('templateStep swaps every value in a call_tool step for its placeholder', () => {
+  assert.equal(templateStep('2. call_tool tool=docs.insert_text text=Second draft notes'), '2. call_tool tool=docs.insert_text text=<text>');
+  assert.equal(templateStep('call_tool tool=excalidraw.add_shapes spec="rectangle 100 100 200 80 Start\\narrow 1 2" x=20'), 'call_tool tool=excalidraw.add_shapes spec=<spec> x=<x>');
+  assert.equal(templateStep('3. call_tool tool=gridcraft.inspect'), '3. call_tool tool=gridcraft.inspect');
+  assert.equal(templateStep('Check: gridcraft.inspect shows a chart.'), 'Check: gridcraft.inspect shows a chart.');
+});
+
+test('an unfilled placeholder is refused with a teaching error; real angle-bracket text passes', () => {
+  const tool = { name: 'docs.insert_text', params: { text: { type: 'text', required: true, description: 'The text' } }, examples: [] };
+  const bad = checkArgs(tool, { text: '<text>' });
+  assert.equal(bad.ok, false);
+  assert.equal(bad.error.type, 'placeholder');
+  assert.match(bad.error.message, /text=<text> is a placeholder/);
+  assert.equal(checkArgs(tool, { text: '<b>bold</b>' }).ok, true);
+  assert.equal(checkArgs(tool, { text: '"<text>"' }).ok, false, 'a quoted placeholder is still a placeholder');
+});
+
+test('a fix line never echoes an example path (eval M6, B16): path params show <key>', () => {
+  // The model copied "path=/PDFCraft/contract.pdf" from a missing_argument fix line into its
+  // next call, got not found and looped. Paths in fix lines are placeholders now.
+  const opener = { name: 'pdfcraft.open_file', params: { path: { type: 'path', required: true, description: 'A Files path to a PDF' } }, examples: [{ args: { path: '/PDFCraft/contract.pdf' } }] };
+  const missing = checkArgs(opener, {});
+  assert.equal(missing.error.type, 'missing_argument');
+  assert.equal(missing.error.fix, 'call_tool tool=pdfcraft.open_file path=<path>');
+  const bad = checkArgs(opener, { path: 'a/../b' });
+  assert.equal(bad.error.fix, 'call_tool tool=pdfcraft.open_file path=<path>');
+  assert.ok(!JSON.stringify([missing, bad]).includes('contract.pdf'), 'no example path anywhere in the errors');
+});
+

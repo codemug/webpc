@@ -20,6 +20,23 @@ import { createFilesCtx } from './runtime/files-ctx.mjs';
 import { createThreadStore, ThreadLimitError } from './threads.js';
 import { createSharedModel } from './shared-model.js';
 const $ = id => document.getElementById(id);
+// ?eval=1 trace hook: when the page URL has ?eval=1, every tool call is recorded into
+// window.__buddyTrace as { name, arguments, ok, errorType, result } so an eval runner can
+// read the exact calls and their outcomes. Without the flag nothing is recorded and
+// behaviour is unchanged.
+const EVAL_TRACE = new URLSearchParams(location.search).get('eval') === '1';
+if (EVAL_TRACE) window.__buddyTrace = [];
+const traceStart = (name, args) => { if (EVAL_TRACE) window.__buddyTrace.push({ name, arguments: args }); };
+const traceResult = (name, args, result) => {
+  if (!EVAL_TRACE) return;
+  const entries = window.__buddyTrace;
+  let entry = null;
+  for (let i = entries.length - 1; i >= 0; i--) { if (entries[i].name === name && !('ok' in entries[i])) { entry = entries[i]; break; } }
+  if (!entry) { entry = { name, arguments: args }; entries.push(entry); }
+  entry.ok = !result?.error;
+  entry.errorType = result?.error && typeof result.error === 'object' ? (result.error.type ?? 'error') : (result?.error ? 'error' : null);
+  try { entry.result = JSON.parse(JSON.stringify(result)); } catch { entry.result = { unserializable: true }; }
+};
 // Cloud models are opt-in per session: the key lives only in CloudClient's memory and is never persisted.
 const CLOUD_MODELS = { 'cloud:anthropic': 'Claude · cloud (your key)', 'cloud:openai': 'OpenAI-compatible · cloud (your key)' };
 const isCloud = key => Boolean(CLOUD_MODELS[key]);
@@ -352,6 +369,9 @@ const runCode = (lang, code, timeoutMs) => exec.run(lang, code, timeoutMs);
 const backendNow = () => (isChrome(selected) ? 'chrome' : isCloud(selected) ? 'cloud' : 'local');
 const livePolicy = () => createPolicy({ backend: backendNow(), grants: fileGrants.map(g => g.root) });
 const agent = createAgent({ policy: { newTurn: text => livePolicy().newTurn(text), decide: (...a) => livePolicy().decide(...a), noteResult: (...a) => livePolicy().noteResult(...a) } });
+// The per-turn skill note is off: on the clean 60-task eval (one chat per task) lfm3-1.7b scored
+// 29/60 without it and 24/60 with it. ?eval=1&prefetch=1 turns it back on, for eval comparisons only.
+if (!(EVAL_TRACE && new URLSearchParams(location.search).get('prefetch') === '1')) agent.prefetch = () => '';
 const desktopHost = () => { try { return parent !== window && parent.pcHost ? parent.pcHost : null; } catch { return null; } };
 const filesCtx = createFilesCtx(fileStore, { broadcast: path => filesChangeChannel?.postMessage({ type: 'changed', path }) });
 // ctx.craft(id): an ArtCraft app's page API (window.<id> inside its editor frame), opened if needed.
@@ -457,8 +477,8 @@ function onEvent(s, type, data) {
     case 'user': message('user', data.content); break;
     case 'reply-start': data.element = message('assistant'); break;
     case 'reply-token': { const near = nearBottom(); data.bubble.element.textContent = data.text; follow(near); } break;
-    case 'tool-start': toolCard(data); break;
-    case 'tool-result': toolResult(data.toolCard, data.result); break;
+    case 'tool-start': toolCard(data); traceStart(data.name, data.arguments); break;
+    case 'tool-result': toolResult(data.toolCard, data.result); traceResult(data.toolCard.name, data.toolCard.arguments, data.result); break;
   }
 }
 // A put can resolve even when the write never becomes visible (seen once in the field, not

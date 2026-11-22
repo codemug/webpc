@@ -4,7 +4,7 @@
 // Run: node --test tests/agent-search.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { FIELDS, BOOST, buildIndex, loadIndex, search, excerpt } from '../src/apps/ai-agent/runtime/search.mjs';
+import { FIELDS, BOOST, buildIndex, loadIndex, search, excerpt, namedApps, preferNamed } from '../src/apps/ai-agent/runtime/search.mjs';
 
 // Fixture: 15 fake tool docs and 10 fake skill docs (the brief's examples are in there).
 const tools = [
@@ -210,4 +210,22 @@ test('excerpt: the cap, the no-match fallback and stop-word-only queries', () =>
   assert.equal(excerpt('short', 'q', 200), 'short');
   // the earliest match wins, even when a later term appears in the query first
   assert.equal(excerpt('b at ten, a at five', 'a b', 10), 'b at ten, ');
+});
+
+// Eval M6: "Open LightCraft" pulled terminal/open-the-terminal through the word "open", and the
+// model opened the Terminal. A request that names an app ranks that app's skills first.
+const APPS = [{ id: 'gridcraft', title: 'GridCraft' }, { id: 'lightcraft', title: 'LightCraft' }, { id: 'media', title: 'Media Player' }, { id: 'docs', title: 'Docs' }];
+
+test('namedApps finds apps named by id or title as whole words', () => {
+  assert.deepEqual(namedApps('Open LightCraft', APPS), ['lightcraft']);
+  assert.deepEqual(namedApps('Open GridCraft and Docs, side by side', APPS), ['gridcraft', 'docs']);
+  assert.deepEqual(namedApps('play it in the media player', APPS), ['media']);
+  assert.deepEqual(namedApps('Type Total in cell A1', APPS), []);
+  assert.deepEqual(namedApps('my documents folder', APPS), [], 'docs must be a whole word');
+});
+
+test('preferNamed moves other apps after the named apps and the general packs, keeping order', () => {
+  const ids = ['terminal/open-the-terminal', 'desktop/open-an-app', 'lightcraft/run-a-command', 'files/save-a-note', 'gridcraft/type-values'];
+  assert.deepEqual(preferNamed(ids, ['lightcraft']), ['desktop/open-an-app', 'lightcraft/run-a-command', 'files/save-a-note', 'terminal/open-the-terminal', 'gridcraft/type-values']);
+  assert.deepEqual(preferNamed(ids, []), ids, 'no named app: unchanged');
 });
