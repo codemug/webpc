@@ -69,19 +69,28 @@ export const filesCall = (ctx, fn, fixFor) => {
 
 /**
  * Read a file for the open path (every <app>.open_file and lightcraft.import_file) with
- * the not_found teaching error (lead model-eval trace A01: a small model routed
- * "Open GridCraft for me" to open_file, got the generic not_found, and looped). The
- * read goes through filesCall; a missing file becomes ToolError('not_found') saying the
- * app itself opens with desktop.open_app and a file is found with files.find, and the
- * fix line points at desktop.open_app (small models copy fix lines).
+ * the teaching errors (lead model-eval traces A01/B16: a small model routes
+ * "Open GridCraft for me" to open_file - with no path at all, or with a path it copied
+ * from the tool description - and loops). path is not required in the tool specs
+ * (the runtime must not emit a missing_argument fix that echoes an example path), so a
+ * missing or empty path is the missing_argument pointing at desktop.open_app. A
+ * missing file becomes ToolError('not_found') saying the app itself opens with
+ * desktop.open_app and a file is found with files.find. Both fixes point at
+ * desktop.open_app (small models copy fix lines).
  */
-export const readOpenFile = (ctx, path, { id, title }) => filesCall(ctx, files => files.readBytes(path))
-  .catch(error => {
-    if (error instanceof ToolError && error.type === 'not_found') {
-      throw new ToolError('not_found', `${path} is not in Files. To open ${title} itself, use desktop.open_app; to open a file, find it first with files.find.`, `call_tool tool=desktop.open_app app=${id}`);
-    }
-    throw error;
-  });
+export const readOpenFile = async (ctx, path, { id, title }) => {
+  const openAppFix = `call_tool tool=desktop.open_app app=${id}`;
+  if (typeof path !== 'string' || path.length === 0) {
+    throw new ToolError('missing_argument', `Give the Files path of the file to open. To open ${title} itself, use desktop.open_app.`, openAppFix);
+  }
+  return filesCall(ctx, files => files.readBytes(path))
+    .catch(error => {
+      if (error instanceof ToolError && error.type === 'not_found') {
+        throw new ToolError('not_found', `${path} is not in Files. To open ${title} itself, use desktop.open_app; to open a file, find it first with files.find.`, openAppFix);
+      }
+      throw error;
+    });
+};
 
 /**
  * Open a file from Files in a Craft app by driving the wrapper's own #file input

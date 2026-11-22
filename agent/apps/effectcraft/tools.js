@@ -530,7 +530,7 @@ export const tools = [
     name: 'effectcraft.open_file',
     purpose: 'Open a project or import media from Files into EffectCraft.',
     when: 'Use when the user wants a project or media from Files. Not for opening the app itself; that is desktop.open_app.',
-    params: { path: { type: 'path', required: true, description: 'A Files path to an .ecproj project or media (video, audio or image)' } },
+    params: { path: { type: 'path', required: false, description: 'A Files path to an .ecproj project or media (video, audio or image)' } },
     effect: 'destructive',
     needs: ['host', 'app:effectcraft', 'files'],
     examples: [{ args: { path: '/EffectCraft/ad.ecproj' }, says: 'Open the ad project from Files' }],

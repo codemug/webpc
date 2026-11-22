@@ -26,7 +26,7 @@ Gotchas: step 2 only when step 1 returns closed: false and dirty: true, and only
 ## Switch to an app
 slug: switch-to-an-app
 summary: Bring an open app window to the front of the desktop.
-keywords: switch, focus, bring to front, select, show
+keywords: switch, focus, bring to front, select, show, switch over, go to, bring up, activate
 tools: desktop.focus
 
 When: the user wants to switch to, select or show an app that is already open.
@@ -38,7 +38,7 @@ Gotchas: the app must be open; open it first with desktop.open_app. change app= 
 ## Minimize and bring back
 slug: hide-and-bring-back
 summary: Hide an app window to the taskbar, then bring it back.
-keywords: minimize, hide, unminimize, restore, bring back
+keywords: minimize, hide, unminimize, restore, bring back, tuck away, hide to the taskbar
 tools: desktop.minimize, desktop.restore
 
 When: the user wants to tuck a window away and later continue in it.
@@ -51,7 +51,7 @@ Gotchas: change app= to the app id; a window that is not open is rejected with n
 ## Maximize a window
 slug: maximize-a-window
 summary: Make an app window fill the desktop, and bring it back to its size.
-keywords: maximize, expand, full screen, fill, enlarge
+keywords: maximize, expand, full screen, fill, enlarge, maximise, make it full screen
 tools: desktop.maximize, desktop.restore
 
 When: the user wants an app to take the whole desktop, or back to its old size.
@@ -76,7 +76,7 @@ Gotchas: change app=, x and y; the values are pixels from the desktop top-left c
 ## Resize a window
 slug: resize-a-window
 summary: Set an app window to a given width and height in pixels.
-keywords: resize, enlarge, shrink, stretch, size
+keywords: resize, enlarge, shrink, stretch, size, smaller, bigger
 tools: desktop.resize
 
 When: the user wants a window bigger or smaller, or a certain size.

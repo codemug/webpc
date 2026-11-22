@@ -40,7 +40,7 @@ Gotchas: change level=; with no para_id it targets the paragraph at the cursor, 
 ## Find and replace
 slug: find-and-replace
 summary: Replace occurrences of a phrase across the document; the edits are applied in place.
-keywords: find, replace, find and replace, rename word, swap, change every
+keywords: find, replace, find and replace, rename word, swap, change every, change it to, instead
 tools: desktop.open_app, docs.find_replace
 
 When: the user wants find and replace across the document.
@@ -48,7 +48,7 @@ Steps:
 1. call_tool tool=desktop.open_app app=docs
 2. call_tool tool=docs.find_replace find=draft replace=final
 Check: the result counts the replacements applied.
-Gotchas: change find= and replace=; a replace= with no text deletes the phrase; limit= caps how many matches are touched.
+Gotchas: change find= and replace=; a replace= with no text deletes the phrase; limit= caps how many matches are touched. changing a word in existing text needs docs.find_replace, not docs.insert_text, which only inserts a new paragraph.
 
 ## Bold the selection
 slug: bold-the-selection

@@ -256,7 +256,7 @@ export const tools = [
     name: 'lightcraft.import_file',
     purpose: 'Import a photo from Files into the LightCraft library.',
     when: 'Use when the user wants to import a photo. Not for opening the app itself; that is desktop.open_app.',
-    params: { path: { type: 'path', required: true, description: 'A Files path to a photo (an image or camera RAW)' } },
+    params: { path: { type: 'path', required: false, description: 'A Files path to a photo (an image or camera RAW)' } },
     effect: 'change',
     needs: ['host', 'app:lightcraft', 'files'],
     examples: [{ args: { path: '/Photos/trip/IMG_0001.cr2' }, says: 'Add this photo to the library' }],

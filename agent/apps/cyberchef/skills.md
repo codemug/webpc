@@ -14,7 +14,7 @@ Gotchas: change input=; underscores in recipe become spaces, so To_Base64 means 
 ## Decode text from Base64
 slug: base64-decode
 summary: Turn a Base64 string back into the text it encodes.
-keywords: base64, decode, from base64, b64 decode, convert back
+keywords: base64, decode, from base64, b64 decode, convert back, dode
 tools: desktop.open_app, cyberchef.bake
 
 When: the user has a Base64 string and wants the original text.
@@ -53,7 +53,7 @@ Gotchas: change recipe= and input=; operations run left to right, comma-separate
 ## Hash the text
 slug: hash-text
 summary: Compute a digest (MD5 by default) of the input text.
-keywords: hash, digest, md5, checksum, fingerprint, signature
+keywords: hash, digest, md5, checksum, fingerprint, signature, sha256
 tools: desktop.open_app, cyberchef.bake
 
 When: the user wants a hash or digest of some text.
@@ -61,7 +61,7 @@ Steps:
 1. call_tool tool=desktop.open_app app=cyberchef
 2. call_tool tool=cyberchef.bake recipe=MD5 input=hello world
 Check: the result output is the hash digest in hex.
-Gotchas: change input= and recipe=; MD5 is shown as the example, use cyberchef.list_operations to find the other hash operations (SHA, CRC) when a different one is wanted.
+Gotchas: change input= and recipe=; MD5 is shown as the example; for SHA-256 use recipe=SHA256 (UNVERIFIED until the live bake of "abc" confirms the digest) and likewise SHA224, SHA384 or SHA512; use cyberchef.list_operations for the other hash operations (SHA, CRC).
 
 ## Find an operation
 slug: find-an-operation

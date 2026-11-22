@@ -604,7 +604,7 @@ export const tools = [
     name: 'vectorcraft.open_file',
     purpose: 'Open a VectorCraft document or import vector art from Files.',
     when: 'Use when the user wants to open or import files. Not for opening the app itself; that is desktop.open_app.',
-    params: { path: { type: 'path', required: true, description: 'A Files path to a .vectorcraft document or an import format (.svg, .pdf, .ai or image)' } },
+    params: { path: { type: 'path', required: false, description: 'A Files path to a .vectorcraft document or an import format (.svg, .pdf, .ai or image)' } },
     effect: 'change',
     needs: ['host', 'app:vectorcraft', 'files'],
     examples: [{ args: { path: '/VectorCraft/poster.vectorcraft' }, says: 'Open the poster from Files' }],

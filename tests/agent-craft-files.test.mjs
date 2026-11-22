@@ -80,6 +80,14 @@ test('filesCall never lets a non-string store code become a ToolError type (a nu
   assert.match(error.message, /No such file or directory/);
 });
 
+test('readOpenFile with no path (or an empty one) is the missing_argument teaching error (lead model-eval trace B16)', async () => {
+  const files = { readBytes: () => Promise.reject(new Error('unreachable')) };
+  const error = await toolError(readOpenFile({ files }, undefined, { id: 'pdfcraft', title: 'PDFCraft' }), 'missing_argument');
+  assert.equal(error.message, 'Give the Files path of the file to open. To open PDFCraft itself, use desktop.open_app.');
+  assert.equal(error.fix, 'call_tool tool=desktop.open_app app=pdfcraft');
+  await toolError(readOpenFile({ files }, '', { id: 'pdfcraft', title: 'PDFCraft' }), 'missing_argument');
+});
+
 test('readOpenFile turns a missing file into the desktop.open_app teaching error (lead model-eval trace A01)', async () => {
   const files = { readBytes: () => Promise.reject(Object.assign(new Error('no such file /GridCraft/budget.xlsx'), { code: 'not_found' })) };
   const error = await toolError(readOpenFile({ files }, '/GridCraft/budget.xlsx', { id: 'gridcraft', title: 'GridCraft' }), 'not_found');

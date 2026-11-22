@@ -30,7 +30,7 @@ export const tools = [
     name: 'materialcraft.open_file',
     purpose: 'Open a package or drop in a bitmap from Files in MaterialCraft.',
     when: 'Use when the user wants a package or bitmap. Not for opening the app itself; that is desktop.open_app.',
-    params: { path: { type: 'path', required: true, description: 'A Files path to a .sbs/.mcraft package or an image' } },
+    params: { path: { type: 'path', required: false, description: 'A Files path to a .sbs/.mcraft package or an image' } },
     effect: 'change',
     needs: ['host', 'app:materialcraft', 'files'],
     examples: [{ args: { path: '/MaterialCraft/wood.sbs' }, says: 'Open the material package from Files' }],

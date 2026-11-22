@@ -28,7 +28,7 @@ export const tools = [
     name: 'photocraft.open_file',
     purpose: 'Open a document or import an image from Files in PhotoCraft.',
     when: 'Use when the user wants to import an image. Not for opening the app itself; that is desktop.open_app.',
-    params: { path: { type: 'path', required: true, description: 'A Files path to a .pcraft document or an image (.psd, .xcf or flat image)' } },
+    params: { path: { type: 'path', required: false, description: 'A Files path to a .pcraft document or an image (.psd, .xcf or flat image)' } },
     effect: 'change',
     needs: ['host', 'app:photocraft', 'files'],
     examples: [{ args: { path: '/PhotoCraft/scene.pcraft' }, says: 'Open the document from Files' }],

@@ -29,7 +29,7 @@ export const tools = [
     name: 'soundcraft.open_file',
     purpose: 'Open audio, MIDI or a session from Files in SoundCraft.',
     when: 'Use when the user wants media in SoundCraft. Not for opening the app itself; that is desktop.open_app.',
-    params: { path: { type: 'path', required: true, description: 'A Files path to an audio, MIDI or .scraftz session file' } },
+    params: { path: { type: 'path', required: false, description: 'A Files path to an audio, MIDI or .scraftz session file' } },
     effect: 'change',
     needs: ['host', 'app:soundcraft', 'files'],
     examples: [{ args: { path: '/SoundCraft/session.scraftz' }, says: 'Open the saved session from Files' }],

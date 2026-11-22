@@ -340,7 +340,7 @@ export const tools = [
     name: 'figcraft.open_file',
     purpose: 'Open a FigCraft document from Files.',
     when: 'Use when the user wants a FigCraft file from Files. Not for opening the app itself; that is desktop.open_app.',
-    params: { path: { type: 'path', required: true, description: 'A Files path to a .figcraft document or an import format (.fig, .json, .svg or image)' } },
+    params: { path: { type: 'path', required: false, description: 'A Files path to a .figcraft document or an import format (.fig, .json, .svg or image)' } },
     effect: 'change',
     needs: ['host', 'app:figcraft', 'files'],
     examples: [{ args: { path: '/FigCraft/app.figcraft' }, says: 'Open the app design from Files' }],

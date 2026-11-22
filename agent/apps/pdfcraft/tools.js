@@ -331,7 +331,7 @@ export const tools = [
     name: 'pdfcraft.open_file',
     purpose: 'Open a PDF from Files in PdfCraft.',
     when: 'Use when the user wants a PDF from Files. Not for opening the app itself; that is desktop.open_app.',
-    params: { path: { type: 'path', required: true, description: 'A Files path to a .pdf file' } },
+    params: { path: { type: 'path', required: false, description: 'A Files path to a .pdf file' } },
     effect: 'change',
     needs: ['host', 'app:pdfcraft', 'files'],
     examples: [{ args: { path: '/PDFCraft/contract.pdf' }, says: 'Open the contract PDF from Files' }],

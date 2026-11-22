@@ -201,7 +201,7 @@ export const tools = [
     name: 'cadcraft.open_file',
     purpose: 'Open a drawing from Files in CADCraft.',
     when: 'Use when the user wants a drawing from Files. Not for opening the app itself; that is desktop.open_app.',
-    params: { path: { type: 'path', required: true, description: 'A Files path to a drawing file (.dxf, .dwg or .shx)' } },
+    params: { path: { type: 'path', required: false, description: 'A Files path to a drawing file (.dxf, .dwg or .shx)' } },
     effect: 'change',
     needs: ['host', 'app:cadcraft', 'files'],
     examples: [{ args: { path: '/CadCraft/plan.dxf' }, says: 'Open the plan drawing from Files' }],

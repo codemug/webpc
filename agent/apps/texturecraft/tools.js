@@ -28,7 +28,7 @@ export const tools = [
     name: 'texturecraft.open_file',
     purpose: 'Open a project or import a mesh from Files in TextureCraft.',
     when: 'Use when the user wants a project or mesh. Not for opening the app itself; that is desktop.open_app.',
-    params: { path: { type: 'path', required: true, description: 'A Files path to a .tcraft project or a mesh file (.glb, .fbx or .obj)' } },
+    params: { path: { type: 'path', required: false, description: 'A Files path to a .tcraft project or a mesh file (.glb, .fbx or .obj)' } },
     effect: 'change',
     needs: ['host', 'app:texturecraft', 'files'],
     examples: [{ args: { path: '/TextureCraft/car.tcraft' }, says: 'Open the texture project from Files' }],

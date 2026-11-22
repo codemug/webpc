@@ -33,6 +33,10 @@ const OPS = {
   'From Hex': { module: 'Encodings', description: 'Decode Hex-encoded text.', args: [{ name: 'Delimiter', type: 'option', value: ['None', 'Space'] }] },
   'To Upper case': { module: 'Utils', description: 'Convert text to UPPER CASE.', args: [{ name: 'Scope', type: 'option', value: ['All', 'Word', 'Sentence', 'Paragraph'] }] },
   'MD5': { module: 'Hashing', description: 'Compute an MD5 <a href="#">hash</a>.', args: [{ name: 'Output format', type: 'option', value: ['Hex', 'Base64'] }, { name: 'Endianness', type: 'option', value: ['Big', 'Little'] }] },
+  // The SHA2 arg layout the vendored v11.5.0 definition carries: Size (argSelector) first, then
+  // two Rounds number args - the second applies to the smaller sizes. The alias test asserts
+  // against this shape, so a layout change upstream surfaces as a failing test.
+  'SHA2': { module: 'Crypto', description: 'The SHA-2 family hash (Size picks 224, 256, 384 or 512).', args: [{ name: 'Size', type: 'argSelector', value: [{ name: '512', on: [2], off: [1] }, { name: '384', on: [2], off: [1] }, { name: '256', on: [1], off: [2] }, { name: '224', on: [1], off: [2] }, { name: '512/256', on: [2], off: [1] }, { name: '512/224', on: [2], off: [1] }] }, { name: 'Rounds', type: 'number', value: 64, min: 16 }, { name: 'Rounds', type: 'number', value: 160, min: 32 }] },
 };
 
 // A fake appWindow returning the wrapper window; the real app sits in the #cyberchef-frame
@@ -120,6 +124,25 @@ test('cyberchef.bake fills each operation arg from its default before baking', a
   // option args take the first option (value[0]); this is what makes the ops run instead of
   // erroring on null args ("Cannot read properties of null", "Unrecognized capitalization scope").
   assert.deepEqual(ops, [{ op: 'From Hex', args: ['None'] }, { op: 'To Upper case', args: ['All'] }]);
+});
+
+test('cyberchef.bake turns the SHA256 recipe into the SHA2 operation with Size "256" and default other args', async () => {
+  const chef = fakeChef();
+  const out = await chef.runTool('cyberchef.bake', { recipe: 'SHA256', input: 'abc' });
+  assert.deepEqual(out, { output: 'OUTPUT', type: 'string', ops: ['SHA256'] });
+  const [, , ops] = chef.calls[0];
+  // The alias overrides only the Size arg; the two Rounds args keep their defaults (64, 160).
+  assert.deepEqual(ops, [{ op: 'SHA2', args: ['256', 64, 160] }]);
+});
+
+test('cyberchef.bake maps the other hash alias spellings onto SHA2 with the matching Size', async () => {
+  const chef = fakeChef();
+  for (const [recipe, size] of [['sha-256', '256'], ['SHA_224', '224'], ['Sha 384', '384'], ['SHA512', '512']]) {
+    const out = await chef.runTool('cyberchef.bake', { recipe, input: 'abc' });
+    assert.deepEqual(out.ops, [recipe.replace(/_/g, ' ')]);
+    const [, , ops] = chef.calls.at(-1);
+    assert.deepEqual(ops, [{ op: 'SHA2', args: [size, 64, 160] }]);
+  }
 });
 
 test('cyberchef.bake runs a comma-separated multi-step pipeline in order', async () => {

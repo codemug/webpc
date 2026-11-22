@@ -8,7 +8,7 @@ When: the user asks what is in a folder, or which files are saved somewhere.
 Steps:
 1. call_tool tool=files.list path=/notes
 Check: the result lists the folders and files inside /notes, folders first.
-Gotchas: change path= to the folder to look in; omit it to list the Files root.
+Gotchas: change path= to the folder to look in; omit it to list the Files root. files.list works without the Files window open; to show the files to the user, open the window with desktop.open_app app=files.
 
 ## Read a text file
 slug: read-a-text-file
@@ -105,7 +105,7 @@ When: the user asks to find or search for a file by part of its name.
 Steps:
 1. call_tool tool=files.find query=todo
 Check: the result lists the paths whose names contain the searched part.
-Gotchas: change query=; add under= to search only one folder.
+Gotchas: change query=; add under= to search only one folder. files.find works without the Files window open; to show the files to the user, open the window with desktop.open_app app=files.
 
 ## Tidy files into a folder
 slug: tidy-files-into-a-folder

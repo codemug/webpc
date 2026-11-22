@@ -100,10 +100,17 @@ export const tools = [
       const known = Object.keys(app.operations);
       const ops = [];
       const bad = [];
+      // Hash aliases: SHA256, SHA-256 or SHA_256 (case-insensitive; 224, 384, 512 likewise) are
+      // not operations - they bake the SHA2 operation with its Size arg at that size. MD5 and
+      // SHA1 are their own operations and are never aliased.
       for (const name of names) {
-        if (!known.includes(name)) { bad.push(name); continue; }
-        // Fill each arg from the operation's defaults so the op runs as if added via the UI.
-        ops.push({ op: name, args: (app.operations[name].args ?? []).map(defaultArg) });
+        const alias = name.match(/^SHA[\s_-]?(224|256|384|512)$/i);
+        const opName = alias ? 'SHA2' : name;
+        if (!known.includes(opName)) { bad.push(name); continue; }
+        // Fill each arg from the operation's defaults so the op runs as if added via the UI; an
+        // alias overrides only the SHA2 Size arg (UNVERIFIED arg layout: Size first, then two
+        // Rounds args - read from the vendored v11.5.0 definition, the lead bakes "abc" live).
+        ops.push({ op: opName, args: (app.operations[opName].args ?? []).map(arg => alias && arg.name === 'Size' ? alias[1] : defaultArg(arg)) });
       }
       if (bad.length) {
         const close = [...new Set(bad.flatMap(name => closest(name, known, 3)))];

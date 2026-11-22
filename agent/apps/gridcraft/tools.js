@@ -368,7 +368,7 @@ export const tools = [
     name: 'gridcraft.open_file',
     purpose: 'Open a workbook from Files in GridCraft.',
     when: 'Use when the user wants a workbook from Files. Not for opening the app itself; that is desktop.open_app.',
-    params: { path: { type: 'path', required: true, description: 'A Files path to a workbook file (.xlsx, .csv, .ods or similar)' } },
+    params: { path: { type: 'path', required: false, description: 'A Files path to a workbook file (.xlsx, .csv, .ods or similar)' } },
     effect: 'change',
     needs: ['host', 'app:gridcraft', 'files'],
     examples: [{ args: { path: '/GridCraft/budget.xlsx' }, says: 'Open the budget workbook from Files' }],

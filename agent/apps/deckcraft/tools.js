@@ -370,7 +370,7 @@ export const tools = [
     name: 'deckcraft.open_file',
     purpose: 'Open a presentation from Files in DeckCraft.',
     when: 'Use when the user wants to open a deck stored in Files. Not for opening the app itself; that is desktop.open_app.',
-    params: { path: { type: 'path', required: true, description: 'A Files path to a deck file (.deckcraft or a .txt/.md outline)' } },
+    params: { path: { type: 'path', required: false, description: 'A Files path to a deck file (.deckcraft or a .txt/.md outline)' } },
     effect: 'change',
     needs: ['host', 'app:deckcraft', 'files'],
     examples: [{ args: { path: '/DeckCraft/talk.pptx' }, says: 'Open the talk deck from Files' }],

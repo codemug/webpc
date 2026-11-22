@@ -420,7 +420,7 @@ export const tools = [
     name: 'filmcraft.open_file',
     purpose: 'Open a project or import media from Files into FilmCraft.',
     when: 'Use when the user wants a project or media from Files. Not for opening the app itself; that is desktop.open_app.',
-    params: { path: { type: 'path', required: true, description: 'A Files path to a .fcproj project or media (video, audio or still)' } },
+    params: { path: { type: 'path', required: false, description: 'A Files path to a .fcproj project or media (video, audio or still)' } },
     effect: 'destructive',
     needs: ['host', 'app:filmcraft', 'files'],
     examples: [{ args: { path: '/FilmCraft/talk.fcproj' }, says: 'Open the talk project from Files' }],
