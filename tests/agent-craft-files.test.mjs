@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ToolError, callLine } from '../src/apps/ai-agent/runtime/args.mjs';
-import { filesCall, openFromBytes, saveCopy, saveBytesCopy, openAndAwait, MAX_OPEN_BYTES } from '../agent/shared/craft-files.js';
+import { filesCall, openFromBytes, readOpenFile, saveCopy, saveBytesCopy, openAndAwait, MAX_OPEN_BYTES } from '../agent/shared/craft-files.js';
 
 // A fake wrapper window (the /pc/apps/<id> utility page). The #file input records the
 // change dispatches (simulating that app.mjs:38 then posts <id>:open from the
@@ -70,6 +70,24 @@ test('filesCall maps store rejections to ToolError the way the Files pack does',
   assert.throws(() => filesCall({}, f => f.ok()), e => e instanceof ToolError && e.type === 'not_available');
   const te = new ToolError('app_error', 'as-is', 'x');
   await assert.rejects(filesCall({ files }, async () => { throw te; }), e => e === te); // ToolError passes through
+});
+
+test('filesCall never lets a non-string store code become a ToolError type (a numeric DOMException code)', async () => {
+  // A raw DOMException carries the legacy numeric code (8 = NotFoundError); files-ctx
+  // maps it to 'not_found', but any other non-string code must land on 'app_error'.
+  const files = { readBytes: () => Promise.reject(Object.assign(new Error('No such file or directory'), { code: 8 })) };
+  const error = await toolError(filesCall({ files }, f => f.readBytes('/a'), null), 'app_error');
+  assert.match(error.message, /No such file or directory/);
+});
+
+test('readOpenFile turns a missing file into the desktop.open_app teaching error (lead model-eval trace A01)', async () => {
+  const files = { readBytes: () => Promise.reject(Object.assign(new Error('no such file /GridCraft/budget.xlsx'), { code: 'not_found' })) };
+  const error = await toolError(readOpenFile({ files }, '/GridCraft/budget.xlsx', { id: 'gridcraft', title: 'GridCraft' }), 'not_found');
+  assert.equal(error.message, '/GridCraft/budget.xlsx is not in Files. To open GridCraft itself, use desktop.open_app; to open a file, find it first with files.find.');
+  assert.equal(error.fix, 'call_tool tool=desktop.open_app app=gridcraft');
+  // Other store codes keep the filesCall mapping (not remapped to the open teaching error).
+  const taken = { readBytes: () => Promise.reject(Object.assign(new Error('taken'), { code: 'exists' })) };
+  await toolError(readOpenFile({ files: taken }, '/a.xlsx', { id: 'gridcraft', title: 'GridCraft' }), 'exists');
 });
 
 test('openFromBytes hands the file to the wrapper own #file input like its Open buttons do', async () => {

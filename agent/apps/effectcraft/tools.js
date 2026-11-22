@@ -6,7 +6,7 @@
 // (public/pc/vendor/effectcraft/index.html) installs request/execute/commands/inspect/
 // screenshot, with inspect the page's own ui.inspect.
 import { ToolError, callLine, closest } from '../../../src/apps/ai-agent/runtime/args.mjs';
-import { filesCall, openAndAwait, saveBytesCopy } from '../../shared/craft-files.js';
+import { filesCall, openAndAwait, readOpenFile, saveBytesCopy } from '../../shared/craft-files.js';
 import { releases } from '../../../scripts/pc/craft/releases.mjs';
 
 const APP = 'effectcraft';
@@ -529,8 +529,8 @@ export const tools = [
   {
     name: 'effectcraft.open_file',
     purpose: 'Open a project or import media from Files into EffectCraft.',
-    when: 'Use when the user wants to open a project stored in Files, or import video, audio or images.',
-    params: { path: { type: 'path', required: true, description: 'The Files path of the project or media, e.g. /EffectCraft/ad.ecproj' } },
+    when: 'Use when the user wants a project or media from Files. Not for opening the app itself; that is desktop.open_app.',
+    params: { path: { type: 'path', required: true, description: 'A Files path to an .ecproj project or media (video, audio or image)' } },
     effect: 'destructive',
     needs: ['host', 'app:effectcraft', 'files'],
     examples: [{ args: { path: '/EffectCraft/ad.ecproj' }, says: 'Open the ad project from Files' }],
@@ -541,7 +541,7 @@ export const tools = [
     // imports media. Opening a project replaces the open one (the web app holds one project),
     // so this is destructive. openAndAwait waits until the page's inspect changes.
     run: async (args, ctx) => {
-      const file = await filesCall(ctx, files => files.readBytes(args.path));
+      const file = await readOpenFile(ctx, args.path, { id: APP, title: 'EffectCraft' });
       const wrapper = await ctx.host.appWindow(APP);
       const craft = await ctx.craft(APP);
       return openAndAwait(craft, { id: APP, title: 'EffectCraft', wrapperWindow: wrapper, name: file.name, bytes: file.bytes, accept: releases[APP].accept });

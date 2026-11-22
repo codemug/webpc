@@ -180,7 +180,8 @@ test('lightcraft.import_file turns a store not_found into a teaching ToolError',
   await assert.rejects(byName('lightcraft.import_file').run({ path: '/missing.cr2' }, ctx), error => {
     assert.ok(error instanceof ToolError);
     assert.equal(error.type, 'not_found');
-    assert.match(error.message, /not a file/);
+    assert.equal(error.message, '/missing.cr2 is not in Files. To open LightCraft itself, use desktop.open_app; to open a file, find it first with files.find.');
+    assert.equal(error.fix, 'call_tool tool=desktop.open_app app=lightcraft');
     return true;
   });
   assert.equal(wrapper.opened.length, 0);

@@ -16,7 +16,7 @@ const toPath = (dir, name) => `/${[dir, name].filter(Boolean).join('/')}`;
 export function createFilesCtx(store, { broadcast = () => {}, maxFind = 500 } = {}) {
   const wrap = async fn => {
     try { return await fn(); } catch (error) {
-      if (error?.code) throw error;
+      if (typeof error?.code === 'string') throw error; // ours (fail); a DOMException's code is a number
       const text = String(error?.message ?? error);
       if (error?.name === 'NotFoundError' || /not found|could not be found/i.test(text)) throw fail('not_found', 'That file or folder does not exist.');
       if (error?.name === 'TypeMismatchError') throw fail('not_a_folder', 'That path is a file, not a folder.');

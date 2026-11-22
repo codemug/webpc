@@ -17,7 +17,7 @@
 // extension is checked against the captured name, so the save matches whatever the package
 // produced (.sbs, .mcraft or a _sbs.zip web transport).
 import { callLine } from '../../../src/apps/ai-agent/runtime/args.mjs';
-import { filesCall, openFromBytes, saveBytesCopy } from '../../shared/craft-files.js';
+import { filesCall, openFromBytes, readOpenFile, saveBytesCopy } from '../../shared/craft-files.js';
 
 const APP = 'materialcraft';
 const TITLE = 'MaterialCraft';
@@ -29,8 +29,8 @@ export const tools = [
   {
     name: 'materialcraft.open_file',
     purpose: 'Open a package or drop in a bitmap from Files in MaterialCraft.',
-    when: 'Use when the user wants to open a MaterialCraft package or add a bitmap stored in Files.',
-    params: { path: { type: 'path', required: true, description: 'The Files path of the file, e.g. /MaterialCraft/wood.sbs or /MaterialCraft/diffuse.png' } },
+    when: 'Use when the user wants a package or bitmap. Not for opening the app itself; that is desktop.open_app.',
+    params: { path: { type: 'path', required: true, description: 'A Files path to a .sbs/.mcraft package or an image' } },
     effect: 'change',
     needs: ['host', 'app:materialcraft', 'files'],
     examples: [{ args: { path: '/MaterialCraft/wood.sbs' }, says: 'Open the material package from Files' }],
@@ -39,7 +39,7 @@ export const tools = [
     // package opens, an image drops in as a bitmap. No page API to confirm the load, so the
     // result has the file name and size but no opened field.
     run: async (args, ctx) => {
-      const file = await filesCall(ctx, files => files.readBytes(args.path));
+      const file = await readOpenFile(ctx, args.path, { id: APP, title: 'MaterialCraft' });
       const wrapper = await ctx.host.appWindow(APP);
       return openFromBytes(wrapper, APP, file.name, file.bytes);
     },

@@ -53,7 +53,9 @@ export const MAX_OPEN_BYTES = 256 * 1024 * 1024;
  * Turn a ctx.files store rejection (which carries a code: not_found, not_a_file,
  * too_large, exists, invalid_name, not_a_folder) into a ToolError, the way the Files
  * pack does (agent/files/tools.js). Gates on ctx.files. fixFor (optional) returns a
- * corrected call line for fixable errors.
+ * corrected call line for fixable errors. A non-string code (a DOMException carries
+ * the legacy numeric one, e.g. 8 for NotFoundError) becomes 'app_error', never a
+ * ToolError type.
  */
 export const filesCall = (ctx, fn, fixFor) => {
   if (!ctx.files) throw new ToolError('not_available', 'Files are not available here.', '');
@@ -61,9 +63,25 @@ export const filesCall = (ctx, fn, fixFor) => {
     .then(() => fn(ctx.files))
     .catch(error => {
       if (error instanceof ToolError) throw error;
-      throw new ToolError(error.code || 'app_error', error.message, fixFor ? fixFor(error) : '');
+      throw new ToolError(typeof error.code === 'string' ? error.code : 'app_error', error.message, fixFor ? fixFor(error) : '');
     });
 };
+
+/**
+ * Read a file for the open path (every <app>.open_file and lightcraft.import_file) with
+ * the not_found teaching error (lead model-eval trace A01: a small model routed
+ * "Open GridCraft for me" to open_file, got the generic not_found, and looped). The
+ * read goes through filesCall; a missing file becomes ToolError('not_found') saying the
+ * app itself opens with desktop.open_app and a file is found with files.find, and the
+ * fix line points at desktop.open_app (small models copy fix lines).
+ */
+export const readOpenFile = (ctx, path, { id, title }) => filesCall(ctx, files => files.readBytes(path))
+  .catch(error => {
+    if (error instanceof ToolError && error.type === 'not_found') {
+      throw new ToolError('not_found', `${path} is not in Files. To open ${title} itself, use desktop.open_app; to open a file, find it first with files.find.`, `call_tool tool=desktop.open_app app=${id}`);
+    }
+    throw error;
+  });
 
 /**
  * Open a file from Files in a Craft app by driving the wrapper's own #file input

@@ -15,7 +15,7 @@
 // photocraft is .pcraft, releases.mjs) and posted to the wrapper as photocraft:save
 // (app.mjs:29-33). save_copy waits on that message and writes the bytes to Files.
 import { callLine } from '../../../src/apps/ai-agent/runtime/args.mjs';
-import { filesCall, openFromBytes, saveBytesCopy } from '../../shared/craft-files.js';
+import { filesCall, openFromBytes, readOpenFile, saveBytesCopy } from '../../shared/craft-files.js';
 
 const APP = 'photocraft';
 const TITLE = 'PhotoCraft';
@@ -27,8 +27,8 @@ export const tools = [
   {
     name: 'photocraft.open_file',
     purpose: 'Open a document or import an image from Files in PhotoCraft.',
-    when: 'Use when the user wants to open a PhotoCraft document or import an image stored in Files.',
-    params: { path: { type: 'path', required: true, description: 'The Files path of the file, e.g. /PhotoCraft/scene.pcraft or /PhotoCraft/photo.png' } },
+    when: 'Use when the user wants to import an image. Not for opening the app itself; that is desktop.open_app.',
+    params: { path: { type: 'path', required: true, description: 'A Files path to a .pcraft document or an image (.psd, .xcf or flat image)' } },
     effect: 'change',
     needs: ['host', 'app:photocraft', 'files'],
     examples: [{ args: { path: '/PhotoCraft/scene.pcraft' }, says: 'Open the document from Files' }],
@@ -37,7 +37,7 @@ export const tools = [
     // a Photoshop, Krita, GIMP or flat image imports. No page API to confirm the load, so the
     // result has the file name and size but no opened field.
     run: async (args, ctx) => {
-      const file = await filesCall(ctx, files => files.readBytes(args.path));
+      const file = await readOpenFile(ctx, args.path, { id: APP, title: 'PhotoCraft' });
       const wrapper = await ctx.host.appWindow(APP);
       return openFromBytes(wrapper, APP, file.name, file.bytes);
     },

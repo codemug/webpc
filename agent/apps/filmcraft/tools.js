@@ -5,7 +5,7 @@
 // The tools run in Buddy's frame and drive the FilmCraft page API through ctx.craft, which the
 // runtime wires as id => craftApi(await ctx.host.appWindow(id), id) (plan 9).
 import { ToolError, callLine, closest } from '../../../src/apps/ai-agent/runtime/args.mjs';
-import { filesCall, openAndAwait, saveBytesCopy } from '../../shared/craft-files.js';
+import { filesCall, openAndAwait, readOpenFile, saveBytesCopy } from '../../shared/craft-files.js';
 import { releases } from '../../../scripts/pc/craft/releases.mjs';
 
 const APP = 'filmcraft';
@@ -419,8 +419,8 @@ export const tools = [
   {
     name: 'filmcraft.open_file',
     purpose: 'Open a project or import media from Files into FilmCraft.',
-    when: 'Use when the user wants to open a project stored in Files, or import video, audio or stills.',
-    params: { path: { type: 'path', required: true, description: 'The Files path of the project or media, e.g. /FilmCraft/talk.fcproj' } },
+    when: 'Use when the user wants a project or media from Files. Not for opening the app itself; that is desktop.open_app.',
+    params: { path: { type: 'path', required: true, description: 'A Files path to a .fcproj project or media (video, audio or still)' } },
     effect: 'destructive',
     needs: ['host', 'app:filmcraft', 'files'],
     examples: [{ args: { path: '/FilmCraft/talk.fcproj' }, says: 'Open the talk project from Files' }],
@@ -431,7 +431,7 @@ export const tools = [
     // file. The wrapper's own unsaved-changes confirm still applies (app.mjs:35).
     // openAndAwait waits until the page's inspect changes, so the result confirms the load.
     run: async (args, ctx) => {
-      const file = await filesCall(ctx, files => files.readBytes(args.path));
+      const file = await readOpenFile(ctx, args.path, { id: APP, title: 'FilmCraft' });
       const wrapper = await ctx.host.appWindow(APP);
       const craft = await ctx.craft(APP);
       return openAndAwait(craft, { id: APP, title: 'FilmCraft', wrapperWindow: wrapper, name: file.name, bytes: file.bytes, accept: releases[APP].accept });

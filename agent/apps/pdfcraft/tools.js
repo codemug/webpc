@@ -3,7 +3,7 @@
 // which the runtime wires as id => craftApi(await ctx.host.appWindow(id), id) (plan 9).
 import { ToolError, callLine, closest } from '../../../src/apps/ai-agent/runtime/args.mjs';
 import { teachApp } from '../../shared/craft.js';
-import { filesCall, openAndAwait, saveBytesCopy } from '../../shared/craft-files.js';
+import { filesCall, openAndAwait, readOpenFile, saveBytesCopy } from '../../shared/craft-files.js';
 import { releases } from '../../../scripts/pc/craft/releases.mjs';
 
 const APP = 'pdfcraft';
@@ -330,8 +330,8 @@ export const tools = [
   {
     name: 'pdfcraft.open_file',
     purpose: 'Open a PDF from Files in PdfCraft.',
-    when: 'Use when the user wants to open a PDF that is stored in Files.',
-    params: { path: { type: 'path', required: true, description: 'The Files path of the PDF, e.g. /PDFCraft/contract.pdf' } },
+    when: 'Use when the user wants a PDF from Files. Not for opening the app itself; that is desktop.open_app.',
+    params: { path: { type: 'path', required: true, description: 'A Files path to a .pdf file' } },
     effect: 'change',
     needs: ['host', 'app:pdfcraft', 'files'],
     examples: [{ args: { path: '/PDFCraft/contract.pdf' }, says: 'Open the contract PDF from Files' }],
@@ -341,7 +341,7 @@ export const tools = [
     // unsaved-changes confirm still applies (app.mjs:35). openAndAwait waits until the app's
     // inspect changes, so the result confirms the PDF actually loaded.
     run: async (args, ctx) => {
-      const file = await filesCall(ctx, files => files.readBytes(args.path));
+      const file = await readOpenFile(ctx, args.path, { id: APP, title: 'PDFCraft' });
       const wrapper = await ctx.host.appWindow(APP);
       const craft = await ctx.craft(APP);
       return openAndAwait(craft, { id: APP, title: 'PDFCraft', wrapperWindow: wrapper, name: file.name, bytes: file.bytes, accept: releases[APP].accept });

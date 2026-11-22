@@ -154,7 +154,8 @@ test('soundcraft.open_file turns a store not_found into a teaching ToolError', a
   await assert.rejects(byName('soundcraft.open_file').run({ path: '/missing.scraftz' }, ctx), error => {
     assert.ok(error instanceof ToolError);
     assert.equal(error.type, 'not_found');
-    assert.match(error.message, /not a file/);
+    assert.equal(error.message, '/missing.scraftz is not in Files. To open SoundCraft itself, use desktop.open_app; to open a file, find it first with files.find.');
+    assert.equal(error.fix, 'call_tool tool=desktop.open_app app=soundcraft');
     return true;
   });
   assert.equal(wrapper.opened.length, 0);

@@ -15,7 +15,7 @@ const call = (ctx, fn, fixFor) => {
     .then(() => fn(ctx.files))
     .catch(error => {
       if (error instanceof ToolError) throw error;
-      throw new ToolError(error.code || 'app_error', error.message, fixFor ? fixFor(error) : '');
+      throw new ToolError(typeof error.code === 'string' ? error.code : 'app_error', error.message, fixFor ? fixFor(error) : '');
     });
 };
 

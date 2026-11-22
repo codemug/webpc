@@ -87,3 +87,13 @@ test('readBytes and writeBytes round-trip binary files with the exists guard and
   await code(files.readBytes('/pic.bin', { maxBytes: 2 }), 'too_large');
   await code(files.readBytes('/nope.bin'), 'not_found');
 });
+
+test('a browser DOMException (numeric code 8) becomes not_found, not a raw error type', async () => {
+  // Eval M6, A01: OPFS throws a DOMException NotFoundError whose code is the number 8; the old
+  // "if (error.code) rethrow" let it through, so the model saw type 8 and the browser's message.
+  const store = fakeStore();
+  const domNotFound = () => { throw Object.assign(new Error('A requested file or directory could not be found at the time an operation was processed.'), { name: 'NotFoundError', code: 8 }); };
+  const ctx = createFilesCtx({ ...store, exists: async () => domNotFound() });
+  await code(ctx.readBytes('/GridCraft/budget.xlsx'), 'not_found');
+  await code(ctx.readText('/GridCraft/budget.xlsx'), 'not_found');
+});

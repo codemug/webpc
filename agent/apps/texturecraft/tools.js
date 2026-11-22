@@ -15,7 +15,7 @@
 // texturecraft is .tcraft, releases.mjs) and posted to the wrapper as texturecraft:save
 // (app.mjs:29-33). save_copy waits on that message and writes the bytes to Files.
 import { callLine } from '../../../src/apps/ai-agent/runtime/args.mjs';
-import { filesCall, openFromBytes, saveBytesCopy } from '../../shared/craft-files.js';
+import { filesCall, openFromBytes, readOpenFile, saveBytesCopy } from '../../shared/craft-files.js';
 
 const APP = 'texturecraft';
 const TITLE = 'TextureCraft';
@@ -27,8 +27,8 @@ export const tools = [
   {
     name: 'texturecraft.open_file',
     purpose: 'Open a project or import a mesh from Files in TextureCraft.',
-    when: 'Use when the user wants to open a TextureCraft project or import a mesh stored in Files.',
-    params: { path: { type: 'path', required: true, description: 'The Files path of the file, e.g. /TextureCraft/car.tcraft or /TextureCraft/car.glb' } },
+    when: 'Use when the user wants a project or mesh. Not for opening the app itself; that is desktop.open_app.',
+    params: { path: { type: 'path', required: true, description: 'A Files path to a .tcraft project or a mesh file (.glb, .fbx or .obj)' } },
     effect: 'change',
     needs: ['host', 'app:texturecraft', 'files'],
     examples: [{ args: { path: '/TextureCraft/car.tcraft' }, says: 'Open the texture project from Files' }],
@@ -37,7 +37,7 @@ export const tools = [
     // opens, a mesh imports. No page API to confirm the load, so the result has the file name
     // and size but no opened field.
     run: async (args, ctx) => {
-      const file = await filesCall(ctx, files => files.readBytes(args.path));
+      const file = await readOpenFile(ctx, args.path, { id: APP, title: 'TextureCraft' });
       const wrapper = await ctx.host.appWindow(APP);
       return openFromBytes(wrapper, APP, file.name, file.bytes);
     },

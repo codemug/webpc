@@ -332,7 +332,8 @@ test('gridcraft.open_file turns a store not_found into a teaching ToolError', as
   await assert.rejects(byName('gridcraft.open_file').run({ path: '/missing.xlsx' }, ctx), error => {
     assert.ok(error instanceof ToolError);
     assert.equal(error.type, 'not_found');
-    assert.match(error.message, /not a file/);
+    assert.equal(error.message, '/missing.xlsx is not in Files. To open GridCraft itself, use desktop.open_app; to open a file, find it first with files.find.');
+    assert.equal(error.fix, 'call_tool tool=desktop.open_app app=gridcraft');
     return true;
   });
   assert.equal(wrapper.opened.length, 0);

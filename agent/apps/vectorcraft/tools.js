@@ -3,7 +3,7 @@
 // which the runtime wires as id => craftApi(await ctx.host.appWindow(id), id) (plan 9).
 import { ToolError, callLine, closest } from '../../../src/apps/ai-agent/runtime/args.mjs';
 import { teachApp } from '../../shared/craft.js';
-import { filesCall, openAndAwait, saveBytesCopy, extOf } from '../../shared/craft-files.js';
+import { filesCall, openAndAwait, readOpenFile, saveBytesCopy, extOf } from '../../shared/craft-files.js';
 import { releases } from '../../../scripts/pc/craft/releases.mjs';
 
 const APP = 'vectorcraft';
@@ -603,8 +603,8 @@ export const tools = [
   {
     name: 'vectorcraft.open_file',
     purpose: 'Open a VectorCraft document or import vector art from Files.',
-    when: 'Use when the user wants to open a document stored in Files, or import vector art.',
-    params: { path: { type: 'path', required: true, description: 'The Files path of the document, e.g. /VectorCraft/poster.vectorcraft' } },
+    when: 'Use when the user wants to open or import files. Not for opening the app itself; that is desktop.open_app.',
+    params: { path: { type: 'path', required: true, description: 'A Files path to a .vectorcraft document or an import format (.svg, .pdf, .ai or image)' } },
     effect: 'change',
     needs: ['host', 'app:vectorcraft', 'files'],
     examples: [{ args: { path: '/VectorCraft/poster.vectorcraft' }, says: 'Open the poster from Files' }],
@@ -614,7 +614,7 @@ export const tools = [
     // (bootstrap.js:52-89) hands the bytes to window.vectorcraft.openFile. openAndAwait waits
     // until the page's docInspect changes, so the result confirms the document loaded.
     run: async (args, ctx) => {
-      const file = await filesCall(ctx, files => files.readBytes(args.path));
+      const file = await readOpenFile(ctx, args.path, { id: APP, title: 'VectorCraft' });
       const wrapper = await ctx.host.appWindow(APP);
       const craft = await ctx.craft(APP);
       return openAndAwait(craft, { id: APP, title: 'VectorCraft', wrapperWindow: wrapper, name: file.name, bytes: file.bytes, accept: releases[APP].accept });

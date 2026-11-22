@@ -13,7 +13,7 @@ const call = (ctx, fn) => {
     .then(() => fn(ctx.host))
     .catch(error => {
       if (error instanceof ToolError) throw error;
-      throw new ToolError(error.code || 'app_error', error.message, '');
+      throw new ToolError(typeof error.code === 'string' ? error.code : 'app_error', error.message, '');
     });
 };
 

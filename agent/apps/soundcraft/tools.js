@@ -16,7 +16,7 @@
 // .scraft save is not captured (releases.mjs native pattern is .scraftz only), so this tool
 // takes the .scraftz bundle save.
 import { callLine } from '../../../src/apps/ai-agent/runtime/args.mjs';
-import { filesCall, openFromBytes, saveBytesCopy } from '../../shared/craft-files.js';
+import { filesCall, openFromBytes, readOpenFile, saveBytesCopy } from '../../shared/craft-files.js';
 
 const APP = 'soundcraft';
 const TITLE = 'SoundCraft';
@@ -28,8 +28,8 @@ export const tools = [
   {
     name: 'soundcraft.open_file',
     purpose: 'Open audio, MIDI or a session from Files in SoundCraft.',
-    when: 'Use when the user wants to open audio, MIDI or a SoundCraft session stored in Files.',
-    params: { path: { type: 'path', required: true, description: 'The Files path of the file, e.g. /SoundCraft/take.wav or /SoundCraft/session.scraftz' } },
+    when: 'Use when the user wants media in SoundCraft. Not for opening the app itself; that is desktop.open_app.',
+    params: { path: { type: 'path', required: true, description: 'A Files path to an audio, MIDI or .scraftz session file' } },
     effect: 'change',
     needs: ['host', 'app:soundcraft', 'files'],
     examples: [{ args: { path: '/SoundCraft/session.scraftz' }, says: 'Open the saved session from Files' }],
@@ -37,7 +37,7 @@ export const tools = [
     // the standalone bootstrap drops it on the canvas (bootstrap.js:75-84). No page API to
     // confirm the load, so the result has the file name and size but no opened field.
     run: async (args, ctx) => {
-      const file = await filesCall(ctx, files => files.readBytes(args.path));
+      const file = await readOpenFile(ctx, args.path, { id: APP, title: 'SoundCraft' });
       const wrapper = await ctx.host.appWindow(APP);
       return openFromBytes(wrapper, APP, file.name, file.bytes);
     },

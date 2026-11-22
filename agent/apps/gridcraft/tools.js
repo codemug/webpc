@@ -2,7 +2,7 @@
 // The tools run in Buddy's frame and drive the GridCraft page API through ctx.craft,
 // which the runtime wires as id => craftApi(await ctx.host.appWindow(id), id) (plan 9).
 import { ToolError, callLine, closest } from '../../../src/apps/ai-agent/runtime/args.mjs';
-import { filesCall, openAndAwait, saveBytesCopy } from '../../shared/craft-files.js';
+import { filesCall, openAndAwait, readOpenFile, saveBytesCopy } from '../../shared/craft-files.js';
 import { releases } from '../../../scripts/pc/craft/releases.mjs';
 
 const APP = 'gridcraft';
@@ -367,8 +367,8 @@ export const tools = [
   {
     name: 'gridcraft.open_file',
     purpose: 'Open a workbook from Files in GridCraft.',
-    when: 'Use when the user wants to open a workbook that is stored in Files.',
-    params: { path: { type: 'path', required: true, description: 'The Files path of the workbook, e.g. /GridCraft/budget.xlsx' } },
+    when: 'Use when the user wants a workbook from Files. Not for opening the app itself; that is desktop.open_app.',
+    params: { path: { type: 'path', required: true, description: 'A Files path to a workbook file (.xlsx, .csv, .ods or similar)' } },
     effect: 'change',
     needs: ['host', 'app:gridcraft', 'files'],
     examples: [{ args: { path: '/GridCraft/budget.xlsx' }, says: 'Open the budget workbook from Files' }],
@@ -378,7 +378,7 @@ export const tools = [
     // wrapper's own unsaved-changes confirm still applies (app.mjs:35). openAndAwait waits
     // until the app's inspect changes, so the result confirms the workbook actually loaded.
     run: async (args, ctx) => {
-      const file = await filesCall(ctx, files => files.readBytes(args.path));
+      const file = await readOpenFile(ctx, args.path, { id: APP, title: 'GridCraft' });
       const wrapper = await ctx.host.appWindow(APP);
       const craft = await ctx.craft(APP);
       return openAndAwait(craft, { id: APP, title: 'GridCraft', wrapperWindow: wrapper, name: file.name, bytes: file.bytes, accept: releases[APP].accept });

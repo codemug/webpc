@@ -8,7 +8,7 @@
 // The tools run in Buddy's frame and read the page straight off the app window (no shared
 // craft adapter: the page has no request/execute/commands surface).
 import { ToolError } from '../../../src/apps/ai-agent/runtime/args.mjs';
-import { filesCall, openFromBytes } from '../../shared/craft-files.js';
+import { filesCall, openFromBytes, readOpenFile } from '../../shared/craft-files.js';
 
 const APP = 'lightcraft';
 const NEEDS = ['host', 'app:lightcraft'];
@@ -255,8 +255,8 @@ export const tools = [
   {
     name: 'lightcraft.import_file',
     purpose: 'Import a photo from Files into the LightCraft library.',
-    when: 'Use when the user wants to add a photo stored in Files to the LightCraft library.',
-    params: { path: { type: 'path', required: true, description: 'The Files path of the photo, e.g. /Photos/trip/IMG_0001.cr2' } },
+    when: 'Use when the user wants to import a photo. Not for opening the app itself; that is desktop.open_app.',
+    params: { path: { type: 'path', required: true, description: 'A Files path to a photo (an image or camera RAW)' } },
     effect: 'change',
     needs: ['host', 'app:lightcraft', 'files'],
     examples: [{ args: { path: '/Photos/trip/IMG_0001.cr2' }, says: 'Add this photo to the library' }],
@@ -267,7 +267,7 @@ export const tools = [
     // inspect, so the result carries no opened field; a refused open (too large) posts
     // lightcraft:failed to the wrapper's #error line.
     run: async (args, ctx) => {
-      const file = await filesCall(ctx, files => files.readBytes(args.path));
+      const file = await readOpenFile(ctx, args.path, { id: APP, title: 'LightCraft' });
       const wrapper = await ctx.host.appWindow(APP);
       return openFromBytes(wrapper, APP, file.name, file.bytes);
     },

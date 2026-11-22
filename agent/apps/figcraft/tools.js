@@ -3,7 +3,7 @@
 // which the runtime wires as id => craftApi(await ctx.host.appWindow(id), id) (plan 9).
 import { ToolError, callLine, closest } from '../../../src/apps/ai-agent/runtime/args.mjs';
 import { teachApp } from '../../shared/craft.js';
-import { filesCall, openAndAwait, saveBytesCopy } from '../../shared/craft-files.js';
+import { filesCall, openAndAwait, readOpenFile, saveBytesCopy } from '../../shared/craft-files.js';
 import { releases } from '../../../scripts/pc/craft/releases.mjs';
 
 const APP = 'figcraft';
@@ -339,8 +339,8 @@ export const tools = [
   {
     name: 'figcraft.open_file',
     purpose: 'Open a FigCraft document from Files.',
-    when: 'Use when the user wants to open a FigCraft document stored in Files.',
-    params: { path: { type: 'path', required: true, description: 'The Files path of the document, e.g. /FigCraft/app.figcraft' } },
+    when: 'Use when the user wants a FigCraft file from Files. Not for opening the app itself; that is desktop.open_app.',
+    params: { path: { type: 'path', required: true, description: 'A Files path to a .figcraft document or an import format (.fig, .json, .svg or image)' } },
     effect: 'change',
     needs: ['host', 'app:figcraft', 'files'],
     examples: [{ args: { path: '/FigCraft/app.figcraft' }, says: 'Open the app design from Files' }],
@@ -350,7 +350,7 @@ export const tools = [
     // change. openAndAwait waits until the page's docInspect changes, so the result
     // confirms the document loaded.
     run: async (args, ctx) => {
-      const file = await filesCall(ctx, files => files.readBytes(args.path));
+      const file = await readOpenFile(ctx, args.path, { id: APP, title: 'FigCraft' });
       const wrapper = await ctx.host.appWindow(APP);
       const craft = await ctx.craft(APP);
       return openAndAwait(craft, { id: APP, title: 'FigCraft', wrapperWindow: wrapper, name: file.name, bytes: file.bytes, accept: releases[APP].accept });
