@@ -1,6 +1,6 @@
 ## Check what is in the document
 slug: check-the-document
-summary: Read the open PDF: metadata, pages, bookmarks and field counts.
+summary: Read the open PDF: its state, page, zoom and mode.
 keywords: document info, metadata, pages, what is in, inspect, bookmarks
 tools: desktop.open_app, pdfcraft.doc_info, pdfcraft.doc_inspect
 
@@ -8,8 +8,8 @@ When: the user asks what is in the open PDF or how many pages it has.
 Steps:
 1. call_tool tool=desktop.open_app app=pdfcraft
 2. call_tool tool=pdfcraft.doc_info
-Check: the result has the page count and sizes; doc_inspect shows the editor state.
-Gotchas: both tools read the open document when doc= is omitted; doc_info lists metadata, bookmarks, fields and fonts.
+Check: the result shows the document's state, page, zoom and mode; doc_inspect reads the same state.
+Gotchas: both tools take no params and read the document's ui.state; the page's file.properties only opens the Properties dialog and returns nothing, so it is not a read tool.
 
 ## Find a phrase in the document
 slug: find-a-phrase
@@ -49,7 +49,7 @@ Steps:
 1. call_tool tool=desktop.open_app app=pdfcraft
 2. call_tool tool=pdfcraft.doc_info
 3. call_tool tool=pdfcraft.page_rotate degrees=90
-Check: pdfcraft.doc_info shows the new page sizes.
+Check: pdfcraft.doc_info still lists the same pages (rotation changes the size, which the state does not report).
 Gotchas: degrees= is a multiple of 90, positive clockwise; undo with pdfcraft.edit_undo.
 
 ## Delete or duplicate pages
@@ -122,3 +122,29 @@ Steps:
 4. call_tool tool=pdfcraft.run_command command=page.reverse params=
 Check: pdfcraft.doc_info shows the new page order.
 Gotchas: run_command takes key=value lines in params=; ids starting with file.close, file.save or page.delete are destructive, so ask the user first.
+
+## Open a PDF from Files
+slug: open-a-pdf-from-files
+summary: Open a PDF that is stored in Files in PdfCraft.
+keywords: open, load, from files, pdf, document, import
+tools: desktop.open_app, pdfcraft.open_file
+
+When: the user wants to open a PDF that is stored in Files.
+Steps:
+1. call_tool tool=desktop.open_app app=pdfcraft
+2. call_tool tool=pdfcraft.open_file path=/PDFCraft/contract.pdf
+Check: the result's opened field confirms the PDF loaded; pdfcraft.doc_info shows the opened PDF.
+Gotchas: change path= to the Files path of a .pdf; the PDF opens as a new tab; while the open PDF has unsaved changes the app asks first whether to keep them; with no PDF open yet, open_file is how you get one.
+
+## Save a copy of the PDF to Files
+slug: save-a-pdf-copy-to-files
+summary: Save the open PDF as a file in Files.
+keywords: save, copy, to files, export, keep, pdf, write
+tools: desktop.open_app, pdfcraft.save_copy
+
+When: the user wants to keep a copy of the open PDF in Files.
+Steps:
+1. call_tool tool=desktop.open_app app=pdfcraft
+2. call_tool tool=pdfcraft.save_copy path=/PDFCraft/contract.pdf
+Check: the result has the saved Files path and size; files.info on that path shows the same size.
+Gotchas: change path=; PDFCraft saves .pdf files, so a target with another extension is refused with the .pdf path as the fix; if the path exists the tool errors, so choose another name or pass overwrite=true (which is destructive); the app saves under the name the PDF was opened with and also downloads the file; with no PDF open the tool says so and the fix is to open one first.

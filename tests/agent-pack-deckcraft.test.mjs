@@ -46,18 +46,18 @@ const runTool = (name, args, craft) => byName(name).run(args, { host: {}, craft:
 
 test('the pack declares its id, title and live-check exports', () => {
   assert.deepEqual(pack, { id: 'deckcraft', title: 'DeckCraft' });
-  assert.deepEqual(usesCommands.sort(), ['edit.select', 'file.new', 'format.align', 'format.color', 'format.size', 'insert.chart', 'insert.table', 'insert.textBox', 'shape.fill', 'shape.insert', 'shape.line', 'slide.go', 'slide.inspect', 'slide.new', 'text.exit', 'text.set'].sort());
+  assert.deepEqual(usesCommands.sort(), ['edit.select', 'file.new', 'file.save', 'file.saveBytes', 'format.align', 'format.color', 'format.size', 'insert.chart', 'insert.table', 'insert.textBox', 'shape.fill', 'shape.insert', 'shape.line', 'slide.go', 'slide.inspect', 'slide.new', 'text.exit', 'text.set'].sort());
   assert.deepEqual(usesMethods, ['ui.tool.select', 'ui.key', 'ui.text']);
 });
 
-test('the pack exposes exactly the 17 deckcraft tools', () => {
-  assert.equal(tools.length, 17);
+test('the pack exposes exactly the 19 deckcraft tools', () => {
+  assert.equal(tools.length, 19);
   assert.deepEqual(tools.map(tool => tool.name).sort(), [
     'deckcraft.add_shape', 'deckcraft.add_slide', 'deckcraft.add_text_box', 'deckcraft.batch',
     'deckcraft.go_to_slide', 'deckcraft.insert_chart', 'deckcraft.insert_table', 'deckcraft.inspect',
     'deckcraft.inspect_slide', 'deckcraft.key', 'deckcraft.list_commands', 'deckcraft.new_presentation',
-    'deckcraft.run_command', 'deckcraft.select', 'deckcraft.select_tool', 'deckcraft.set_text',
-    'deckcraft.type_text',
+    'deckcraft.open_file', 'deckcraft.run_command', 'deckcraft.save_copy', 'deckcraft.select',
+    'deckcraft.select_tool', 'deckcraft.set_text', 'deckcraft.type_text',
   ]);
 });
 
@@ -68,7 +68,8 @@ test('every tool has the required text fields, effect, needs and examples', () =
     assert.ok(tool.when.startsWith('Use when'), `${tool.name} when must start with "Use when"`);
     assert.ok(tool.when.length <= 120, `${tool.name} when is ${tool.when.length} chars`);
     assert.ok(['read', 'change', 'destructive', 'external'].includes(tool.effect), `${tool.name} bad effect`);
-    assert.deepEqual(tool.needs, ['host', 'app:deckcraft']);
+    const fileTools = ['deckcraft.open_file', 'deckcraft.save_copy'];
+    assert.deepEqual(tool.needs, fileTools.includes(tool.name) ? ['host', 'app:deckcraft', 'files'] : ['host', 'app:deckcraft']);
     assert.equal(typeof tool.run, 'function');
     assert.ok(tool.examples.length >= 1, `${tool.name} has examples`);
     for (const example of tool.examples) {
@@ -242,6 +243,158 @@ test('deckcraft.run_command rejects a bad params line with invalid_argument', as
   });
 });
 
+// A fake wrapper window for the file tools: the #file input records the change dispatch
+// (openFromBytes drives it, app.mjs:38), message listeners are stored so a test can fire
+// the <id>:save event the wrapper would hear from the editor frame.
+const fakeWrapper = () => {
+  const opened = [];
+  const fileInput = { files: null, dispatchEvent: event => { if (event?.type === 'change') opened.push(fileInput.files?.[0] ?? null); } };
+  class DataTransfer {
+    constructor() { this._files = []; this.items = { add: file => this._files.push(file) }; }
+    get files() { return this._files; }
+  }
+  class File {
+    constructor(parts, name) { this.parts = parts; this.name = name; }
+  }
+  class Event {
+    constructor(type) { this.type = type; }
+  }
+  const editor = { contentWindow: {} };
+  const listeners = new Set();
+  return {
+    opened,
+    DataTransfer, File, Event,
+    document: { getElementById: id => (id === 'file' ? fileInput : id === 'editor' ? editor : null) },
+    location: { origin: 'https://pc.example' },
+    addEventListener: (type, fn) => { if (type === 'message') listeners.add(fn); },
+    removeEventListener: (type, fn) => { if (type === 'message') listeners.delete(fn); },
+    frame: editor.contentWindow,
+    fire: event => { for (const fn of [...listeners]) fn(event); },
+  };
+};
+const fileCtx = (bytes, wrapper) => {
+  const calls = { read: [], write: [] };
+  return {
+    calls,
+    host: { appWindow: async () => wrapper },
+    craft: () => Promise.resolve(fakeCraft()),
+    files: {
+      readBytes: path => { calls.read.push(path); return Promise.resolve({ path, name: 'talk.pptx', bytes, size: bytes.byteLength }); },
+      writeBytes: (path, b, { overwrite } = {}) => { calls.write.push({ path, size: b.byteLength, overwrite }); return Promise.resolve({ path, size: b.byteLength, created: !overwrite }); },
+    },
+  };
+};
+// A craft API whose live command list has file.saveBytes: execute returns the app's
+// inline save result (the deckcraft shape: bytes a number, data base64, no name).
+const saveBytesCraft = () => {
+  const calls = [];
+  const bytes = new Uint8Array([7, 6, 5]);
+  const b64 = Buffer.from(bytes).toString('base64');
+  return {
+    calls,
+    craft: () => Promise.resolve({
+      commands: async () => [{ id: 'file.saveBytes' }],
+      execute: (command, params) => {
+        calls.push([command, params]);
+        if (command === 'file.saveBytes') return { bytes: bytes.byteLength, data: b64 };
+        return { command, params };
+      },
+      inspect: async () => ({ title: 'Q1 Plan', path: null, slides: [1, 2] }),
+    }),
+  };
+};
+
+test('deckcraft.open_file reads the file, waits for the load, and returns the opened summary', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileCtx(new Uint8Array([1, 2]), wrapper);
+  const state = { slides: [] };
+  const input = wrapper.document.getElementById('file');
+  const original = input.dispatchEvent;
+  input.dispatchEvent = event => { if (event?.type === 'change') state.slides = [1, 2]; return original(event); };
+  ctx.craft = () => Promise.resolve({ ...fakeCraft(), inspect: async () => ({ ...state, title: 'Talk' }) });
+  const out = await byName('deckcraft.open_file').run({ path: '/DeckCraft/talk.pptx' }, ctx);
+  assert.deepEqual(ctx.calls.read, ['/DeckCraft/talk.pptx']);
+  assert.equal(wrapper.opened.length, 1);
+  assert.equal(wrapper.opened[0].name, 'talk.pptx');
+  assert.deepEqual(out, { name: 'talk.pptx', bytes: 2, opened: '"Talk" 2 slides' });
+});
+
+test('deckcraft.open_file turns a store not_found into a teaching ToolError', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileCtx(new Uint8Array([1]), wrapper);
+  ctx.files.readBytes = () => Promise.reject(Object.assign(new Error('/missing.pptx is not a file.'), { code: 'not_found' }));
+  await assert.rejects(byName('deckcraft.open_file').run({ path: '/missing.pptx' }, ctx), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'not_found');
+    return true;
+  });
+  assert.equal(wrapper.opened.length, 0);
+});
+
+test('deckcraft.save_copy takes the inline bytes from file.saveBytes and names the copy from the inspect title', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileCtx(new Uint8Array([1]), wrapper);
+  const save = saveBytesCraft();
+  ctx.craft = save.craft;
+  const out = await byName('deckcraft.save_copy').run({ path: '/DeckCraft/talk.deckcraft' }, ctx);
+  assert.deepEqual(save.calls, [['file.saveBytes', {}]]);
+  assert.deepEqual(ctx.calls.write, [{ path: '/DeckCraft/talk.deckcraft', size: 3, overwrite: false }]);
+  assert.deepEqual(out, { path: '/DeckCraft/talk.deckcraft', name: 'Q1 Plan.deckcraft', size: 3, created: true });
+  assert.ok(!('note' in out)); // the saveBytes path downloads nothing
+});
+
+test('deckcraft.save_copy refuses a .pptx target with the .deckcraft fix', async () => {
+  const ctx = fileCtx(new Uint8Array([1]), fakeWrapper());
+  const save = saveBytesCraft();
+  ctx.craft = save.craft;
+  await assert.rejects(byName('deckcraft.save_copy').run({ path: '/DeckCraft/talk.pptx' }, ctx), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.match(error.message, /DeckCraft saves \.deckcraft files; it cannot write \.pptx here\./);
+    assert.equal(error.fix, callLine('deckcraft.save_copy', { path: '/DeckCraft/talk.deckcraft' }));
+    return true;
+  });
+  assert.equal(ctx.calls.write.length, 0);
+});
+
+test('deckcraft.save_copy is destructive only when overwrite is set and suggests overwrite on exists', async () => {
+  const wrapper = fakeWrapper();
+  const tool = byName('deckcraft.save_copy');
+  assert.equal(tool.effect, 'change');
+  assert.equal(tool.effectFor({ overwrite: true }), 'destructive');
+  assert.equal(tool.effectFor({}), 'change');
+  const ctx = fileCtx(new Uint8Array([1]), wrapper);
+  const save = saveBytesCraft();
+  ctx.craft = save.craft;
+  await byName('deckcraft.save_copy').run({ path: '/DeckCraft/talk.deckcraft', overwrite: true }, ctx);
+  assert.deepEqual(ctx.calls.write, [{ path: '/DeckCraft/talk.deckcraft', size: 3, overwrite: true }]);
+  ctx.files.writeBytes = () => Promise.reject(Object.assign(new Error('/DeckCraft/talk.deckcraft already exists.'), { code: 'exists' }));
+  await assert.rejects(byName('deckcraft.save_copy').run({ path: '/DeckCraft/talk.deckcraft' }, ctx), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'exists');
+    assert.equal(error.fix, callLine('deckcraft.save_copy', { path: '/DeckCraft/talk.deckcraft', overwrite: true }));
+    return true;
+  });
+});
+
+test('deckcraft.save_copy without file.saveBytes falls back to the no-path capture and notes the download', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileCtx(new Uint8Array([1]), wrapper);
+  const calls = [];
+  ctx.craft = () => Promise.resolve({
+    commands: async () => [{ id: 'file.save' }],
+    execute: (id, params) => {
+      calls.push([id, params]);
+      wrapper.fire({ origin: 'https://pc.example', source: wrapper.frame, data: { type: 'deckcraft:save', name: 'Presentation1.deckcraft', bytes: new Uint8Array([7]) } });
+      return { command: id, params };
+    },
+  });
+  const out = await byName('deckcraft.save_copy').run({ path: '/DeckCraft/talk.deckcraft' }, ctx);
+  assert.deepEqual(calls, [['file.save', {}]]); // the no-path trigger
+  assert.deepEqual(ctx.calls.write, [{ path: '/DeckCraft/talk.deckcraft', size: 1, overwrite: false }]);
+  assert.deepEqual(out, { path: '/DeckCraft/talk.deckcraft', name: 'Presentation1.deckcraft', size: 1, created: true, note: 'the app also downloaded the file in the browser' });
+});
+
 test('effectFor marks destructive commands for run_command and batch', () => {
   const run = byName('deckcraft.run_command');
   assert.equal(run.effectFor({ command: 'file.new' }), 'destructive');
@@ -254,9 +407,9 @@ test('effectFor marks destructive commands for run_command and batch', () => {
 
 const { skills, errors: skillErrors } = parseSkills(SKILLS_MD, 'deckcraft');
 
-test('skills.md parses with the runtime parser without errors and has 8 skills', () => {
+test('skills.md parses with the runtime parser without errors and has 10 skills', () => {
   assert.deepEqual(skillErrors, []);
-  assert.equal(skills.length, 8);
+  assert.equal(skills.length, 10);
   for (const skill of skills) {
     assert.ok(skill.slug && skill.summary, `skill ${skill.slug} slug/summary`);
     assert.ok(skill.summary.length <= 160, `skill ${skill.slug} summary is ${skill.summary.length} chars`);

@@ -2,6 +2,8 @@
 // The tools run in Buddy's frame and drive the DeckCraft page API through ctx.craft,
 // which the runtime wires as id => craftApi(await ctx.host.appWindow(id), id) (plan 9).
 import { ToolError, callLine, closest } from '../../../src/apps/ai-agent/runtime/args.mjs';
+import { filesCall, openAndAwait, saveBytesCopy } from '../../shared/craft-files.js';
+import { releases } from '../../../scripts/pc/craft/releases.mjs';
 
 const APP = 'deckcraft';
 const NEEDS = ['host', 'app:deckcraft'];
@@ -364,13 +366,65 @@ export const tools = [
       return app.execute(args.command, parseParams(args.params));
     },
   },
+  {
+    name: 'deckcraft.open_file',
+    purpose: 'Open a presentation from Files in DeckCraft.',
+    when: 'Use when the user wants to open a deck stored in Files.',
+    params: { path: { type: 'path', required: true, description: 'The Files path of the presentation, e.g. /DeckCraft/talk.pptx' } },
+    effect: 'change',
+    needs: ['host', 'app:deckcraft', 'files'],
+    examples: [{ args: { path: '/DeckCraft/talk.pptx' }, says: 'Open the talk deck from Files' }],
+    // Drives the wrapper's own #file input (app.mjs:38), so the open posts from the wrapper
+    // realm, as the app's host bridge requires (craft-libs web-host web.rs:106). The deck opens
+    // via file.adopt alongside the open ones (engine cmd/file.rs add_opened), so a change; the
+    // wrapper's own unsaved-changes confirm still applies (app.mjs:35). openAndAwait waits
+    // until the app's inspect changes, so the result confirms the deck actually loaded.
+    run: async (args, ctx) => {
+      const file = await filesCall(ctx, files => files.readBytes(args.path));
+      const wrapper = await ctx.host.appWindow(APP);
+      const craft = await ctx.craft(APP);
+      return openAndAwait(craft, { id: APP, title: 'DeckCraft', wrapperWindow: wrapper, name: file.name, bytes: file.bytes, accept: releases[APP].accept });
+    },
+  },
+  {
+    name: 'deckcraft.save_copy',
+    purpose: 'Save the active presentation as a file in Files.',
+    when: 'Use when the user wants to keep a copy of the presentation in Files.',
+    params: {
+      path: { type: 'path', required: true, description: 'The Files path to write the copy to, e.g. /DeckCraft/talk.pptx' },
+      overwrite: { type: 'boolean', description: 'Replace the file when the path already exists; false when omitted' },
+    },
+    effect: 'change',
+    effectFor: args => (args.overwrite ? 'destructive' : 'change'),
+    needs: ['host', 'app:deckcraft', 'files'],
+    examples: [{ args: { path: '/DeckCraft/talk.pptx' }, says: 'Save a copy of the deck to Files' }],
+    // No path is ever passed (the browser has no file system). saveBytesCopy takes the bytes
+    // inline from file.saveBytes when the live command list has it (no download), else from
+    // the no-path file.save the wrapper captures as deckcraft:save (app.mjs:29-33); in that
+    // case the wrapper also downloads the file, and the result says so. The bytes are the
+    // deck in its own .deckcraft format, so a .pptx (or other) target is refused with a fix.
+    run: async (args, ctx) => {
+      const wrapper = await ctx.host.appWindow(APP);
+      const craft = await ctx.craft(APP);
+      const save = await saveBytesCopy(craft, {
+        id: APP, title: 'DeckCraft', wrapperWindow: wrapper, target: args.path,
+        tool: 'deckcraft.save_copy', nativeExt: '.deckcraft',
+      });
+      const written = await filesCall(
+        ctx,
+        files => files.writeBytes(args.path, save.bytes, { overwrite: Boolean(args.overwrite) }),
+        error => (error.code === 'exists' ? callLine('deckcraft.save_copy', { path: args.path, overwrite: true }) : ''),
+      );
+      return { path: written.path, name: save.name, size: written.size, created: written.created, ...(save.note ? { note: save.note } : {}) };
+    },
+  },
 ];
 
 // Live-check exports (brief): every command id the curated tools pass to execute,
 // and every control method passed to request. batch and run_command also pass
 // arbitrary ids from the live commands() list.
 export const usesCommands = [
-  'file.new', 'slide.inspect', 'slide.new', 'slide.go', 'shape.insert', 'shape.fill', 'shape.line',
+  'file.new', 'file.save', 'file.saveBytes', 'slide.inspect', 'slide.new', 'slide.go', 'shape.insert', 'shape.fill', 'shape.line',
   'insert.textBox', 'text.exit', 'edit.select', 'format.size', 'format.color', 'format.align',
   'text.set', 'insert.table', 'insert.chart',
 ];

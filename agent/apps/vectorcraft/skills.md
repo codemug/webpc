@@ -113,3 +113,28 @@ Steps:
 4. call_tool tool=vectorcraft.run_command command=object.align params=horizontal=left
 Check: vectorcraft.inspect shows the action took effect.
 Gotchas: run_command takes key=value lines in params= (a [ ... ] or { ... } value is JSON); object.delete, layer.delete, file.close and the pathfinder ids are destructive, so ask the user first.
+## Open a document from Files
+slug: open-a-document-from-files
+summary: Open a VectorCraft document or import vector art that is stored in Files.
+keywords: open, load, from files, vectorcraft, import, svg, vector
+tools: desktop.open_app, vectorcraft.open_file
+
+When: the user wants to open a document or import vector art that is stored in Files.
+Steps:
+1. call_tool tool=desktop.open_app app=vectorcraft
+2. call_tool tool=vectorcraft.open_file path=/VectorCraft/poster.vectorcraft
+Check: the result has an opened field confirming the document loaded; vectorcraft.inspect shows the open document.
+Gotchas: change path= to a .vectorcraft document or an importable vector format (svg, pdf, ai); the wrapper has no page-API open control, so the file rides the wrapper's own open path.
+
+## Save a copy of the drawing to Files
+slug: save-a-drawing-copy-to-files
+summary: Save the active VectorCraft document to Files as a .vectorcraft file or an export format.
+keywords: save, copy, to files, vectorcraft, export, keep, write
+tools: desktop.open_app, vectorcraft.save_copy
+
+When: the user wants to keep a copy of the active drawing in Files.
+Steps:
+1. call_tool tool=desktop.open_app app=vectorcraft
+2. call_tool tool=vectorcraft.save_copy path=/VectorCraft/poster.vectorcraft
+Check: the result has the saved Files path and size; files.info on that path shows the same size.
+Gotchas: change path=; the extension picks the format (.vectorcraft by default, or an export format like .svg or .pdf); an extension the app cannot serialize is refused with the .vectorcraft path as the fix; if the path exists the tool errors, so choose another name or pass overwrite=true (which is destructive).

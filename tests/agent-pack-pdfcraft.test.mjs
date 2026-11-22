@@ -45,18 +45,18 @@ const runTool = (name, args, craft) => byName(name).run(args, { host: {}, craft:
 
 test('the pack declares its id, title and live-check exports', () => {
   assert.deepEqual(pack, { id: 'pdfcraft', title: 'PdfCraft' });
-  assert.deepEqual(usesCommands.sort(), ['edit.find', 'edit.link', 'edit.redo', 'edit.replace', 'edit.text', 'edit.undo', 'file.close', 'file.properties', 'file.save', 'file.word_count', 'page.delete', 'page.duplicate', 'page.insert_blank', 'page.reverse', 'page.rotate'].sort());
+  assert.deepEqual(usesCommands.sort(), ['edit.find', 'edit.link', 'edit.redo', 'edit.replace', 'edit.text', 'edit.undo', 'file.close', 'file.save', 'file.word_count', 'page.delete', 'page.duplicate', 'page.insert_blank', 'page.reverse', 'page.rotate'].sort());
   assert.deepEqual(usesMethods, []);
 });
 
 test('the pack exposes exactly the 18 pdfcraft tools', () => {
-  assert.equal(tools.length, 18);
+  assert.equal(tools.length, 20);
   assert.deepEqual(tools.map(tool => tool.name).sort(), [
     'pdfcraft.command_list', 'pdfcraft.doc_close', 'pdfcraft.doc_info', 'pdfcraft.doc_inspect',
     'pdfcraft.doc_save', 'pdfcraft.edit_redo', 'pdfcraft.edit_undo', 'pdfcraft.link_add',
-    'pdfcraft.page_add_text', 'pdfcraft.page_delete', 'pdfcraft.page_duplicate', 'pdfcraft.page_insert_blank',
-    'pdfcraft.page_reverse', 'pdfcraft.page_rotate', 'pdfcraft.run_command', 'pdfcraft.text_find',
-    'pdfcraft.text_replace', 'pdfcraft.text_word_count',
+    'pdfcraft.open_file', 'pdfcraft.page_add_text', 'pdfcraft.page_delete', 'pdfcraft.page_duplicate',
+    'pdfcraft.page_insert_blank', 'pdfcraft.page_reverse', 'pdfcraft.page_rotate', 'pdfcraft.run_command',
+    'pdfcraft.save_copy', 'pdfcraft.text_find', 'pdfcraft.text_replace', 'pdfcraft.text_word_count',
   ]);
 });
 
@@ -67,7 +67,8 @@ test('every tool has the required text fields, effect, needs and examples', () =
     assert.ok(tool.when.startsWith('Use when'), `${tool.name} when must start with "Use when"`);
     assert.ok(tool.when.length <= 120, `${tool.name} when is ${tool.when.length} chars`);
     assert.ok(['read', 'change', 'destructive', 'external'].includes(tool.effect), `${tool.name} bad effect`);
-    assert.deepEqual(tool.needs, ['host', 'app:pdfcraft']);
+    const fileTools = ['pdfcraft.open_file', 'pdfcraft.save_copy'];
+    assert.deepEqual(tool.needs, fileTools.includes(tool.name) ? ['host', 'app:pdfcraft', 'files'] : ['host', 'app:pdfcraft']);
     assert.equal(typeof tool.run, 'function');
     assert.ok(tool.examples.length >= 1, `${tool.name} has examples`);
     for (const example of tool.examples) {
@@ -103,15 +104,13 @@ test('pdfcraft.doc_inspect calls the adapter inspect (ui.state on the page)', as
   assert.deepEqual(craft.calls, [['inspect']]);
 });
 
-test('the read tools send their engine command ids with the doc param optional', async () => {
+test('the read tools send their engine command ids (doc_info reads the page state, no params)', async () => {
   const craft = fakeCraft();
-  await runTool('pdfcraft.doc_info', { doc: 2 }, craft);
   await runTool('pdfcraft.doc_info', {}, craft);
   await runTool('pdfcraft.text_word_count', { pages: '1-2' }, craft);
   await runTool('pdfcraft.text_find', { query: 'invoice', limit: 10 }, craft);
   assert.deepEqual(craft.calls, [
-    ['execute', 'file.properties', { doc: 2 }],
-    ['execute', 'file.properties', {}],
+    ['inspect'], // the live file.properties only opens the Properties dialog (lead live check), so doc_info reads ui.state
     ['execute', 'file.word_count', { pages: '1-2' }],
     ['execute', 'edit.find', { query: 'invoice', limit: 10 }],
   ]);
@@ -194,10 +193,10 @@ test('effectFor marks the destructive command ids for run_command', () => {
 });
 
 test('a disabled-right-now rejection (the no-document gate) becomes the teaching ToolError', async () => {
-  const noDoc = () => Promise.reject(Object.assign(new Error('file.properties is disabled right now'), { code: 'app_error' })); // the adapter sets the code
+  const noDoc = () => Promise.reject(Object.assign(new Error('file.word_count is disabled right now'), { code: 'app_error' })); // the adapter sets the code
   const craft = fakeCraft();
   craft.execute = () => noDoc();
-  await assert.rejects(runTool('pdfcraft.doc_info', {}, craft), error => {
+  await assert.rejects(runTool('pdfcraft.text_word_count', { pages: '1-2' }, craft), error => {
     assert.ok(error instanceof ToolError);
     assert.equal(error.type, 'not_available');
     assert.equal(error.message, 'PDFCraft has no document open.');
@@ -214,11 +213,118 @@ test('a disabled-right-now rejection (the no-document gate) becomes the teaching
   });
 });
 
+// A fake wrapper window for the file tools: the #file input records the change dispatch
+// (openFromBytes drives it, app.mjs:38), message listeners are stored so a test can fire
+// the <id>:save event the wrapper would hear from the editor frame.
+const fakeWrapper = () => {
+  const opened = [];
+  const fileInput = { files: null, dispatchEvent: event => { if (event?.type === 'change') opened.push(fileInput.files?.[0] ?? null); } };
+  class DataTransfer {
+    constructor() { this._files = []; this.items = { add: file => this._files.push(file) }; }
+    get files() { return this._files; }
+  }
+  class File {
+    constructor(parts, name) { this.parts = parts; this.name = name; }
+  }
+  class Event {
+    constructor(type) { this.type = type; }
+  }
+  const editor = { contentWindow: {} };
+  const listeners = new Set();
+  return {
+    opened,
+    DataTransfer, File, Event,
+    document: { getElementById: id => (id === 'file' ? fileInput : id === 'editor' ? editor : null) },
+    location: { origin: 'https://pc.example' },
+    addEventListener: (type, fn) => { if (type === 'message') listeners.add(fn); },
+    removeEventListener: (type, fn) => { if (type === 'message') listeners.delete(fn); },
+    frame: editor.contentWindow,
+    fire: event => { for (const fn of [...listeners]) fn(event); },
+  };
+};
+const fileCtx = (bytes, wrapper) => {
+  const calls = { read: [], write: [] };
+  return {
+    calls,
+    host: { appWindow: async () => wrapper },
+    craft: () => Promise.resolve(fakeCraft()),
+    files: {
+      readBytes: path => { calls.read.push(path); return Promise.resolve({ path, name: 'contract.pdf', bytes, size: bytes.byteLength }); },
+      writeBytes: (path, b, { overwrite } = {}) => { calls.write.push({ path, size: b.byteLength, overwrite }); return Promise.resolve({ path, size: b.byteLength, created: !overwrite }); },
+    },
+  };
+};
+// A craft factory whose file.save fires the wrapper save, recording the call. commands()
+// answers without file.saveBytes, so the save goes the capture path.
+const saveFiringCraft = wrapper => {
+  const calls = [];
+  const api = {
+    commands: () => Promise.resolve([]),
+    execute: (id, params) => {
+      calls.push([id, params]);
+      if (id === 'file.save') {
+        wrapper.fire({ origin: 'https://pc.example', source: wrapper.frame, data: { type: 'pdfcraft:save', name: 'contract.pdf', bytes: new Uint8Array([3]) } });
+      }
+      return Promise.resolve({ command: id, params });
+    },
+  };
+  return { calls, craft: () => Promise.resolve(api) };
+};
+
+test('pdfcraft.open_file reads the file, waits for the PDF to load, and returns the opened summary', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileCtx(new Uint8Array([1, 2]), wrapper);
+  const state = { tabs: [] };
+  const input = wrapper.document.getElementById('file');
+  const original = input.dispatchEvent;
+  input.dispatchEvent = event => { if (event?.type === 'change') state.tabs = ['contract.pdf']; return original(event); };
+  ctx.craft = () => Promise.resolve({ ...fakeCraft(), inspect: async () => ({ ...state }) });
+  const out = await byName('pdfcraft.open_file').run({ path: '/PDFCraft/contract.pdf' }, ctx);
+  assert.deepEqual(ctx.calls.read, ['/PDFCraft/contract.pdf']);
+  assert.equal(wrapper.opened.length, 1);
+  assert.equal(wrapper.opened[0].name, 'contract.pdf');
+  assert.deepEqual(out, { name: 'contract.pdf', bytes: 2, opened: '1 tab' });
+});
+
+test('pdfcraft.save_copy starts the no-path file.save and writes the captured bytes', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileCtx(new Uint8Array([1]), wrapper);
+  const save = saveFiringCraft(wrapper);
+  ctx.craft = save.craft;
+  const out = await byName('pdfcraft.save_copy').run({ path: '/PDFCraft/contract.pdf' }, ctx);
+  assert.deepEqual(save.calls, [['file.save', {}]]);
+  assert.deepEqual(ctx.calls.write, [{ path: '/PDFCraft/contract.pdf', size: 1, overwrite: false }]);
+  assert.deepEqual(out, { path: '/PDFCraft/contract.pdf', name: 'contract.pdf', size: 1, created: true, note: 'the app also downloaded the file in the browser' });
+});
+
+test('pdfcraft.save_copy is destructive only when overwrite is set', () => {
+  const tool = byName('pdfcraft.save_copy');
+  assert.equal(tool.effect, 'change');
+  assert.equal(tool.effectFor({ overwrite: true }), 'destructive');
+  assert.equal(tool.effectFor({}), 'change');
+});
+
+test('pdfcraft.save_copy with no document open surfaces the open-a-PDF teaching error', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileCtx(new Uint8Array([1]), wrapper);
+  ctx.craft = () => Promise.resolve({
+    commands: () => Promise.resolve([]),
+    execute: () => Promise.reject(Object.assign(new Error('file.save is disabled right now'), { code: 'app_error' })),
+  });
+  await assert.rejects(byName('pdfcraft.save_copy').run({ path: '/PDFCraft/contract.pdf' }, ctx), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'not_available');
+    assert.equal(error.message, 'PDFCraft has no document open.');
+    assert.equal(error.fix, 'Open a PDF in PDFCraft first');
+    return true;
+  });
+});
+
 const { skills, errors: skillErrors } = parseSkills(SKILLS_MD, 'pdfcraft');
 
-test('skills.md parses with the runtime parser without errors and has 9 skills', () => {
+test('skills.md parses with the runtime parser without errors and has 11 skills', () => {
   assert.deepEqual(skillErrors, []);
-  assert.equal(skills.length, 9);
+  assert.equal(skills.length, 11);
   for (const skill of skills) {
     assert.ok(skill.slug && skill.summary, `skill ${skill.slug} slug/summary`);
     assert.ok(skill.summary.length <= 160, `skill ${skill.slug} summary is ${skill.summary.length} chars`);

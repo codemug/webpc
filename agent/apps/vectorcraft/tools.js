@@ -3,9 +3,17 @@
 // which the runtime wires as id => craftApi(await ctx.host.appWindow(id), id) (plan 9).
 import { ToolError, callLine, closest } from '../../../src/apps/ai-agent/runtime/args.mjs';
 import { teachApp } from '../../shared/craft.js';
+import { filesCall, openAndAwait, saveBytesCopy, extOf } from '../../shared/craft-files.js';
+import { releases } from '../../../scripts/pc/craft/releases.mjs';
 
 const APP = 'vectorcraft';
 const NEEDS = ['host', 'app:vectorcraft'];
+// document.serialize's format for each saveable extension (engine cmd/fileio/formats.rs
+// writable formats: vectorcraft default, svg, svgz, pdf, ai, png, jpg/jpeg, webp, gif,
+// txt, dxf, eps/epsf, emf, wmf, tiff, bmp, tga, psd; png8 and template have no distinct
+// saveable extension here, .ait is written by file.saveAsTemplate, and the legacy
+// .drawcraft document is refused with the .vectorcraft fix).
+const SERIALIZABLE_EXT = { '.svg': 'svg', '.svgz': 'svgz', '.pdf': 'pdf', '.ai': 'ai', '.png': 'png', '.jpg': 'jpg', '.jpeg': 'jpg', '.webp': 'webp', '.gif': 'gif', '.txt': 'txt', '.dxf': 'dxf', '.eps': 'eps', '.epsf': 'eps', '.emf': 'emf', '.wmf': 'wmf', '.tiff': 'tiff', '.bmp': 'bmp', '.tga': 'tga', '.psd': 'psd' };
 // run_command/batch ids that destroy or replace data, from the engine command registry
 // (crates/engine/src/cmd): effectFor marks those calls destructive, so the policy asks.
 // file.new is not listed: the web app holds a document list and the new document joins
@@ -592,6 +600,71 @@ export const tools = [
     // live gate); the name and the two sizes are the params a small model needs.
     run: async (args, ctx) => (await ctx.craft(APP)).execute('file.new', pick(args, ['name', 'width', 'height'])),
   },
+  {
+    name: 'vectorcraft.open_file',
+    purpose: 'Open a VectorCraft document or import vector art from Files.',
+    when: 'Use when the user wants to open a document stored in Files, or import vector art.',
+    params: { path: { type: 'path', required: true, description: 'The Files path of the document, e.g. /VectorCraft/poster.vectorcraft' } },
+    effect: 'change',
+    needs: ['host', 'app:vectorcraft', 'files'],
+    examples: [{ args: { path: '/VectorCraft/poster.vectorcraft' }, says: 'Open the poster from Files' }],
+    // VectorCraft is a standalone wrapper (releases.mjs), so the open rides the bootstrap's
+    // download/open path rather than the host bridge: drive the wrapper's own #file input
+    // (app.mjs:38) so the wrapper posts vectorcraft:open (app.mjs:35-36) and the bootstrap
+    // (bootstrap.js:52-89) hands the bytes to window.vectorcraft.openFile. openAndAwait waits
+    // until the page's docInspect changes, so the result confirms the document loaded.
+    run: async (args, ctx) => {
+      const file = await filesCall(ctx, files => files.readBytes(args.path));
+      const wrapper = await ctx.host.appWindow(APP);
+      const craft = await ctx.craft(APP);
+      return openAndAwait(craft, { id: APP, title: 'VectorCraft', wrapperWindow: wrapper, name: file.name, bytes: file.bytes, accept: releases[APP].accept });
+    },
+  },
+  {
+    name: 'vectorcraft.save_copy',
+    purpose: 'Save the active document to Files as a document or export format.',
+    when: 'Use when the user wants to keep a copy of the drawing in Files, as .vectorcraft or an export format.',
+    params: {
+      path: { type: 'path', required: true, description: 'The Files path to write the copy to; the extension picks the format, e.g. /VectorCraft/poster.vectorcraft or /VectorCraft/poster.svg' },
+      overwrite: { type: 'boolean', description: 'Replace the file when the path already exists; false when omitted' },
+    },
+    effect: 'change',
+    effectFor: args => (args.overwrite ? 'destructive' : 'change'),
+    needs: ['host', 'app:vectorcraft', 'files'],
+    examples: [{ args: { path: '/VectorCraft/poster.vectorcraft' }, says: 'Save a copy of the drawing to Files' }],
+    // No path is ever passed (the browser has no file system). document.serialize answers
+    // with the bytes inline as {dataBase64, warnings} (svg answers {text} instead; txt
+    // an empty dataBase64 when the document has no text; engine cmd/fileio/export.rs
+    // serialize), so nothing downloads. The TARGET extension picks
+    // the format (lead live check: /logo.svg -> format svg; .vectorcraft or no extension
+    // keeps the default), so a target with an extension the app cannot serialize is
+    // refused here with the .vectorcraft fix. guard: false: the bytes match the target
+    // extension by construction. The result name is the target base: the page's
+    // document.inspect carries no top-level title to derive a name from.
+    run: async (args, ctx) => {
+      const wrapper = await ctx.host.appWindow(APP);
+      const app = teachApp(await ctx.craft(APP), NO_DOC.message, NO_DOC.fix);
+      const ext = extOf(args.path);
+      if (ext !== '' && ext !== '.vectorcraft' && !(ext in SERIALIZABLE_EXT)) {
+        const base = args.path.split('/').filter(Boolean).pop();
+        const fixPath = `${args.path.slice(0, args.path.length - base.length)}${base.replace(/\.[^.]+$/, '')}.vectorcraft`;
+        throw new ToolError('invalid_argument', `VectorCraft saves .vectorcraft and its export formats (svg, svgz, pdf, ai, png, jpg, webp, gif, txt, dxf, eps, emf, wmf, tiff, bmp, tga, psd); it cannot write ${ext}.`, callLine('vectorcraft.save_copy', { path: fixPath }));
+      }
+      const save = await saveBytesCopy(app, {
+        id: APP, title: 'VectorCraft', wrapperWindow: wrapper, target: args.path,
+        tool: 'vectorcraft.save_copy', nativeExt: '', guard: false,
+        inlineCommand: { command: 'document.serialize', params: ext in SERIALIZABLE_EXT ? { format: SERIALIZABLE_EXT[ext] } : {} },
+      });
+      const base = args.path.split('/').filter(Boolean).pop();
+      const name = extOf(base) !== '' ? base : `${base}.vectorcraft`;
+      const written = await filesCall(
+        ctx,
+        files => files.writeBytes(args.path, save.bytes, { overwrite: Boolean(args.overwrite) }),
+        error => (error.code === 'exists' ? callLine('vectorcraft.save_copy', { path: args.path, overwrite: true }) : ''),
+      );
+      return { path: written.path, name, size: written.size, created: written.created, ...(save.note ? { note: save.note } : {}) };
+    },
+  },
 ];
 
 // Live-check exports (brief): every command id the pack passes to execute (the fixed ids of
@@ -606,6 +679,6 @@ export const usesCommands = [
   'object.pathfinder.outline', 'object.pathfinder.minusBack',
   'object.move', 'object.rotate', 'object.scale', 'object.reflect', 'object.shear',
   'graph.create', 'object.textWrap.make', 'object.textWrap.release', 'document.export', 'document.exportSelection',
-  'edit.undo', 'edit.redo',
+  'edit.undo', 'edit.redo', 'document.serialize',
 ];
 export const usesMethods = ['document.inspect', 'ui.inspect', 'ui.tool.select', 'ui.key', 'ui.text', 'ui.set'];

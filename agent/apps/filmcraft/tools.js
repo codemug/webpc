@@ -5,6 +5,8 @@
 // The tools run in Buddy's frame and drive the FilmCraft page API through ctx.craft, which the
 // runtime wires as id => craftApi(await ctx.host.appWindow(id), id) (plan 9).
 import { ToolError, callLine, closest } from '../../../src/apps/ai-agent/runtime/args.mjs';
+import { filesCall, openAndAwait, saveBytesCopy } from '../../shared/craft-files.js';
+import { releases } from '../../../scripts/pc/craft/releases.mjs';
 
 const APP = 'filmcraft';
 const NEEDS = ['host', 'app:filmcraft'];
@@ -414,6 +416,62 @@ export const tools = [
       return app.execute(args.command, parseParams(args.params));
     },
   },
+  {
+    name: 'filmcraft.open_file',
+    purpose: 'Open a project or import media from Files into FilmCraft.',
+    when: 'Use when the user wants to open a project stored in Files, or import video, audio or stills.',
+    params: { path: { type: 'path', required: true, description: 'The Files path of the project or media, e.g. /FilmCraft/talk.fcproj' } },
+    effect: 'destructive',
+    needs: ['host', 'app:filmcraft', 'files'],
+    examples: [{ args: { path: '/FilmCraft/talk.fcproj' }, says: 'Open the talk project from Files' }],
+    // Drives the wrapper's own #file input (app.mjs:38), so the open posts from the wrapper
+    // realm, as the page's host bridge requires. A .fcproj is opened as the project, which
+    // replaces the open one (the web app holds a single project; engine commands.rs
+    // install_project clean=true), so this is destructive; media is imported like a dropped
+    // file. The wrapper's own unsaved-changes confirm still applies (app.mjs:35).
+    // openAndAwait waits until the page's inspect changes, so the result confirms the load.
+    run: async (args, ctx) => {
+      const file = await filesCall(ctx, files => files.readBytes(args.path));
+      const wrapper = await ctx.host.appWindow(APP);
+      const craft = await ctx.craft(APP);
+      return openAndAwait(craft, { id: APP, title: 'FilmCraft', wrapperWindow: wrapper, name: file.name, bytes: file.bytes, accept: releases[APP].accept });
+    },
+  },
+  {
+    name: 'filmcraft.save_copy',
+    purpose: 'Save the active project as a .fcproj file in Files.',
+    when: 'Use when the user wants to keep a copy of the project in Files.',
+    params: {
+      path: { type: 'path', required: true, description: 'The Files path to write the copy to, e.g. /FilmCraft/talk.fcproj' },
+      overwrite: { type: 'boolean', description: 'Replace the file when the path already exists; false when omitted' },
+    },
+    effect: 'change',
+    effectFor: args => (args.overwrite ? 'destructive' : 'change'),
+    needs: ['host', 'app:filmcraft', 'files'],
+    examples: [{ args: { path: '/FilmCraft/talk.fcproj' }, says: 'Save a copy of the project to Files' }],
+    // No path is ever passed (the browser has no file system). FilmCraft has no file.saveBytes,
+    // so the no-path file.save {} (engine commands.rs:1981) is the trigger: it saves the
+    // project under its own name, and in host mode the page hands the bytes to the wrapper
+    // (filmcraft-web host.rs wrote/flush_saves), which the saveCopy capture reads as
+    // filmcraft:save (app.mjs:29-33) and also downloads in the browser, so the result says so.
+    // A fresh project with no saved path yet makes the app refuse ("no path (use Save As)"),
+    // which surfaces as the tool error. The bytes are the native .fcproj format, so a target
+    // with another extension is refused with a fix.
+    run: async (args, ctx) => {
+      const wrapper = await ctx.host.appWindow(APP);
+      const craft = await ctx.craft(APP);
+      const save = await saveBytesCopy(craft, {
+        id: APP, title: 'FilmCraft', wrapperWindow: wrapper, target: args.path,
+        tool: 'filmcraft.save_copy', nativeExt: '.fcproj',
+      });
+      const written = await filesCall(
+        ctx,
+        files => files.writeBytes(args.path, save.bytes, { overwrite: Boolean(args.overwrite) }),
+        error => (error.code === 'exists' ? callLine('filmcraft.save_copy', { path: args.path, overwrite: true }) : ''),
+      );
+      return { path: written.path, name: save.name, size: written.size, created: written.created, ...(save.note ? { note: save.note } : {}) };
+    },
+  },
 ];
 
 // Live-check exports (brief): every command id the pack passes to execute (timeline.place and
@@ -423,6 +481,6 @@ export const tools = [
 export const usesCommands = [
   'project.inspect', 'sequence.inspect', 'playhead.set', 'timeline.razor', 'sequence.addEdit',
   'timeline.place', 'timeline.move', 'effects.apply', 'effects.list', 'file.newBin',
-  'file.newProject', 'file.openDemoProject', 'edit.undo', 'edit.redo',
+  'file.newProject', 'file.openDemoProject', 'file.save', 'edit.undo', 'edit.redo',
 ];
 export const usesMethods = []; // nothing goes through request(); ui_inspect uses the adapter inspect()

@@ -6,6 +6,8 @@
 // (public/pc/vendor/effectcraft/index.html) installs request/execute/commands/inspect/
 // screenshot, with inspect the page's own ui.inspect.
 import { ToolError, callLine, closest } from '../../../src/apps/ai-agent/runtime/args.mjs';
+import { filesCall, openAndAwait, saveBytesCopy } from '../../shared/craft-files.js';
+import { releases } from '../../../scripts/pc/craft/releases.mjs';
 
 const APP = 'effectcraft';
 const NEEDS = ['host', 'app:effectcraft'];
@@ -522,6 +524,61 @@ export const tools = [
         throw new ToolError('invalid_argument', `unknown command "${args.command}"${near.length > 0 ? `; closest: ${near.join(', ')}` : ''}`, fix);
       }
       return app.execute(args.command, parseParams(args.params));
+    },
+  },
+  {
+    name: 'effectcraft.open_file',
+    purpose: 'Open a project or import media from Files into EffectCraft.',
+    when: 'Use when the user wants to open a project stored in Files, or import video, audio or images.',
+    params: { path: { type: 'path', required: true, description: 'The Files path of the project or media, e.g. /EffectCraft/ad.ecproj' } },
+    effect: 'destructive',
+    needs: ['host', 'app:effectcraft', 'files'],
+    examples: [{ args: { path: '/EffectCraft/ad.ecproj' }, says: 'Open the ad project from Files' }],
+    // EffectCraft is a standalone wrapper (releases.mjs), so the open rides the bootstrap's
+    // open path: drive the wrapper's own #file input (app.mjs:38) so the wrapper posts
+    // effectcraft:open (app.mjs:35-36) and the bootstrap (bootstrap.js:52-89, openMethod
+    // addFile) hands the bytes to window.effectcraft.addFile, which opens a .ecproj or
+    // imports media. Opening a project replaces the open one (the web app holds one project),
+    // so this is destructive. openAndAwait waits until the page's inspect changes.
+    run: async (args, ctx) => {
+      const file = await filesCall(ctx, files => files.readBytes(args.path));
+      const wrapper = await ctx.host.appWindow(APP);
+      const craft = await ctx.craft(APP);
+      return openAndAwait(craft, { id: APP, title: 'EffectCraft', wrapperWindow: wrapper, name: file.name, bytes: file.bytes, accept: releases[APP].accept });
+    },
+  },
+  {
+    name: 'effectcraft.save_copy',
+    purpose: 'Save the active project as a .ecproj file in Files.',
+    when: 'Use when the user wants to keep a copy of the project in Files.',
+    params: {
+      path: { type: 'path', required: true, description: 'The Files path to write the copy to, e.g. /EffectCraft/ad.ecproj' },
+      overwrite: { type: 'boolean', description: 'Replace the file when the path already exists; false when omitted' },
+    },
+    effect: 'change',
+    effectFor: args => (args.overwrite ? 'destructive' : 'change'),
+    needs: ['host', 'app:effectcraft', 'files'],
+    examples: [{ args: { path: '/EffectCraft/ad.ecproj' }, says: 'Save a copy of the project to Files' }],
+    // No path is ever passed (the browser has no file system). EffectCraft has no file.saveBytes,
+    // so the no-path file.save {} (engine cmd/file.rs:793) is the trigger; in standalone mode the
+    // app's own download is captured by the bootstrap's anchor-click hook (bootstrap.js:92-98,
+    // nativeSource .ecproj) and posted to the wrapper as effectcraft:save (app.mjs:29-33), which
+    // the saveCopy capture reads. The bytes are the native .ecproj format, so a target with
+    // another extension is refused with a fix. A fresh project with no saved path yet makes the
+    // app refuse ("no path: use file.saveAs {path}"), which surfaces as the tool error.
+    run: async (args, ctx) => {
+      const wrapper = await ctx.host.appWindow(APP);
+      const craft = await ctx.craft(APP);
+      const save = await saveBytesCopy(craft, {
+        id: APP, title: 'EffectCraft', wrapperWindow: wrapper, target: args.path,
+        tool: 'effectcraft.save_copy', nativeExt: '.ecproj',
+      });
+      const written = await filesCall(
+        ctx,
+        files => files.writeBytes(args.path, save.bytes, { overwrite: Boolean(args.overwrite) }),
+        error => (error.code === 'exists' ? callLine('effectcraft.save_copy', { path: args.path, overwrite: true }) : ''),
+      );
+      return { path: written.path, name: save.name, size: written.size, created: written.created, ...(save.note ? { note: save.note } : {}) };
     },
   },
 ];

@@ -49,14 +49,14 @@ test('the pack declares its id and title', () => {
   assert.deepEqual(pack, { id: 'gridcraft', title: 'GridCraft' });
 });
 
-test('the pack exposes exactly the 18 gridcraft tools', () => {
-  assert.equal(tools.length, 18);
+test('the pack exposes exactly the 20 gridcraft tools', () => {
+  assert.equal(tools.length, 20);
   assert.deepEqual(tools.map(tool => tool.name).sort(), [
     'gridcraft.create_table', 'gridcraft.evaluate_formula', 'gridcraft.filter', 'gridcraft.format_range',
     'gridcraft.get_cell', 'gridcraft.insert_chart', 'gridcraft.inspect', 'gridcraft.list_commands',
-    'gridcraft.list_functions', 'gridcraft.new_workbook', 'gridcraft.read_range', 'gridcraft.redo',
-    'gridcraft.run_command', 'gridcraft.select', 'gridcraft.set_cell', 'gridcraft.set_cells',
-    'gridcraft.sort_range', 'gridcraft.undo',
+    'gridcraft.list_functions', 'gridcraft.new_workbook', 'gridcraft.open_file', 'gridcraft.read_range',
+    'gridcraft.redo', 'gridcraft.run_command', 'gridcraft.save_copy', 'gridcraft.select',
+    'gridcraft.set_cell', 'gridcraft.set_cells', 'gridcraft.sort_range', 'gridcraft.undo',
   ]);
 });
 
@@ -67,7 +67,8 @@ test('every tool has the required text fields, effect, needs and examples', () =
     assert.ok(tool.when.startsWith('Use when'), `${tool.name} when must start with "Use when"`);
     assert.ok(tool.when.length <= 120, `${tool.name} when is ${tool.when.length} chars`);
     assert.ok(['read', 'change', 'destructive', 'external'].includes(tool.effect), `${tool.name} bad effect`);
-    assert.deepEqual(tool.needs, ['host', 'app:gridcraft']);
+    const fileTools = ['gridcraft.open_file', 'gridcraft.save_copy'];
+    assert.deepEqual(tool.needs, fileTools.includes(tool.name) ? ['host', 'app:gridcraft', 'files'] : ['host', 'app:gridcraft']);
     assert.equal(typeof tool.run, 'function');
     assert.ok(tool.examples.length >= 1, `${tool.name} has examples`);
     for (const example of tool.examples) {
@@ -244,11 +245,175 @@ test('gridcraft.run_command rejects a bad params line with invalid_argument', as
   });
 });
 
+// A fake wrapper window for the file tools: the #file input records the change dispatch
+// (openFromBytes drives it, app.mjs:38), message listeners are stored so a test can fire
+// the <id>:save event the wrapper would hear from the editor frame.
+const fakeWrapper = () => {
+  const opened = [];
+  const fileInput = { files: null, dispatchEvent: event => { if (event?.type === 'change') opened.push(fileInput.files?.[0] ?? null); } };
+  class DataTransfer {
+    constructor() { this._files = []; this.items = { add: file => this._files.push(file) }; }
+    get files() { return this._files; }
+  }
+  class File {
+    constructor(parts, name) { this.parts = parts; this.name = name; }
+  }
+  class Event {
+    constructor(type) { this.type = type; }
+  }
+  const editor = { contentWindow: {} };
+  const listeners = new Set();
+  return {
+    opened,
+    DataTransfer, File, Event,
+    document: { getElementById: id => (id === 'file' ? fileInput : id === 'editor' ? editor : null) },
+    location: { origin: 'https://pc.example' },
+    addEventListener: (type, fn) => { if (type === 'message') listeners.add(fn); },
+    removeEventListener: (type, fn) => { if (type === 'message') listeners.delete(fn); },
+    frame: editor.contentWindow,
+    fire: event => { for (const fn of [...listeners]) fn(event); },
+  };
+};
+// A ctx with the file tools' needs met: host.appWindow resolves to the fake wrapper and
+// files records readBytes/writeBytes calls.
+const fileCtx = (bytes, wrapper) => {
+  const calls = { read: [], write: [] };
+  return {
+    calls,
+    host: { appWindow: async () => wrapper },
+    craft: () => Promise.resolve(fakeCraft()),
+    files: {
+      readBytes: path => { calls.read.push(path); return Promise.resolve({ path, name: 'budget.xlsx', bytes, size: bytes.byteLength }); },
+      writeBytes: (path, b, { overwrite } = {}) => { calls.write.push({ path, size: b.byteLength, overwrite }); return Promise.resolve({ path, size: b.byteLength, created: !overwrite }); },
+    },
+  };
+};
+
+// A craft API whose live command list has file.saveBytes: execute returns the app's
+// inline save result (the gridcraft shape: name, bytes a number, base64).
+const saveBytesCraft = () => {
+  const calls = [];
+  const bytes = new Uint8Array([9, 8]);
+  const b64 = Buffer.from(bytes).toString('base64');
+  return {
+    calls,
+    craft: () => Promise.resolve({
+      commands: async () => [{ id: 'file.saveBytes' }],
+      execute: (command, params) => {
+        calls.push([command, params]);
+        if (command === 'file.saveBytes') return { name: 'budget.xlsx', bytes: bytes.byteLength, base64: b64 };
+        return { command, params };
+      },
+      inspect: async () => ({ sheets: ['Sheet1'] }),
+    }),
+  };
+};
+
+test('gridcraft.open_file reads the file, waits for the load, and returns the opened summary', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileCtx(new Uint8Array([1, 2, 3]), wrapper);
+  const state = { sheets: [] };
+  const input = wrapper.document.getElementById('file');
+  const original = input.dispatchEvent;
+  input.dispatchEvent = event => { if (event?.type === 'change') state.sheets = ['data']; return original(event); };
+  ctx.craft = () => Promise.resolve({ ...fakeCraft(), inspect: async () => ({ ...state }) });
+  const out = await byName('gridcraft.open_file').run({ path: '/GridCraft/budget.xlsx' }, ctx);
+  assert.deepEqual(ctx.calls.read, ['/GridCraft/budget.xlsx']);
+  assert.equal(wrapper.opened.length, 1);
+  assert.equal(wrapper.opened[0].name, 'budget.xlsx');
+  assert.deepEqual([...wrapper.opened[0].parts[0]], [1, 2, 3]);
+  assert.deepEqual(out, { name: 'budget.xlsx', bytes: 3, opened: '1 sheet' });
+});
+
+test('gridcraft.open_file turns a store not_found into a teaching ToolError', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileCtx(new Uint8Array([1]), wrapper);
+  ctx.files.readBytes = () => Promise.reject(Object.assign(new Error('/missing.xlsx is not a file.'), { code: 'not_found' }));
+  await assert.rejects(byName('gridcraft.open_file').run({ path: '/missing.xlsx' }, ctx), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'not_found');
+    assert.match(error.message, /not a file/);
+    return true;
+  });
+  assert.equal(wrapper.opened.length, 0);
+});
+
+test('gridcraft.save_copy takes the bytes from file.saveBytes (no path, no download) and writes them', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileCtx(new Uint8Array([1, 2, 3]), wrapper);
+  const save = saveBytesCraft();
+  ctx.craft = save.craft;
+  const out = await byName('gridcraft.save_copy').run({ path: '/GridCraft/budget.xlsx' }, ctx);
+  assert.deepEqual(save.calls, [['file.saveBytes', {}]]);
+  assert.deepEqual(ctx.calls.write, [{ path: '/GridCraft/budget.xlsx', size: 2, overwrite: false }]);
+  assert.deepEqual(out, { path: '/GridCraft/budget.xlsx', name: 'budget.xlsx', size: 2, created: true });
+  assert.ok(!('note' in out)); // the saveBytes path downloads nothing
+});
+
+test('gridcraft.save_copy passes overwrite through to writeBytes and is destructive only when set', async () => {
+  const ctx = fileCtx(new Uint8Array([1]), fakeWrapper());
+  const save = saveBytesCraft();
+  ctx.craft = save.craft;
+  await byName('gridcraft.save_copy').run({ path: '/GridCraft/budget.xlsx', overwrite: true }, ctx);
+  assert.deepEqual(ctx.calls.write, [{ path: '/GridCraft/budget.xlsx', size: 2, overwrite: true }]);
+  const tool = byName('gridcraft.save_copy');
+  assert.equal(tool.effect, 'change');
+  assert.equal(tool.effectFor({ overwrite: true }), 'destructive');
+  assert.equal(tool.effectFor({ overwrite: false }), 'change');
+  assert.equal(tool.effectFor({}), 'change');
+});
+
+test('gridcraft.save_copy with an existing path suggests overwrite=true as the fix', async () => {
+  const ctx = fileCtx(new Uint8Array([1]), fakeWrapper());
+  const save = saveBytesCraft();
+  ctx.craft = save.craft;
+  ctx.files.writeBytes = () => Promise.reject(Object.assign(new Error('/GridCraft/budget.xlsx already exists.'), { code: 'exists' }));
+  await assert.rejects(byName('gridcraft.save_copy').run({ path: '/GridCraft/budget.xlsx' }, ctx), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'exists');
+    assert.equal(error.fix, callLine('gridcraft.save_copy', { path: '/GridCraft/budget.xlsx', overwrite: true }));
+    return true;
+  });
+});
+
+test('gridcraft.save_copy refuses a foreign target extension with the .xlsx fix', async () => {
+  const ctx = fileCtx(new Uint8Array([1]), fakeWrapper());
+  const save = saveBytesCraft();
+  ctx.craft = save.craft;
+  await assert.rejects(byName('gridcraft.save_copy').run({ path: '/GridCraft/budget.csv' }, ctx), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.match(error.message, /GridCraft saves \.xlsx files; it cannot write \.csv here\./);
+    assert.equal(error.fix, callLine('gridcraft.save_copy', { path: '/GridCraft/budget.xlsx' }));
+    return true;
+  });
+  assert.equal(ctx.calls.write.length, 0); // nothing is written under a foreign extension
+});
+
+test('gridcraft.save_copy without file.saveBytes falls back to the no-path capture and notes the download', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileCtx(new Uint8Array([1]), wrapper);
+  const calls = [];
+  ctx.craft = () => Promise.resolve({
+    commands: async () => [{ id: 'file.save' }],
+    execute: (command, params) => {
+      calls.push([command, params]);
+      wrapper.fire({ origin: 'https://pc.example', source: wrapper.frame, data: { type: 'gridcraft:save', name: 'budget.xlsx', bytes: new Uint8Array([4, 3, 2, 1]) } });
+      return { command, params };
+    },
+  });
+  const out = await byName('gridcraft.save_copy').run({ path: '/GridCraft/budget.xlsx' }, ctx);
+  assert.deepEqual(calls, [['file.save', {}]]); // the no-path trigger
+  assert.deepEqual(ctx.calls.write, [{ path: '/GridCraft/budget.xlsx', size: 4, overwrite: false }]);
+  assert.deepEqual(out, { path: '/GridCraft/budget.xlsx', name: 'budget.xlsx', size: 4, created: true, note: 'the app also downloaded the file in the browser' });
+});
+
+
 const { skills, errors: skillErrors } = parseSkills(SKILLS_MD, 'gridcraft');
 
-test('skills.md parses with the runtime parser without errors and has 10 skills', () => {
+test('skills.md parses with the runtime parser without errors and has 12 skills', () => {
   assert.deepEqual(skillErrors, []);
-  assert.equal(skills.length, 10);
+  assert.equal(skills.length, 12);
   for (const skill of skills) {
     assert.ok(skill.slug && skill.summary, `skill ${skill.slug} slug/summary`);
     assert.ok(skill.summary.length <= 160, `skill ${skill.slug} summary is ${skill.summary.length} chars`);

@@ -128,3 +128,29 @@ Steps:
 3. call_tool tool=figcraft.export format=svg
 Check: the result carries the svg text (or base64 data for raster formats) plus the format.
 Gotchas: ids= exports those layers composited; scale= multiplies raster output (default 1); format=fig exports the whole file; without a file path the data comes back in the result.
+
+## Open a document from Files
+slug: open-a-document-from-files
+summary: Open a FigCraft document that is stored in Files in the editor.
+keywords: open, load, from files, figcraft, document, import, fig
+tools: desktop.open_app, figcraft.open_file
+
+When: the user wants to open a FigCraft document that is stored in Files.
+Steps:
+1. call_tool tool=desktop.open_app app=figcraft
+2. call_tool tool=figcraft.open_file path=/FigCraft/app.figcraft
+Check: the result's opened field names the document; figcraft.inspect_document shows the open document.
+Gotchas: change path= to the Files path of a .figcraft document; the document opens alongside the open ones; while the open document has unsaved changes the app asks first whether to keep them.
+
+## Save a copy of the design to Files
+slug: save-a-design-copy-to-files
+summary: Save the active FigCraft document as a .figcraft file in Files.
+keywords: save, copy, to files, figcraft, export, keep, fig, write
+tools: desktop.open_app, figcraft.save_copy
+
+When: the user wants to keep a copy of the active design in Files.
+Steps:
+1. call_tool tool=desktop.open_app app=figcraft
+2. call_tool tool=figcraft.save_copy path=/FigCraft/app.figcraft
+Check: the result has the saved Files path and size; files.info on that path shows the same size.
+Gotchas: change path=; FigCraft saves .figcraft files, so a target with another extension is refused with the .figcraft path as the fix; if the path exists the tool errors, so choose another name or pass overwrite=true (which is destructive).

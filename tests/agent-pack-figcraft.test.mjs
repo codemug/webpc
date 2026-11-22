@@ -47,17 +47,17 @@ const runTool = (name, args, craft) => byName(name).run(args, { host: {}, craft:
 
 test('the pack declares its id, title and live-check exports', () => {
   assert.deepEqual(pack, { id: 'figcraft', title: 'FigCraft' });
-  assert.deepEqual(usesCommands.sort(), ['command.batch', 'edit.redo', 'edit.undo', 'file.export', 'file.new', 'node.create', 'node.set', 'select.none', 'select.set', 'text.edit.begin', 'text.edit.end'].sort());
+  assert.deepEqual(usesCommands.sort(), ['command.batch', 'edit.redo', 'edit.undo', 'file.export', 'file.new', 'file.saveAs', 'node.create', 'node.set', 'select.none', 'select.set', 'text.edit.begin', 'text.edit.end'].sort());
   assert.deepEqual(usesMethods, ['node.get', 'document.inspect', 'ui.key', 'ui.type', 'ui.inspect']);
 });
 
-test('the pack exposes exactly the 15 figcraft tools', () => {
-  assert.equal(tools.length, 15);
+test('the pack exposes exactly the 17 figcraft tools', () => {
+  assert.equal(tools.length, 17);
   assert.deepEqual(tools.map(tool => tool.name).sort(), [
     'figcraft.batch', 'figcraft.create_node', 'figcraft.export', 'figcraft.get_node',
     'figcraft.inspect_document', 'figcraft.inspect_ui', 'figcraft.key', 'figcraft.list_commands',
-    'figcraft.new_document', 'figcraft.redo', 'figcraft.run_command', 'figcraft.select',
-    'figcraft.set_properties', 'figcraft.type_text', 'figcraft.undo',
+    'figcraft.new_document', 'figcraft.open_file', 'figcraft.redo', 'figcraft.run_command', 'figcraft.save_copy',
+    'figcraft.select', 'figcraft.set_properties', 'figcraft.type_text', 'figcraft.undo',
   ]);
 });
 
@@ -69,7 +69,8 @@ test('every tool has the required text fields, effect, needs and examples', () =
     // run_command and batch list the destructive ids in when (the model must see them).
     if (tool.name !== 'figcraft.run_command') assert.ok(tool.when.length <= 120, `${tool.name} when is ${tool.when.length} chars`);
     assert.ok(['read', 'change', 'destructive', 'external'].includes(tool.effect), `${tool.name} bad effect`);
-    assert.deepEqual(tool.needs, ['host', 'app:figcraft']);
+    const fileTools = ['figcraft.open_file', 'figcraft.save_copy'];
+    assert.deepEqual(tool.needs, fileTools.includes(tool.name) ? ['host', 'app:figcraft', 'files'] : ['host', 'app:figcraft']);
     assert.equal(typeof tool.run, 'function');
     assert.ok(tool.examples.length >= 1, `${tool.name} has examples`);
     for (const example of tool.examples) {
@@ -302,11 +303,99 @@ test('effectFor marks destructive command ids for run_command and batch', () => 
   assert.equal(batch.effectFor({ commands: ['node.create type=frame'] }), 'change');
 });
 
+// A fake wrapper window for the file tools: the #file input records the change dispatch
+// (openFromBytes drives it, app.mjs:38), message listeners are stored so a test can fire
+// the <id>:save event the wrapper would hear from the editor frame.
+const fakeWrapper = () => {
+  const opened = [];
+  const fileInput = { files: null, dispatchEvent: event => { if (event?.type === 'change') opened.push(fileInput.files?.[0] ?? null); } };
+  class DataTransfer {
+    constructor() { this._files = []; this.items = { add: file => this._files.push(file) }; }
+    get files() { return this._files; }
+  }
+  class File {
+    constructor(parts, name) { this.parts = parts; this.name = name; }
+  }
+  class Event {
+    constructor(type) { this.type = type; }
+  }
+  const editor = { contentWindow: {} };
+  const listeners = new Set();
+  return {
+    opened,
+    DataTransfer, File, Event,
+    document: { getElementById: id => (id === 'file' ? fileInput : id === 'editor' ? editor : null) },
+    location: { origin: 'https://pc.example' },
+    addEventListener: (type, fn) => { if (type === 'message') listeners.add(fn); },
+    removeEventListener: (type, fn) => { if (type === 'message') listeners.delete(fn); },
+    frame: editor.contentWindow,
+    fire: event => { for (const fn of [...listeners]) fn(event); },
+  };
+};
+// A ctx with the file tools' needs met: host.appWindow resolves to the fake wrapper and
+// files records readBytes/writeBytes calls.
+const fileCtx = (bytes, wrapper) => {
+  const calls = { read: [], write: [] };
+  return {
+    calls,
+    host: { appWindow: async () => wrapper },
+    craft: () => Promise.resolve(fakeCraft()),
+    files: {
+      readBytes: path => { calls.read.push(path); return Promise.resolve({ path, name: 'app.figcraft', bytes, size: bytes.byteLength }); },
+      writeBytes: (path, b, { overwrite } = {}) => { calls.write.push({ path, size: b.byteLength, overwrite }); return Promise.resolve({ path, size: b.byteLength, created: !overwrite }); },
+    },
+  };
+};
+
+test('figcraft.open_file reads the file, drives the wrapper input, and waits for the load', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileCtx(new Uint8Array([1, 2, 3]), wrapper);
+  const state = { document: 'Design.fig' };
+  const input = wrapper.document.getElementById('file');
+  const original = input.dispatchEvent;
+  input.dispatchEvent = event => { if (event?.type === 'change') Object.assign(state, { title: 'app.figcraft', pages: [1] }); return original(event); };
+  ctx.craft = () => Promise.resolve({ ...fakeCraft(), inspect: async () => state });
+  const out = await byName('figcraft.open_file').run({ path: '/FigCraft/app.figcraft' }, ctx);
+  assert.deepEqual(ctx.calls.read, ['/FigCraft/app.figcraft']);
+  assert.equal(wrapper.opened.length, 1);
+  assert.equal(wrapper.opened[0].name, 'app.figcraft');
+  assert.deepEqual(out, { name: 'app.figcraft', bytes: 3, opened: '"app.figcraft" 1 page' });
+});
+
+test('figcraft.save_copy takes the bytes inline from file.saveAs {data: true} and writes them', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileCtx(new Uint8Array([1, 2, 3]), wrapper);
+  const calls = [];
+  const b64 = Buffer.from([9, 8]).toString('base64');
+  ctx.craft = () => Promise.resolve({
+    ...fakeCraft(),
+    execute: (command, params) => { calls.push([command, params]); return Promise.resolve(command === 'file.saveAs' ? { name: 'app.figcraft', bytes: 2, data: b64 } : { command, params }); },
+  });
+  const out = await byName('figcraft.save_copy').run({ path: '/FigCraft/app.figcraft' }, ctx);
+  assert.deepEqual(calls, [['file.saveAs', { data: true }]]); // no path, the data flag asks for the bytes
+  assert.deepEqual(ctx.calls.write, [{ path: '/FigCraft/app.figcraft', size: 2, overwrite: false }]);
+  assert.deepEqual(out, { path: '/FigCraft/app.figcraft', name: 'app.figcraft', size: 2, created: true });
+  assert.ok(!('note' in out)); // the inline path downloads nothing
+});
+
+test('figcraft.save_copy refuses a foreign target extension with the .figcraft fix', async () => {
+  const ctx = fileCtx(new Uint8Array([1]), fakeWrapper());
+  ctx.craft = () => Promise.resolve({ ...fakeCraft(), execute: () => Promise.resolve({ name: 'app.figcraft', bytes: 1, data: Buffer.from([9]).toString('base64') }) });
+  await assert.rejects(byName('figcraft.save_copy').run({ path: '/FigCraft/app.png' }, ctx), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.match(error.message, /FigCraft saves \.figcraft files; it cannot write \.png here\./);
+    assert.equal(error.fix, callLine('figcraft.save_copy', { path: '/FigCraft/app.figcraft' }));
+    return true;
+  });
+  assert.equal(ctx.calls.write.length, 0);
+});
+
 const { skills, errors: skillErrors } = parseSkills(SKILLS_MD, 'figcraft');
 
-test('skills.md parses with the runtime parser without errors and has 8 skills', () => {
+test('skills.md parses with the runtime parser without errors and has 10 skills', () => {
   assert.deepEqual(skillErrors, []);
-  assert.equal(skills.length, 8);
+  assert.equal(skills.length, 10);
   for (const skill of skills) {
     assert.ok(skill.slug && skill.summary, `skill ${skill.slug} slug/summary`);
     assert.ok(skill.summary.length <= 160, `skill ${skill.slug} summary is ${skill.summary.length} chars`);

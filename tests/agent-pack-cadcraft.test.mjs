@@ -45,16 +45,16 @@ const runTool = (name, args, craft) => byName(name).run(args, { host: {}, craft:
 
 test('the pack declares its id, title and live-check exports', () => {
   assert.deepEqual(pack, { id: 'cadcraft', title: 'CADCraft' });
-  assert.deepEqual(usesCommands, ['entities', 'texts', 'new']);
+  assert.deepEqual(usesCommands, ['entities', 'texts', 'new', 'document.bytes']);
   assert.deepEqual(usesMethods, ['cmdline.input', 'cmdline.script', 'drawing.inspect', 'cmdline.key']);
 });
 
-test('the pack exposes exactly the 9 cadcraft tools', () => {
-  assert.equal(tools.length, 9);
+test('the pack exposes exactly the 11 cadcraft tools', () => {
+  assert.equal(tools.length, 11);
   assert.deepEqual(tools.map(tool => tool.name).sort(), [
     'cadcraft.cancel', 'cadcraft.command_line', 'cadcraft.find_text', 'cadcraft.inspect',
-    'cadcraft.list_commands', 'cadcraft.new_drawing', 'cadcraft.query_entities',
-    'cadcraft.run_command', 'cadcraft.script',
+    'cadcraft.list_commands', 'cadcraft.new_drawing', 'cadcraft.open_file', 'cadcraft.query_entities',
+    'cadcraft.run_command', 'cadcraft.save_copy', 'cadcraft.script',
   ]);
 });
 
@@ -65,7 +65,8 @@ test('every tool has the required text fields, effect, needs and examples', () =
     assert.ok(tool.when.startsWith('Use when'), `${tool.name} when must start with "Use when"`);
     assert.ok(tool.when.length <= 120, `${tool.name} when is ${tool.when.length} chars`);
     assert.ok(['read', 'change', 'destructive', 'external'].includes(tool.effect), `${tool.name} bad effect`);
-    assert.deepEqual(tool.needs, ['host', 'app:cadcraft']);
+    const fileTools = ['cadcraft.open_file', 'cadcraft.save_copy'];
+    assert.deepEqual(tool.needs, fileTools.includes(tool.name) ? ['host', 'app:cadcraft', 'files'] : ['host', 'app:cadcraft']);
     assert.equal(typeof tool.run, 'function');
     assert.ok(tool.examples.length >= 1, `${tool.name} has examples`);
     for (const example of tool.examples) {
@@ -204,11 +205,128 @@ test('an in-band error that is not about the drawing becomes an app_error with t
   });
 });
 
+// A fake wrapper window for the file tools: the #file input records the change dispatch
+// (openFromBytes drives it, app.mjs:38), message listeners are stored so a test can fire
+// the <id>:save event the wrapper would hear from the editor frame.
+const fakeWrapper = () => {
+  const opened = [];
+  const fileInput = { files: null, dispatchEvent: event => { if (event?.type === 'change') opened.push(fileInput.files?.[0] ?? null); } };
+  class DataTransfer {
+    constructor() { this._files = []; this.items = { add: file => this._files.push(file) }; }
+    get files() { return this._files; }
+  }
+  class File {
+    constructor(parts, name) { this.parts = parts; this.name = name; }
+  }
+  class Event {
+    constructor(type) { this.type = type; }
+  }
+  const editor = { contentWindow: {} };
+  const listeners = new Set();
+  return {
+    opened,
+    DataTransfer, File, Event,
+    document: { getElementById: id => (id === 'file' ? fileInput : id === 'editor' ? editor : null) },
+    location: { origin: 'https://pc.example' },
+    addEventListener: (type, fn) => { if (type === 'message') listeners.add(fn); },
+    removeEventListener: (type, fn) => { if (type === 'message') listeners.delete(fn); },
+    frame: editor.contentWindow,
+    fire: event => { for (const fn of [...listeners]) fn(event); },
+  };
+};
+const fileCtx = (bytes, wrapper) => {
+  const calls = { read: [], write: [] };
+  return {
+    calls,
+    host: { appWindow: async () => wrapper },
+    craft: () => Promise.resolve(fakeCraft()),
+    files: {
+      readBytes: path => { calls.read.push(path); return Promise.resolve({ path, name: 'plan.dxf', bytes, size: bytes.byteLength }); },
+      writeBytes: (path, b, { overwrite } = {}) => { calls.write.push({ path, size: b.byteLength, overwrite }); return Promise.resolve({ path, size: b.byteLength, created: !overwrite }); },
+    },
+  };
+};
+test('cadcraft.open_file reads the file, waits for the drawing to load, and returns the opened summary', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileCtx(new Uint8Array([1, 2]), wrapper);
+  const state = { opened: false };
+  const input = wrapper.document.getElementById('file');
+  const original = input.dispatchEvent;
+  input.dispatchEvent = event => { if (event?.type === 'change') state.opened = true; return original(event); };
+  ctx.craft = () => Promise.resolve({
+    inspect: () => (state.opened ? Promise.resolve({ entities: 3 }) : Promise.reject(Object.assign(new Error('no drawing open'), { code: 'app_error' }))),
+  });
+  const out = await byName('cadcraft.open_file').run({ path: '/CadCraft/plan.dxf' }, ctx);
+  assert.deepEqual(ctx.calls.read, ['/CadCraft/plan.dxf']);
+  assert.equal(wrapper.opened.length, 1);
+  assert.equal(wrapper.opened[0].name, 'plan.dxf');
+  assert.deepEqual(out, { name: 'plan.dxf', bytes: 2, opened: 'the app state changed' }); // threw before, loads after
+});
+
+test('cadcraft.save_copy takes the bytes inline from document.bytes and writes them', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileCtx(new Uint8Array([1]), wrapper);
+  const calls = [];
+  const b64 = Buffer.from([5, 4, 3, 2, 1]).toString('base64');
+  ctx.craft = () => Promise.resolve({
+    commands: () => Promise.resolve([]),
+    inspect: () => Promise.resolve({ title: 'Drawing1' }),
+    execute: (command, params) => { calls.push([command, params]); return Promise.resolve(command === 'document.bytes' ? { bytes: 5, data: b64 } : { command, params }); },
+  });
+  const out = await byName('cadcraft.save_copy').run({ path: '/CadCraft/plan.dxf' }, ctx);
+  assert.deepEqual(calls, [['document.bytes', {}]]); // the live inline route (lead live check)
+  assert.deepEqual(ctx.calls.write, [{ path: '/CadCraft/plan.dxf', size: 5, overwrite: false }]);
+  assert.deepEqual(out, { path: '/CadCraft/plan.dxf', name: 'Drawing1.dxf', size: 5, created: true });
+  assert.ok(!('note' in out)); // the inline path downloads nothing
+});
+
+test('cadcraft.save_copy refuses a .dwg target with the .dxf fix before any command runs', async () => {
+  const ctx = fileCtx(new Uint8Array([1]), fakeWrapper());
+  const calls = [];
+  ctx.craft = () => Promise.resolve({
+    commands: () => Promise.resolve([]),
+    inspect: () => Promise.resolve({ title: 'Drawing1' }),
+    execute: (command, params) => { calls.push([command, params]); return Promise.resolve({}); },
+  });
+  await assert.rejects(byName('cadcraft.save_copy').run({ path: '/CadCraft/plan.dwg' }, ctx), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.match(error.message, /CadCraft saves \.dxf files; it cannot write \.dwg here\./);
+    assert.equal(error.fix, callLine('cadcraft.save_copy', { path: '/CadCraft/plan.dxf' }));
+    return true;
+  });
+  assert.equal(calls.length, 0); // the pre-save guard refuses first (the web build cannot write DWG anyway)
+});
+
+test('cadcraft.save_copy is destructive only when overwrite is set', () => {
+  const tool = byName('cadcraft.save_copy');
+  assert.equal(tool.effect, 'change');
+  assert.equal(tool.effectFor({ overwrite: true }), 'destructive');
+  assert.equal(tool.effectFor({}), 'change');
+});
+
+test('cadcraft.save_copy with no drawing open surfaces the new_drawing teaching error', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileCtx(new Uint8Array([1]), wrapper);
+  ctx.craft = () => Promise.resolve({
+    commands: () => Promise.resolve([]),
+    inspect: () => Promise.resolve({ title: 'Drawing1' }),
+    execute: () => Promise.reject(Object.assign(new Error('no drawing open'), { code: 'app_error' })),
+  });
+  await assert.rejects(byName('cadcraft.save_copy').run({ path: '/CadCraft/plan.dxf' }, ctx), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'not_available');
+    assert.equal(error.message, 'CadCraft has no drawing open.');
+    assert.equal(error.fix, callLine('cadcraft.new_drawing'));
+    return true;
+  });
+});
+
 const { skills, errors: skillErrors } = parseSkills(SKILLS_MD, 'cadcraft');
 
-test('skills.md parses with the runtime parser without errors and has 8 skills', () => {
+test('skills.md parses with the runtime parser without errors and has 10 skills', () => {
   assert.deepEqual(skillErrors, []);
-  assert.equal(skills.length, 8);
+  assert.equal(skills.length, 10);
   for (const skill of skills) {
     assert.ok(skill.slug && skill.summary, `skill ${skill.slug} slug/summary`);
     assert.ok(skill.summary.length <= 160, `skill ${skill.slug} summary is ${skill.summary.length} chars`);

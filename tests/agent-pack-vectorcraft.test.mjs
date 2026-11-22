@@ -53,7 +53,7 @@ const runTool = (name, args, craft) => byName(name).run(args, { host: {}, craft:
 test('the pack declares its id, title and live-check exports', () => {
   assert.deepEqual(pack, { id: 'vectorcraft', title: 'VectorCraft' });
   assert.deepEqual(usesCommands.sort(), [
-    'command.batch', 'document.export', 'document.exportSelection', 'document.node', 'edit.redo', 'edit.undo',
+    'command.batch', 'document.export', 'document.exportSelection', 'document.node', 'document.serialize', 'edit.redo', 'edit.undo',
     'effect.apply', 'effect.list', 'file.new', 'graph.create', 'object.move', 'object.pathfinder.crop', 'object.pathfinder.divide',
     'object.pathfinder.exclude', 'object.pathfinder.intersect', 'object.pathfinder.merge', 'object.pathfinder.minusBack',
     'object.pathfinder.minusFront', 'object.pathfinder.outline', 'object.pathfinder.trim', 'object.pathfinder.unite',
@@ -64,13 +64,13 @@ test('the pack declares its id, title and live-check exports', () => {
   assert.deepEqual(usesMethods, ['document.inspect', 'ui.inspect', 'ui.tool.select', 'ui.key', 'ui.text', 'ui.set']);
 });
 
-test('the pack exposes exactly the 22 vectorcraft tools', () => {
-  assert.equal(tools.length, 22);
+test('the pack exposes exactly the 24 vectorcraft tools', () => {
+  assert.equal(tools.length, 24);
   assert.deepEqual(tools.map(tool => tool.name).sort(), [
     'vectorcraft.add_text', 'vectorcraft.apply_effect', 'vectorcraft.batch', 'vectorcraft.create_graph',
     'vectorcraft.draw_path', 'vectorcraft.draw_shape', 'vectorcraft.export', 'vectorcraft.inspect',
-    'vectorcraft.list_commands', 'vectorcraft.new_document', 'vectorcraft.open_panel', 'vectorcraft.pathfinder',
-    'vectorcraft.press_key', 'vectorcraft.redo', 'vectorcraft.run_command', 'vectorcraft.select_tool',
+    'vectorcraft.list_commands', 'vectorcraft.new_document', 'vectorcraft.open_file', 'vectorcraft.open_panel', 'vectorcraft.pathfinder',
+    'vectorcraft.press_key', 'vectorcraft.redo', 'vectorcraft.run_command', 'vectorcraft.save_copy', 'vectorcraft.select_tool',
     'vectorcraft.set_paint', 'vectorcraft.text_wrap', 'vectorcraft.transform', 'vectorcraft.type_text',
     'vectorcraft.ui_inspect', 'vectorcraft.undo',
   ]);
@@ -84,7 +84,8 @@ test('every tool has the required text fields, effect, needs and examples', () =
     // run_command lists the destructive ids in when (the model must see them).
     if (tool.name !== 'vectorcraft.run_command') assert.ok(tool.when.length <= 120, `${tool.name} when is ${tool.when.length} chars`);
     assert.ok(['read', 'change', 'destructive', 'external'].includes(tool.effect), `${tool.name} bad effect`);
-    assert.deepEqual(tool.needs, ['host', 'app:vectorcraft']);
+    const fileTools = ['vectorcraft.open_file', 'vectorcraft.save_copy'];
+    assert.deepEqual(tool.needs, fileTools.includes(tool.name) ? ['host', 'app:vectorcraft', 'files'] : ['host', 'app:vectorcraft']);
     assert.equal(typeof tool.run, 'function');
     assert.ok(tool.examples.length >= 1, `${tool.name} has examples`);
     for (const example of tool.examples) {
@@ -351,11 +352,119 @@ test('effectFor marks destructive command ids for run_command and batch', () => 
   assert.equal(batch.effectFor({ commands: ['shape.ellipse cx=0 cy=0 radius=1'] }), 'change');
 });
 
+// A fake wrapper window for the file tools: the #file input records the change dispatch
+// (openFromBytes drives it, app.mjs:38); VectorCraft is standalone, so the open rides the
+// bootstrap's openFile path (bootstrap.js:52-89) rather than the host bridge.
+const fakeWrapper = () => {
+  const opened = [];
+  const fileInput = { files: null, dispatchEvent: event => { if (event?.type === 'change') opened.push(fileInput.files?.[0] ?? null); } };
+  class DataTransfer {
+    constructor() { this._files = []; this.items = { add: file => this._files.push(file) }; }
+    get files() { return this._files; }
+  }
+  class File {
+    constructor(parts, name) { this.parts = parts; this.name = name; }
+  }
+  class Event {
+    constructor(type) { this.type = type; }
+  }
+  const editor = { contentWindow: {} };
+  const listeners = new Set();
+  return {
+    opened,
+    DataTransfer, File, Event,
+    document: { getElementById: id => (id === 'file' ? fileInput : id === 'editor' ? editor : null) },
+    location: { origin: 'https://pc.example' },
+    addEventListener: (type, fn) => { if (type === 'message') listeners.add(fn); },
+    removeEventListener: (type, fn) => { if (type === 'message') listeners.delete(fn); },
+    frame: editor.contentWindow,
+    fire: event => { for (const fn of [...listeners]) fn(event); },
+  };
+};
+const fileCtx = (bytes, wrapper) => {
+  const calls = { read: [], write: [] };
+  return {
+    calls,
+    host: { appWindow: async () => wrapper },
+    craft: () => Promise.resolve(fakeCraft()),
+    files: {
+      readBytes: path => { calls.read.push(path); return Promise.resolve({ path, name: 'poster.vectorcraft', bytes, size: bytes.byteLength }); },
+      writeBytes: (path, b, { overwrite } = {}) => { calls.write.push({ path, size: b.byteLength, overwrite }); return Promise.resolve({ path, size: b.byteLength, created: !overwrite }); },
+    },
+  };
+};
+
+test('vectorcraft.open_file reads the file, drives the wrapper input, and waits for the load', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileCtx(new Uint8Array([1, 2, 3]), wrapper);
+  const state = { document: 'Drawing' };
+  const input = wrapper.document.getElementById('file');
+  const original = input.dispatchEvent;
+  input.dispatchEvent = event => { if (event?.type === 'change') Object.assign(state, { title: 'poster.vectorcraft' }); return original(event); };
+  ctx.craft = () => Promise.resolve({ ...fakeCraft(), inspect: async () => state });
+  const out = await byName('vectorcraft.open_file').run({ path: '/VectorCraft/poster.vectorcraft' }, ctx);
+  assert.deepEqual(ctx.calls.read, ['/VectorCraft/poster.vectorcraft']);
+  assert.equal(wrapper.opened.length, 1);
+  assert.equal(wrapper.opened[0].name, 'poster.vectorcraft');
+  assert.deepEqual(out, { name: 'poster.vectorcraft', bytes: 3, opened: '"poster.vectorcraft"' });
+});
+
+test('vectorcraft.save_copy takes the bytes inline from document.serialize; the target base names the result', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileCtx(new Uint8Array([1, 2, 3]), wrapper);
+  const calls = [];
+  const b64 = Buffer.from([9, 8]).toString('base64');
+  ctx.craft = () => Promise.resolve({
+    ...fakeCraft(),
+    execute: (command, params) => { calls.push([command, params]); return Promise.resolve(command === 'document.serialize' ? { dataBase64: b64, warnings: [] } : { command, params }); },
+  });
+  const out1 = await byName('vectorcraft.save_copy').run({ path: '/VectorCraft/poster.vectorcraft' }, ctx);
+  const out2 = await byName('vectorcraft.save_copy').run({ path: '/VectorCraft/poster' }, ctx); // no extension: the default format
+  assert.deepEqual(calls, [['document.serialize', {}], ['document.serialize', {}]]);
+  assert.deepEqual(ctx.calls.write, [
+    { path: '/VectorCraft/poster.vectorcraft', size: 2, overwrite: false },
+    { path: '/VectorCraft/poster', size: 2, overwrite: false },
+  ]);
+  assert.deepEqual(out1, { path: '/VectorCraft/poster.vectorcraft', name: 'poster.vectorcraft', size: 2, created: true });
+  assert.deepEqual(out2, { path: '/VectorCraft/poster', name: 'poster.vectorcraft', size: 2, created: true });
+  assert.ok(!('note' in out1)); // the inline path downloads nothing
+});
+
+test('vectorcraft.save_copy picks the export format from the target extension', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileCtx(new Uint8Array([1, 2, 3]), wrapper);
+  const calls = [];
+  const b64 = Buffer.from([9, 8]).toString('base64');
+  ctx.craft = () => Promise.resolve({
+    ...fakeCraft(),
+    execute: (command, params) => { calls.push([command, params]); return Promise.resolve(command === 'document.serialize' ? { dataBase64: b64, text: '<svg/>' } : { command, params }); },
+  });
+  const out = await byName('vectorcraft.save_copy').run({ path: '/VectorCraft/poster.svg' }, ctx);
+  assert.deepEqual(calls, [['document.serialize', { format: 'svg' }]]); // the extension picks the format
+  assert.deepEqual(ctx.calls.write, [{ path: '/VectorCraft/poster.svg', size: 2, overwrite: false }]);
+  assert.deepEqual(out, { path: '/VectorCraft/poster.svg', name: 'poster.svg', size: 2, created: true });
+});
+
+test('vectorcraft.save_copy refuses an extension the app cannot serialize, with the .vectorcraft fix', async () => {
+  const ctx = fileCtx(new Uint8Array([1]), fakeWrapper());
+  const calls = [];
+  ctx.craft = () => Promise.resolve({ ...fakeCraft(), execute: (command, params) => { calls.push([command, params]); return Promise.resolve({ dataBase64: Buffer.from([9]).toString('base64') }); } });
+  await assert.rejects(byName('vectorcraft.save_copy').run({ path: '/VectorCraft/poster.drawcraft' }, ctx), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.match(error.message, /VectorCraft saves \.vectorcraft and its export formats .* it cannot write \.drawcraft\./);
+    assert.equal(error.fix, callLine('vectorcraft.save_copy', { path: '/VectorCraft/poster.vectorcraft' }));
+    return true;
+  });
+  assert.equal(calls.length, 0); // the extension check runs before the serialize call
+  assert.equal(ctx.calls.write.length, 0);
+});
+
 const { skills, errors: skillErrors } = parseSkills(SKILLS_MD, 'vectorcraft');
 
-test('skills.md parses with the runtime parser without errors and has 8 skills', () => {
+test('skills.md parses with the runtime parser without errors and has 10 skills', () => {
   assert.deepEqual(skillErrors, []);
-  assert.equal(skills.length, 8);
+  assert.equal(skills.length, 10);
   for (const skill of skills) {
     assert.ok(skill.slug && skill.summary, `skill ${skill.slug} slug/summary`);
     assert.ok(skill.summary.length <= 160, `skill ${skill.slug} summary is ${skill.summary.length} chars`);

@@ -108,3 +108,29 @@ Steps:
 2. call_tool tool=deckcraft.batch commands="slide.new layout=title title=Q1, go_to_slide index=1"
 Check: deckcraft.inspect lists the new slide and the current one.
 Gotchas: each batch item is the command id then key=value tokens without spaces in values; keepGoing=true continues past a failing step.
+
+## Open a presentation from Files
+slug: open-a-presentation-from-files
+summary: Open a presentation that is stored in Files in DeckCraft.
+keywords: open, load, from files, deck, pptx, presentation
+tools: desktop.open_app, deckcraft.open_file
+
+When: the user wants to open a presentation that is stored in Files.
+Steps:
+1. call_tool tool=desktop.open_app app=deckcraft
+2. call_tool tool=deckcraft.open_file path=/DeckCraft/talk.pptx
+Check: the result's opened field names the deck and its slide count; deckcraft.inspect shows the opened presentation.
+Gotchas: change path= to the Files path of a deck (.deckcraft, .pptx, .potx, .ppsx, or an outline); the deck opens alongside the open ones; while the open deck has unsaved changes the app asks first whether to keep them.
+
+## Save a copy of the deck to Files
+slug: save-a-deck-copy-to-files
+summary: Save the active presentation as a file in Files.
+keywords: save, copy, to files, export, keep, pptx, write
+tools: desktop.open_app, deckcraft.save_copy
+
+When: the user wants to keep a copy of the active presentation in Files.
+Steps:
+1. call_tool tool=desktop.open_app app=deckcraft
+2. call_tool tool=deckcraft.save_copy path=/DeckCraft/talk.deckcraft
+Check: the result has the saved Files path and size; files.info on that path shows the same size.
+Gotchas: change path=; DeckCraft saves its own .deckcraft format, so a .pptx (or other) target is refused with the .deckcraft path as the fix; if the path exists the tool errors, so choose another name or pass overwrite=true (which is destructive); when the app saves through the capture path it also downloads the file, and the result says so.

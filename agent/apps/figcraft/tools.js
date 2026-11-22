@@ -3,6 +3,8 @@
 // which the runtime wires as id => craftApi(await ctx.host.appWindow(id), id) (plan 9).
 import { ToolError, callLine, closest } from '../../../src/apps/ai-agent/runtime/args.mjs';
 import { teachApp } from '../../shared/craft.js';
+import { filesCall, openAndAwait, saveBytesCopy } from '../../shared/craft-files.js';
+import { releases } from '../../../scripts/pc/craft/releases.mjs';
 
 const APP = 'figcraft';
 const NEEDS = ['host', 'app:figcraft'];
@@ -334,6 +336,58 @@ export const tools = [
     // tools.rs:577 ui.inspect
     run: async (args, ctx) => (await ctx.craft(APP)).request('ui.inspect', {}),
   },
+  {
+    name: 'figcraft.open_file',
+    purpose: 'Open a FigCraft document from Files.',
+    when: 'Use when the user wants to open a FigCraft document stored in Files.',
+    params: { path: { type: 'path', required: true, description: 'The Files path of the document, e.g. /FigCraft/app.figcraft' } },
+    effect: 'change',
+    needs: ['host', 'app:figcraft', 'files'],
+    examples: [{ args: { path: '/FigCraft/app.figcraft' }, says: 'Open the app design from Files' }],
+    // Drives the wrapper's own #file input (app.mjs:38), so the open posts from the wrapper
+    // realm, as the page's host bridge requires (craft-libs web-host web.rs:106). The
+    // document opens alongside the open ones (the engine holds a document list), so a
+    // change. openAndAwait waits until the page's docInspect changes, so the result
+    // confirms the document loaded.
+    run: async (args, ctx) => {
+      const file = await filesCall(ctx, files => files.readBytes(args.path));
+      const wrapper = await ctx.host.appWindow(APP);
+      const craft = await ctx.craft(APP);
+      return openAndAwait(craft, { id: APP, title: 'FigCraft', wrapperWindow: wrapper, name: file.name, bytes: file.bytes, accept: releases[APP].accept });
+    },
+  },
+  {
+    name: 'figcraft.save_copy',
+    purpose: 'Save the active FigCraft document as a file in Files.',
+    when: 'Use when the user wants to keep a copy of the design in Files.',
+    params: {
+      path: { type: 'path', required: true, description: 'The Files path to write the copy to, e.g. /FigCraft/app.figcraft' },
+      overwrite: { type: 'boolean', description: 'Replace the file when the path already exists; false when omitted' },
+    },
+    effect: 'change',
+    effectFor: args => (args.overwrite ? 'destructive' : 'change'),
+    needs: ['host', 'app:figcraft', 'files'],
+    examples: [{ args: { path: '/FigCraft/app.figcraft' }, says: 'Save a copy of the design to Files' }],
+    // No path is ever passed (the browser has no file system). file.saveAs {data: true}
+    // answers with the bytes inline (engine cmd/file/save.rs save_to None: {name, bytes,
+    // data}); the channel returns that result, and the page's download path (ui-egui
+    // app/files.rs:42-49) is a UI-only route, so nothing downloads. The bytes are the
+    // native .figcraft format, so a target with another extension is refused with a fix.
+    run: async (args, ctx) => {
+      const wrapper = await ctx.host.appWindow(APP);
+      const app = teachApp(await ctx.craft(APP), NO_DOC.message, NO_DOC.fix);
+      const save = await saveBytesCopy(app, {
+        id: APP, title: 'FigCraft', wrapperWindow: wrapper, target: args.path,
+        tool: 'figcraft.save_copy', nativeExt: '.figcraft', inlineCommand: { command: 'file.saveAs', params: { data: true } },
+      });
+      const written = await filesCall(
+        ctx,
+        files => files.writeBytes(args.path, save.bytes, { overwrite: Boolean(args.overwrite) }),
+        error => (error.code === 'exists' ? callLine('figcraft.save_copy', { path: args.path, overwrite: true }) : ''),
+      );
+      return { path: written.path, name: save.name, size: written.size, created: written.created, ...(save.note ? { note: save.note } : {}) };
+    },
+  },
 ];
 
 // Live-check exports (brief): every command id the curated tools pass to execute,
@@ -341,6 +395,6 @@ export const tools = [
 // arbitrary ids from the live commands() list.
 export const usesCommands = [
   'command.batch', 'file.new', 'node.create', 'node.set', 'file.export', 'edit.undo', 'edit.redo',
-  'text.edit.begin', 'text.edit.end', 'select.set', 'select.none',
+  'text.edit.begin', 'text.edit.end', 'select.set', 'select.none', 'file.saveAs',
 ];
 export const usesMethods = ['node.get', 'document.inspect', 'ui.key', 'ui.type', 'ui.inspect'];

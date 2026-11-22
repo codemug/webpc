@@ -50,19 +50,19 @@ test('the pack declares its id, title and live-check exports', () => {
   assert.deepEqual(pack, { id: 'filmcraft', title: 'FilmCraft' });
   assert.deepEqual(usesCommands.sort(), [
     'effects.apply', 'effects.list', 'edit.redo', 'edit.undo', 'file.newBin', 'file.newProject',
-    'file.openDemoProject', 'playhead.set', 'project.inspect', 'sequence.addEdit', 'sequence.inspect',
+    'file.openDemoProject', 'file.save', 'playhead.set', 'project.inspect', 'sequence.addEdit', 'sequence.inspect',
     'timeline.move', 'timeline.place', 'timeline.razor',
   ].sort());
   assert.deepEqual(usesMethods, []);
 });
 
-test('the pack exposes exactly the 18 filmcraft tools', () => {
-  assert.equal(tools.length, 18);
+test('the pack exposes exactly the 20 filmcraft tools', () => {
+  assert.equal(tools.length, 20);
   assert.deepEqual(tools.map(tool => tool.name).sort(), [
     'filmcraft.add_edit', 'filmcraft.apply_effect', 'filmcraft.batch', 'filmcraft.inspect',
     'filmcraft.list_commands', 'filmcraft.move', 'filmcraft.new_bin', 'filmcraft.new_project',
-    'filmcraft.open_demo', 'filmcraft.place', 'filmcraft.playhead', 'filmcraft.project_inspect',
-    'filmcraft.razor', 'filmcraft.redo', 'filmcraft.run_command', 'filmcraft.sequence_inspect',
+    'filmcraft.open_demo', 'filmcraft.open_file', 'filmcraft.place', 'filmcraft.playhead', 'filmcraft.project_inspect',
+    'filmcraft.razor', 'filmcraft.redo', 'filmcraft.run_command', 'filmcraft.save_copy', 'filmcraft.sequence_inspect',
     'filmcraft.ui_inspect', 'filmcraft.undo',
   ]);
 });
@@ -75,7 +75,8 @@ test('every tool has the required text fields, effect, needs and examples', () =
     // run_command lists the destructive ids in when (the model must see them).
     if (tool.name !== 'filmcraft.run_command') assert.ok(tool.when.length <= 120, `${tool.name} when is ${tool.when.length} chars`);
     assert.ok(['read', 'change', 'destructive', 'external'].includes(tool.effect), `${tool.name} bad effect`);
-    assert.deepEqual(tool.needs, ['host', 'app:filmcraft']);
+    const fileTools = ['filmcraft.open_file', 'filmcraft.save_copy'];
+    assert.deepEqual(tool.needs, fileTools.includes(tool.name) ? ['host', 'app:filmcraft', 'files'] : ['host', 'app:filmcraft']);
     assert.equal(typeof tool.run, 'function');
     assert.ok(tool.examples.length >= 1, `${tool.name} has examples`);
     for (const example of tool.examples) {
@@ -102,7 +103,7 @@ test('the effects are read for the four reads, destructive for project replaceme
   for (const name of ['filmcraft.inspect', 'filmcraft.project_inspect', 'filmcraft.sequence_inspect', 'filmcraft.ui_inspect', 'filmcraft.list_commands']) {
     assert.equal(byName(name).effect, 'read', name);
   }
-  for (const name of ['filmcraft.new_project', 'filmcraft.open_demo']) assert.equal(byName(name).effect, 'destructive', name);
+  for (const name of ['filmcraft.new_project', 'filmcraft.open_demo', 'filmcraft.open_file']) assert.equal(byName(name).effect, 'destructive', name);
   for (const tool of tools) {
     if (!['read', 'destructive'].includes(tool.effect)) assert.equal(tool.effect, 'change', tool.name);
   }
@@ -293,11 +294,107 @@ test('effectFor marks destructive command ids for run_command and batch', () => 
   assert.equal(batch.effectFor({ commands: ['playhead.set seconds=1'] }), 'change');
 });
 
+// A fake wrapper window for the file tools: the #file input records the change dispatch
+// (openFromBytes drives it, app.mjs:38); message listeners are stored so a test can fire
+// the <id>:save event the wrapper would hear from the editor frame.
+const fakeWrapper = () => {
+  const opened = [];
+  const fileInput = { files: null, dispatchEvent: event => { if (event?.type === 'change') opened.push(fileInput.files?.[0] ?? null); } };
+  class DataTransfer {
+    constructor() { this._files = []; this.items = { add: file => this._files.push(file) }; }
+    get files() { return this._files; }
+  }
+  class File {
+    constructor(parts, name) { this.parts = parts; this.name = name; }
+  }
+  class Event {
+    constructor(type) { this.type = type; }
+  }
+  const editor = { contentWindow: {} };
+  const listeners = new Set();
+  return {
+    opened,
+    DataTransfer, File, Event,
+    document: { getElementById: id => (id === 'file' ? fileInput : id === 'editor' ? editor : null) },
+    location: { origin: 'https://pc.example' },
+    addEventListener: (type, fn) => { if (type === 'message') listeners.add(fn); },
+    removeEventListener: (type, fn) => { if (type === 'message') listeners.delete(fn); },
+    frame: editor.contentWindow,
+    fire: event => { for (const fn of [...listeners]) fn(event); },
+  };
+};
+// A ctx with the file tools' needs met: host.appWindow resolves to the fake wrapper and
+// files records readBytes/writeBytes calls.
+const fileCtx = (bytes, wrapper) => {
+  const calls = { read: [], write: [] };
+  return {
+    calls,
+    host: { appWindow: async () => wrapper },
+    craft: () => Promise.resolve(fakeCraft()),
+    files: {
+      readBytes: path => { calls.read.push(path); return Promise.resolve({ path, name: 'talk.fcproj', bytes, size: bytes.byteLength }); },
+      writeBytes: (path, b, { overwrite } = {}) => { calls.write.push({ path, size: b.byteLength, overwrite }); return Promise.resolve({ path, size: b.byteLength, created: !overwrite }); },
+    },
+  };
+};
+
+test('filmcraft.open_file reads the file, drives the wrapper input, and waits for the load', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileCtx(new Uint8Array([1, 2, 3]), wrapper);
+  const state = { project: { name: 'Old' } };
+  const input = wrapper.document.getElementById('file');
+  const original = input.dispatchEvent;
+  input.dispatchEvent = event => { if (event?.type === 'change') state.project.name = 'talk'; return original(event); };
+  ctx.craft = () => Promise.resolve({ ...fakeCraft(), inspect: async () => state });
+  const out = await byName('filmcraft.open_file').run({ path: '/FilmCraft/talk.fcproj' }, ctx);
+  assert.deepEqual(ctx.calls.read, ['/FilmCraft/talk.fcproj']);
+  assert.equal(wrapper.opened.length, 1);
+  assert.equal(wrapper.opened[0].name, 'talk.fcproj');
+  assert.deepEqual(out, { name: 'talk.fcproj', bytes: 3, opened: 'the app state changed' });
+  assert.equal(byName('filmcraft.open_file').effect, 'destructive'); // a project open replaces the open one
+});
+
+test('filmcraft.save_copy triggers the no-path file.save and captures the filmcraft:save bytes', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileCtx(new Uint8Array([1, 2, 3]), wrapper);
+  const calls = [];
+  ctx.craft = () => Promise.resolve({
+    ...fakeCraft(),
+    commands: async () => [{ id: 'file.save' }],
+    execute: (command, params) => {
+      calls.push([command, params]);
+      wrapper.fire({ origin: 'https://pc.example', source: wrapper.frame, data: { type: 'filmcraft:save', name: 'talk.fcproj', bytes: new Uint8Array([4, 5]) } });
+      return { command, params };
+    },
+  });
+  const out = await byName('filmcraft.save_copy').run({ path: '/FilmCraft/talk.fcproj' }, ctx);
+  assert.deepEqual(calls, [['file.save', {}]]); // the no-path trigger (s.path after an open)
+  assert.deepEqual(ctx.calls.write, [{ path: '/FilmCraft/talk.fcproj', size: 2, overwrite: false }]);
+  assert.deepEqual(out, { path: '/FilmCraft/talk.fcproj', name: 'talk.fcproj', size: 2, created: true, note: 'the app also downloaded the file in the browser' });
+});
+
+test('filmcraft.save_copy passes overwrite through and refuses a foreign target extension', async () => {
+  const ctx = fileCtx(new Uint8Array([1]), fakeWrapper());
+  const tool = byName('filmcraft.save_copy');
+  assert.equal(tool.effect, 'change');
+  assert.equal(tool.effectFor({ overwrite: true }), 'destructive');
+  assert.equal(tool.effectFor({}), 'change');
+  ctx.craft = () => Promise.resolve({ ...fakeCraft(), commands: async () => [{ id: 'file.save' }], execute: async () => ({}) });
+  await assert.rejects(byName('filmcraft.save_copy').run({ path: '/FilmCraft/talk.mp4' }, ctx), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.match(error.message, /FilmCraft saves \.fcproj files; it cannot write \.mp4 here\./);
+    assert.equal(error.fix, callLine('filmcraft.save_copy', { path: '/FilmCraft/talk.fcproj' }));
+    return true;
+  });
+  assert.equal(ctx.calls.write.length, 0);
+});
+
 const { skills, errors: skillErrors } = parseSkills(SKILLS_MD, 'filmcraft');
 
-test('skills.md parses with the runtime parser without errors and has 8 skills', () => {
+test('skills.md parses with the runtime parser without errors and has 10 skills', () => {
   assert.deepEqual(skillErrors, []);
-  assert.equal(skills.length, 8);
+  assert.equal(skills.length, 10);
   for (const skill of skills) {
     assert.ok(skill.slug && skill.summary, `skill ${skill.slug} slug/summary`);
     assert.ok(skill.summary.length <= 160, `skill ${skill.slug} summary is ${skill.summary.length} chars`);

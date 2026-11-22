@@ -106,3 +106,28 @@ Steps:
 3. call_tool tool=filmcraft.run_command command=playhead.set params=seconds=2
 Check: filmcraft.sequence_inspect shows the action took effect.
 Gotchas: run_command takes key=value lines in params= (a [ ... ] or { ... } value is JSON); file.newProject, project.delete, sequence.lift and the markers.clear ids are destructive, so ask the user first.
+## Open a project or media from Files
+slug: open-a-project-from-files
+summary: Open a .fcproj project or import media that is stored in Files.
+keywords: open, load, from files, fcproj, project, import, media
+tools: desktop.open_app, filmcraft.open_file
+
+When: the user wants to open a project or import media that is stored in Files.
+Steps:
+1. call_tool tool=desktop.open_app app=filmcraft
+2. call_tool tool=filmcraft.open_file path=/FilmCraft/talk.fcproj
+Check: the result has an opened field confirming the load; filmcraft.inspect shows the open project.
+Gotchas: change path= to a .fcproj project or media (video, audio, image); opening a project replaces the open one, so ask the user first if the current project has unsaved work.
+
+## Save a copy of the project to Files
+slug: save-a-project-copy-to-files
+summary: Save the active FilmCraft project as a .fcproj file in Files.
+keywords: save, copy, to files, fcproj, export, keep, write
+tools: desktop.open_app, filmcraft.save_copy
+
+When: the user wants to keep a copy of the active project in Files.
+Steps:
+1. call_tool tool=desktop.open_app app=filmcraft
+2. call_tool tool=filmcraft.save_copy path=/FilmCraft/talk.fcproj
+Check: the result has the saved Files path and size; files.info on that path shows the same size.
+Gotchas: change path=; FilmCraft saves .fcproj files, so a target with another extension is refused with the .fcproj path as the fix; if the path exists the tool errors, so choose another name or pass overwrite=true (which is destructive); a fresh project with no saved path yet makes the app refuse the save.

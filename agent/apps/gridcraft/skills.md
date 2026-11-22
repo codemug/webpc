@@ -130,3 +130,29 @@ Steps:
 3. call_tool tool=gridcraft.run_command command=home.borders params=range=A1:C1
 Check: gridcraft.read_range or gridcraft.inspect shows the action took effect.
 Gotchas: run_command takes key=value lines in params=; ids starting with file.new, file.close, sheet.delete or edit.clear are destructive, so ask the user first.
+
+## Open a workbook from Files
+slug: open-a-workbook-from-files
+summary: Open a workbook that is stored in Files in GridCraft.
+keywords: open, load, from files, workbook, xlsx, import file
+tools: desktop.open_app, gridcraft.open_file
+
+When: the user wants to open a workbook that is stored in Files.
+Steps:
+1. call_tool tool=desktop.open_app app=gridcraft
+2. call_tool tool=gridcraft.open_file path=/GridCraft/budget.xlsx
+Check: the result's opened field names the workbook and its sheets; gridcraft.inspect shows the opened workbook.
+Gotchas: change path= to the Files path of a workbook (xlsx, xlsm, xls, ods, csv, tsv, txt, json); the workbook opens alongside the open ones; while the open workbook has unsaved changes the app asks first whether to keep them.
+
+## Save a copy of the workbook to Files
+slug: save-a-workbook-copy-to-files
+summary: Save the active workbook as a file in Files.
+keywords: save, copy, to files, export, keep, xlsx, write
+tools: desktop.open_app, gridcraft.save_copy
+
+When: the user wants to keep a copy of the active workbook in Files.
+Steps:
+1. call_tool tool=desktop.open_app app=gridcraft
+2. call_tool tool=gridcraft.save_copy path=/GridCraft/budget.xlsx
+Check: the result has the saved Files path and size; files.info on that path shows the same size.
+Gotchas: change path=; GridCraft saves .xlsx files, so a target with another extension is refused with the .xlsx path as the fix; if the path exists the tool errors, so choose another name or pass overwrite=true (which is destructive); when the app saves through the capture path it also downloads the file, and the result says so.

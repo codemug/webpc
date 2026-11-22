@@ -107,3 +107,29 @@ Steps:
 3. call_tool tool=cadcraft.run_command command=zoom params=mode=extents
 Check: cadcraft.inspect shows the new view extents.
 Gotchas: run_command takes key=value lines in params=; the command new replaces the drawing, so ask the user before running it.
+
+## Open a drawing from Files
+slug: open-a-drawing-from-files
+summary: Open a drawing that is stored in Files in CADCraft.
+keywords: open, load, from files, drawing, dxf, plan
+tools: desktop.open_app, cadcraft.open_file
+
+When: the user wants to open a drawing that is stored in Files.
+Steps:
+1. call_tool tool=desktop.open_app app=cadcraft
+2. call_tool tool=cadcraft.open_file path=/CadCraft/plan.dxf
+Check: the result's opened field confirms the drawing loaded; cadcraft.inspect shows the opened drawing.
+Gotchas: change path= to the Files path of a drawing (.dxf); the drawing opens alongside the open ones; while the open drawing has unsaved changes the app asks first whether to keep them.
+
+## Save a copy of the drawing to Files
+slug: save-a-drawing-copy-to-files
+summary: Save the active drawing as a file in Files.
+keywords: save, copy, to files, export, keep, dxf, write
+tools: desktop.open_app, cadcraft.save_copy
+
+When: the user wants to keep a copy of the active drawing in Files.
+Steps:
+1. call_tool tool=desktop.open_app app=cadcraft
+2. call_tool tool=cadcraft.save_copy path=/CadCraft/plan.dxf
+Check: the result has the saved Files path and size; files.info on that path shows the same size.
+Gotchas: change path=; CADCraft saves .dxf files, so a .dwg target is refused with the .dxf path as the fix (the web build cannot write DWG); if the path exists the tool errors, so choose another name or pass overwrite=true (which is destructive); with no drawing open the tool says so and the fix is cadcraft.new_drawing.

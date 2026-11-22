@@ -106,3 +106,15 @@ Steps:
 2. call_tool tool=lightcraft.run_command command=album.setCover params="id=2 photo=9"
 Check: lightcraft.library_info or the app UI shows the action took effect.
 Gotchas: params= takes key=value lines or a JSON object; the page has no command list, so the id must come from the app's menus (e.g. preset.apply, mask.invert, version.create); photo.delete, preset.delete and develop.reset are destructive, so ask the user first.
+## Import a photo from Files
+slug: import-a-photo-from-files
+summary: Add a photo that is stored in Files to the LightCraft library.
+keywords: import, add, from files, photo, library, cr2, raw, load
+tools: desktop.open_app, lightcraft.import_file
+
+When: the user wants to add a photo stored in Files to the LightCraft library.
+Steps:
+1. call_tool tool=desktop.open_app app=lightcraft
+2. call_tool tool=lightcraft.import_file path=/Photos/trip/IMG_0001.cr2
+Check: lightcraft.library_info shows one more photo in the library.
+Gotchas: change path= to a photo the app can read (image, dng, nef, cr2, arw, raf, orf, rw2); LightCraft has a library, not documents, so there is no save copy; a file too large to open is refused and the reason shows in the app status line.

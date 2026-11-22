@@ -3,6 +3,8 @@
 // which the runtime wires as id => craftApi(await ctx.host.appWindow(id), id) (plan 9).
 import { ToolError, callLine, closest } from '../../../src/apps/ai-agent/runtime/args.mjs';
 import { teachApp } from '../../shared/craft.js';
+import { filesCall, openAndAwait, saveBytesCopy } from '../../shared/craft-files.js';
+import { releases } from '../../../scripts/pc/craft/releases.mjs';
 
 const APP = 'pdfcraft';
 const NEEDS = ['host', 'app:pdfcraft'];
@@ -56,14 +58,16 @@ export const tools = [
   },
   {
     name: 'pdfcraft.doc_info',
-    purpose: 'Show document metadata, pages, bookmarks, fields, fonts, security.',
-    when: 'Use when the user asks what is in the document or its page count.',
-    params: { doc: DOC },
+    purpose: 'Show the open document: its state, page, zoom and mode.',
+    when: 'Use when the user asks what is in the open document or which page it shows.',
+    params: {},
     effect: 'read',
     needs: NEEDS,
     examples: [{ args: {}, says: 'How many pages does this PDF have?' }],
-    // tools.rs:190-193 doc_info, ro, engine command file.properties
-    run: async (args, ctx) => teachApp(await ctx.craft(APP), NO_DOC.message, NO_DOC.fix).execute('file.properties', pick(args, ['doc'])),
+    // The live file.properties opens the Properties dialog and returns only
+    // {"ran":"file.properties"} (lead live check), so the info comes from the page's
+    // docInspect (ui.state, the same source as doc_inspect) instead.
+    run: async (args, ctx) => (await ctx.craft(APP)).inspect(),
   },
   {
     name: 'pdfcraft.text_word_count',
@@ -323,13 +327,66 @@ export const tools = [
       return app.execute(args.command, parseParams(args.params));
     },
   },
+  {
+    name: 'pdfcraft.open_file',
+    purpose: 'Open a PDF from Files in PdfCraft.',
+    when: 'Use when the user wants to open a PDF that is stored in Files.',
+    params: { path: { type: 'path', required: true, description: 'The Files path of the PDF, e.g. /PDFCraft/contract.pdf' } },
+    effect: 'change',
+    needs: ['host', 'app:pdfcraft', 'files'],
+    examples: [{ args: { path: '/PDFCraft/contract.pdf' }, says: 'Open the contract PDF from Files' }],
+    // Drives the wrapper's own #file input (app.mjs:38), so the open posts from the wrapper
+    // realm, as the app's host bridge requires (craft-libs web-host web.rs:106). The PDF opens
+    // as a new tab alongside the open ones (ui-egui app tabs), so a change; the wrapper's own
+    // unsaved-changes confirm still applies (app.mjs:35). openAndAwait waits until the app's
+    // inspect changes, so the result confirms the PDF actually loaded.
+    run: async (args, ctx) => {
+      const file = await filesCall(ctx, files => files.readBytes(args.path));
+      const wrapper = await ctx.host.appWindow(APP);
+      const craft = await ctx.craft(APP);
+      return openAndAwait(craft, { id: APP, title: 'PDFCraft', wrapperWindow: wrapper, name: file.name, bytes: file.bytes, accept: releases[APP].accept });
+    },
+  },
+  {
+    name: 'pdfcraft.save_copy',
+    purpose: 'Save the open PDF as a file in Files.',
+    when: 'Use when the user wants to keep a copy of the open PDF in Files.',
+    params: {
+      path: { type: 'path', required: true, description: 'The Files path to write the copy to, e.g. /PDFCraft/contract.pdf' },
+      overwrite: { type: 'boolean', description: 'Replace the file when the path already exists; false when omitted' },
+    },
+    effect: 'change',
+    effectFor: args => (args.overwrite ? 'destructive' : 'change'),
+    needs: ['host', 'app:pdfcraft', 'files'],
+    examples: [{ args: { path: '/PDFCraft/contract.pdf' }, says: 'Save a copy of the PDF to Files' }],
+    // No path is ever passed (the browser has no file system). PDFCraft has no file.saveBytes,
+    // so saveBytesCopy starts file.save with no path (InPlace, ui-egui commands.rs) and
+    // captures the bytes from the pdfcraft:save message the wrapper receives (app.mjs:29-33);
+    // the wrapper also downloads the file, and the result says so. InPlace saves under the
+    // name the PDF was opened with (native .pdf), so a target with another extension is
+    // refused with a fix. teachApp turns a no-document rejection into the teaching error.
+    run: async (args, ctx) => {
+      const wrapper = await ctx.host.appWindow(APP);
+      const craft = teachApp(await ctx.craft(APP), NO_DOC.message, NO_DOC.fix);
+      const save = await saveBytesCopy(craft, {
+        id: APP, title: 'PDFCraft', wrapperWindow: wrapper, target: args.path,
+        tool: 'pdfcraft.save_copy', nativeExt: '.pdf',
+      });
+      const written = await filesCall(
+        ctx,
+        files => files.writeBytes(args.path, save.bytes, { overwrite: Boolean(args.overwrite) }),
+        error => (error.code === 'exists' ? callLine('pdfcraft.save_copy', { path: args.path, overwrite: true }) : ''),
+      );
+      return { path: written.path, name: save.name, size: written.size, created: written.created, ...(save.note ? { note: save.note } : {}) };
+    },
+  },
 ];
 
 // Live-check exports (brief): every command id the curated tools pass to execute.
 // Nothing passes through the request() path (doc_inspect uses inspect()), so
 // usesMethods is empty. run_command also passes arbitrary ids from the live list.
 export const usesCommands = [
-  'file.properties', 'file.word_count', 'edit.find', 'edit.replace', 'page.rotate', 'page.reverse',
+  'file.word_count', 'edit.find', 'edit.replace', 'page.rotate', 'page.reverse',
   'page.insert_blank', 'page.duplicate', 'edit.text', 'edit.link', 'edit.undo', 'edit.redo',
   'page.delete', 'file.close', 'file.save',
 ];

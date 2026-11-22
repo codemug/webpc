@@ -8,6 +8,7 @@
 // The tools run in Buddy's frame and read the page straight off the app window (no shared
 // craft adapter: the page has no request/execute/commands surface).
 import { ToolError } from '../../../src/apps/ai-agent/runtime/args.mjs';
+import { filesCall, openFromBytes } from '../../shared/craft-files.js';
 
 const APP = 'lightcraft';
 const NEEDS = ['host', 'app:lightcraft'];
@@ -250,6 +251,26 @@ export const tools = [
     // web.rs:824 command(id, paramsText): the page has no command list, so the id is not
     // checked against one; the page refuses bad params with its own error
     run: async (args, ctx) => command(ctx.host, args.command, parseCommandParams(args.params)),
+  },
+  {
+    name: 'lightcraft.import_file',
+    purpose: 'Import a photo from Files into the LightCraft library.',
+    when: 'Use when the user wants to add a photo stored in Files to the LightCraft library.',
+    params: { path: { type: 'path', required: true, description: 'The Files path of the photo, e.g. /Photos/trip/IMG_0001.cr2' } },
+    effect: 'change',
+    needs: ['host', 'app:lightcraft', 'files'],
+    examples: [{ args: { path: '/Photos/trip/IMG_0001.cr2' }, says: 'Add this photo to the library' }],
+    // LightCraft only imports (it has a library, not documents), so it gets import_file and no
+    // save_copy. Drives the wrapper's own #file input (app.mjs:38); the wrapper posts
+    // lightcraft:open, which the page's host bridge adds to the library as one dropped on the
+    // window (apps/lightcraft-web/src/host.rs Incoming::Open, web.rs run_host). The page has no
+    // inspect, so the result carries no opened field; a refused open (too large) posts
+    // lightcraft:failed to the wrapper's #error line.
+    run: async (args, ctx) => {
+      const file = await filesCall(ctx, files => files.readBytes(args.path));
+      const wrapper = await ctx.host.appWindow(APP);
+      return openFromBytes(wrapper, APP, file.name, file.bytes);
+    },
   },
 ];
 

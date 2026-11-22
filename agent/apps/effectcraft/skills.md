@@ -105,3 +105,28 @@ Steps:
 3. call_tool tool=effectcraft.run_command command=layer.newText params=name=Title
 Check: effectcraft.comp or effectcraft.inspect shows the action took effect.
 Gotchas: run_command takes key=value lines in params= (a [ ... ] or { ... } value is JSON); command_describe is the registry query command.describe, reachable as run_command command=command.describe; track.delete, edit.purge and file.close are destructive, so ask the user first.
+## Open a project or media from Files
+slug: open-a-project-from-files
+summary: Open an .ecproj project or import media that is stored in Files.
+keywords: open, load, from files, ecproj, project, import, media
+tools: desktop.open_app, effectcraft.open_file
+
+When: the user wants to open a project or import media that is stored in Files.
+Steps:
+1. call_tool tool=desktop.open_app app=effectcraft
+2. call_tool tool=effectcraft.open_file path=/EffectCraft/ad.ecproj
+Check: the result has an opened field confirming the load; effectcraft.project or effectcraft.inspect shows the open project.
+Gotchas: change path= to an .ecproj project or media (video, audio, image); opening a project replaces the open one, so ask the user first if the current project has unsaved work.
+
+## Save a copy of the project to Files
+slug: save-a-project-copy-to-files
+summary: Save the active EffectCraft project as a .ecproj file in Files.
+keywords: save, copy, to files, ecproj, export, keep, write
+tools: desktop.open_app, effectcraft.save_copy
+
+When: the user wants to keep a copy of the active project in Files.
+Steps:
+1. call_tool tool=desktop.open_app app=effectcraft
+2. call_tool tool=effectcraft.save_copy path=/EffectCraft/ad.ecproj
+Check: the result has the saved Files path and size; files.info on that path shows the same size.
+Gotchas: change path=; EffectCraft saves .ecproj files, so a target with another extension is refused with the .ecproj path as the fix; if the path exists the tool errors, so choose another name or pass overwrite=true (which is destructive); a fresh project with no saved path yet makes the app refuse the save.

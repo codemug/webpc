@@ -3,6 +3,8 @@
 // which the runtime wires as id => craftApi(await ctx.host.appWindow(id), id) (plan 9).
 import { ToolError, callLine, closest } from '../../../src/apps/ai-agent/runtime/args.mjs';
 import { teachApp } from '../../shared/craft.js';
+import { filesCall, openAndAwait, saveBytesCopy } from '../../shared/craft-files.js';
+import { releases } from '../../../scripts/pc/craft/releases.mjs';
 
 const APP = 'cadcraft';
 const NEEDS = ['host', 'app:cadcraft'];
@@ -195,10 +197,65 @@ export const tools = [
       return app.execute(args.command, parseParams(args.params));
     },
   },
+  {
+    name: 'cadcraft.open_file',
+    purpose: 'Open a drawing from Files in CADCraft.',
+    when: 'Use when the user wants to open a drawing that is stored in Files.',
+    params: { path: { type: 'path', required: true, description: 'The Files path of the drawing, e.g. /CadCraft/plan.dxf' } },
+    effect: 'change',
+    needs: ['host', 'app:cadcraft', 'files'],
+    examples: [{ args: { path: '/CadCraft/plan.dxf' }, says: 'Open the plan drawing from Files' }],
+    // Drives the wrapper's own #file input (app.mjs:38), so the open posts from the wrapper
+    // realm, as the app's host bridge requires (craft-libs web-host web.rs:106). The drawing
+    // opens alongside the open ones (engine session/files.rs open_drawing appends + activates),
+    // so a change; the wrapper's own unsaved-changes confirm still applies (app.mjs:35).
+    // openAndAwait waits until the app's inspect stops saying "no drawing open", so the
+    // result confirms the drawing actually loaded.
+    run: async (args, ctx) => {
+      const file = await filesCall(ctx, files => files.readBytes(args.path));
+      const wrapper = await ctx.host.appWindow(APP);
+      const craft = await ctx.craft(APP);
+      return openAndAwait(craft, { id: APP, title: 'CadCraft', wrapperWindow: wrapper, name: file.name, bytes: file.bytes, accept: releases[APP].accept });
+    },
+  },
+  {
+    name: 'cadcraft.save_copy',
+    purpose: 'Save the active drawing as a file in Files.',
+    when: 'Use when the user wants to keep a copy of the drawing in Files.',
+    params: {
+      path: { type: 'path', required: true, description: 'The Files path to write the copy to, e.g. /CadCraft/plan.dxf' },
+      overwrite: { type: 'boolean', description: 'Replace the file when the path already exists; false when omitted' },
+    },
+    effect: 'change',
+    effectFor: args => (args.overwrite ? 'destructive' : 'change'),
+    needs: ['host', 'app:cadcraft', 'files'],
+    examples: [{ args: { path: '/CadCraft/plan.dxf' }, says: 'Save a copy of the drawing to Files' }],
+    // No path is ever passed (the browser has no file system). CADCraft has no
+    // file.saveBytes, so the bytes come inline from document.bytes (lead live check:
+    // execute('document.bytes', {}) -> { bytes: <count>, data: <base64> }; the web build
+    // refuses DWG, so .dxf is the only native format and a .dwg target is refused by the
+    // guard with the .dxf fix). The result name is the inspect title + .dxf (a new
+    // drawing is Drawing1). teachApp turns a "no drawing open" rejection into the
+    // new_drawing teaching error.
+    run: async (args, ctx) => {
+      const wrapper = await ctx.host.appWindow(APP);
+      const craft = teachApp(await ctx.craft(APP), NO_DOC.message, NO_DOC.fix);
+      const save = await saveBytesCopy(craft, {
+        id: APP, title: 'CadCraft', wrapperWindow: wrapper, target: args.path,
+        tool: 'cadcraft.save_copy', nativeExt: '.dxf', inlineCommand: { command: 'document.bytes', params: {} },
+      });
+      const written = await filesCall(
+        ctx,
+        files => files.writeBytes(args.path, save.bytes, { overwrite: Boolean(args.overwrite) }),
+        error => (error.code === 'exists' ? callLine('cadcraft.save_copy', { path: args.path, overwrite: true }) : ''),
+      );
+      return { path: written.path, name: save.name, size: written.size, created: written.created, ...(save.note ? { note: save.note } : {}) };
+    },
+  },
 ];
 
 // Live-check exports (brief): every command id the curated tools pass to execute,
 // and every control method passed to request. run_command also passes arbitrary
 // ids from the live commands() list.
-export const usesCommands = ['entities', 'texts', 'new'];
+export const usesCommands = ['entities', 'texts', 'new', 'document.bytes'];
 export const usesMethods = ['cmdline.input', 'cmdline.script', 'drawing.inspect', 'cmdline.key'];

@@ -53,11 +53,11 @@ test('the pack declares its id, title and live-check exports', () => {
   assert.deepEqual(usesMethods, []);
 });
 
-test('the pack exposes exactly the 12 lightcraft tools', () => {
-  assert.equal(tools.length, 12);
+test('the pack exposes exactly the 13 lightcraft tools', () => {
+  assert.equal(tools.length, 13);
   assert.deepEqual(tools.map(tool => tool.name).sort(), [
-    'lightcraft.delete', 'lightcraft.develop_reset', 'lightcraft.filter', 'lightcraft.library_info',
-    'lightcraft.rate', 'lightcraft.redo', 'lightcraft.restore', 'lightcraft.rotate',
+    'lightcraft.delete', 'lightcraft.develop_reset', 'lightcraft.filter', 'lightcraft.import_file',
+    'lightcraft.library_info', 'lightcraft.rate', 'lightcraft.redo', 'lightcraft.restore', 'lightcraft.rotate',
     'lightcraft.run_command', 'lightcraft.select', 'lightcraft.sort', 'lightcraft.undo',
   ]);
 });
@@ -70,7 +70,8 @@ test('every tool has the required text fields, effect, needs and examples', () =
     // run_command lists the destructive ids in when (the model must see them).
     if (tool.name !== 'lightcraft.run_command') assert.ok(tool.when.length <= 120, `${tool.name} when is ${tool.when.length} chars`);
     assert.ok(['read', 'change', 'destructive', 'external'].includes(tool.effect), `${tool.name} bad effect`);
-    assert.deepEqual(tool.needs, ['host', 'app:lightcraft']);
+    const fileTools = ['lightcraft.import_file'];
+    assert.deepEqual(tool.needs, fileTools.includes(tool.name) ? ['host', 'app:lightcraft', 'files'] : ['host', 'app:lightcraft']);
     assert.equal(typeof tool.run, 'function');
     assert.ok(tool.examples.length >= 1, `${tool.name} has examples`);
     for (const example of tool.examples) {
@@ -125,6 +126,64 @@ test('library_info, select, sort, rate, rotate, delete, restore, develop_reset, 
     ['develop.reset', {}],
     ['edit.redo', {}],
   ]);
+});
+
+// A fake wrapper window for the file tool: the #file input records the change dispatch
+// (openFromBytes drives it, app.mjs:38). The host bridge (not the page API) opens the file,
+// so no page command is involved.
+const fakeWrapper = () => {
+  const opened = [];
+  const fileInput = { files: null, dispatchEvent: event => { if (event?.type === 'change') opened.push(fileInput.files?.[0] ?? null); } };
+  class DataTransfer {
+    constructor() { this._files = []; this.items = { add: file => this._files.push(file) }; }
+    get files() { return this._files; }
+  }
+  class File {
+    constructor(parts, name) { this.parts = parts; this.name = name; }
+  }
+  class Event {
+    constructor(type) { this.type = type; }
+  }
+  return {
+    opened,
+    DataTransfer, File, Event,
+    document: { getElementById: id => (id === 'file' ? fileInput : null) },
+    location: { origin: 'https://pc.example' },
+  };
+};
+const fileHost = (bytes, wrapper) => {
+  const calls = { read: [] };
+  return {
+    calls,
+    host: { appWindow: async app => { assert.equal(app, 'lightcraft'); return wrapper; } },
+    files: {
+      readBytes: path => { calls.read.push(path); return Promise.resolve({ path, name: 'IMG_0001.cr2', bytes, size: bytes.byteLength }); },
+    },
+  };
+};
+
+test('lightcraft.import_file reads the photo and drives the wrapper file input', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileHost(new Uint8Array([1, 2, 3]), wrapper);
+  const out = await byName('lightcraft.import_file').run({ path: '/Photos/trip/IMG_0001.cr2' }, ctx);
+  assert.deepEqual(ctx.calls.read, ['/Photos/trip/IMG_0001.cr2']);
+  assert.equal(wrapper.opened.length, 1); // the change dispatch the wrapper handler (app.mjs:38) hears
+  assert.equal(wrapper.opened[0].name, 'IMG_0001.cr2');
+  assert.deepEqual([...wrapper.opened[0].parts[0]], [1, 2, 3]);
+  assert.deepEqual(out, { name: 'IMG_0001.cr2', bytes: 3 }); // no opened field: the page has no inspect
+});
+
+test('lightcraft.import_file turns a store not_found into a teaching ToolError', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileHost(new Uint8Array([1]), wrapper);
+  ctx.files.readBytes = () => Promise.reject(Object.assign(new Error('/missing.cr2 is not a file.'), { code: 'not_found' }));
+  await assert.rejects(byName('lightcraft.import_file').run({ path: '/missing.cr2' }, ctx), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'not_found');
+    assert.match(error.message, /not a file/);
+    return true;
+  });
+  assert.equal(wrapper.opened.length, 0);
 });
 
 test('the page answer is the JSON text, parsed back into a value', async () => {
@@ -189,7 +248,7 @@ const { skills, errors: skillErrors } = parseSkills(SKILLS_MD, 'lightcraft');
 
 test('skills.md parses with the runtime parser without errors and has 8 skills', () => {
   assert.deepEqual(skillErrors, []);
-  assert.equal(skills.length, 8);
+  assert.equal(skills.length, 9);
   for (const skill of skills) {
     assert.ok(skill.slug && skill.summary, `skill ${skill.slug} slug/summary`);
     assert.ok(skill.summary.length <= 160, `skill ${skill.slug} summary is ${skill.summary.length} chars`);

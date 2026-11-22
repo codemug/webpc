@@ -66,14 +66,14 @@ test('the pack declares its id, title and live-check exports', () => {
   assert.deepEqual(usesMethods, []);
 });
 
-test('the pack exposes exactly the 20 effectcraft tools', () => {
-  assert.equal(tools.length, 20);
+test('the pack exposes exactly the 22 effectcraft tools', () => {
+  assert.equal(tools.length, 22);
   assert.deepEqual(tools.map(tool => tool.name).sort(), [
     'effectcraft.batch', 'effectcraft.comp', 'effectcraft.effect_add', 'effectcraft.effects_list',
     'effectcraft.fonts_list', 'effectcraft.history', 'effectcraft.inspect', 'effectcraft.keyframe_add',
-    'effectcraft.layer', 'effectcraft.list_commands', 'effectcraft.project', 'effectcraft.project_open',
-    'effectcraft.project_save', 'effectcraft.property_get', 'effectcraft.property_set', 'effectcraft.redo',
-    'effectcraft.run_command', 'effectcraft.script_run', 'effectcraft.state', 'effectcraft.undo',
+    'effectcraft.layer', 'effectcraft.list_commands', 'effectcraft.open_file', 'effectcraft.project',
+    'effectcraft.project_open', 'effectcraft.project_save', 'effectcraft.property_get', 'effectcraft.property_set', 'effectcraft.redo',
+    'effectcraft.run_command', 'effectcraft.save_copy', 'effectcraft.script_run', 'effectcraft.state', 'effectcraft.undo',
   ]);
 });
 
@@ -85,7 +85,8 @@ test('every tool has the required text fields, effect, needs and examples', () =
     // run_command lists the destructive ids in when (the model must see them).
     if (tool.name !== 'effectcraft.run_command') assert.ok(tool.when.length <= 120, `${tool.name} when is ${tool.when.length} chars`);
     assert.ok(['read', 'change', 'destructive', 'external'].includes(tool.effect), `${tool.name} bad effect`);
-    assert.deepEqual(tool.needs, ['host', 'app:effectcraft']);
+    const fileTools = ['effectcraft.open_file', 'effectcraft.save_copy'];
+    assert.deepEqual(tool.needs, fileTools.includes(tool.name) ? ['host', 'app:effectcraft', 'files'] : ['host', 'app:effectcraft']);
     assert.equal(typeof tool.run, 'function');
     assert.ok(tool.examples.length >= 1, `${tool.name} has examples`);
     for (const example of tool.examples) {
@@ -113,6 +114,7 @@ test('the effects are read for reads, destructive for project replacement, chang
     assert.equal(byName(name).effect, 'read', name);
   }
   assert.equal(byName('effectcraft.project_open').effect, 'destructive');
+  assert.equal(byName('effectcraft.open_file').effect, 'destructive');
   for (const tool of tools) if (tool.effect !== 'read' && tool.effect !== 'destructive') assert.equal(tool.effect, 'change', tool.name);
 });
 
@@ -322,11 +324,105 @@ test('effectFor marks destructive command ids for run_command and batch', () => 
   assert.equal(batch.effectFor({ steps: '[{"command":"comp.new"}]' }), 'change');
 });
 
+// A fake wrapper window for the file tools: the #file input records the change dispatch
+// (openFromBytes drives it, app.mjs:38); message listeners are stored so a test can fire
+// the <id>:save event the wrapper would hear from the editor frame.
+const fakeWrapper = () => {
+  const opened = [];
+  const fileInput = { files: null, dispatchEvent: event => { if (event?.type === 'change') opened.push(fileInput.files?.[0] ?? null); } };
+  class DataTransfer {
+    constructor() { this._files = []; this.items = { add: file => this._files.push(file) }; }
+    get files() { return this._files; }
+  }
+  class File {
+    constructor(parts, name) { this.parts = parts; this.name = name; }
+  }
+  class Event {
+    constructor(type) { this.type = type; }
+  }
+  const editor = { contentWindow: {} };
+  const listeners = new Set();
+  return {
+    opened,
+    DataTransfer, File, Event,
+    document: { getElementById: id => (id === 'file' ? fileInput : id === 'editor' ? editor : null) },
+    location: { origin: 'https://pc.example' },
+    addEventListener: (type, fn) => { if (type === 'message') listeners.add(fn); },
+    removeEventListener: (type, fn) => { if (type === 'message') listeners.delete(fn); },
+    frame: editor.contentWindow,
+    fire: event => { for (const fn of [...listeners]) fn(event); },
+  };
+};
+const fileCtx = (bytes, wrapper) => {
+  const calls = { read: [], write: [] };
+  return {
+    calls,
+    host: { appWindow: async () => wrapper },
+    craft: () => Promise.resolve(fakeCraft()),
+    files: {
+      readBytes: path => { calls.read.push(path); return Promise.resolve({ path, name: 'ad.ecproj', bytes, size: bytes.byteLength }); },
+      writeBytes: (path, b, { overwrite } = {}) => { calls.write.push({ path, size: b.byteLength, overwrite }); return Promise.resolve({ path, size: b.byteLength, created: !overwrite }); },
+    },
+  };
+};
+
+test('effectcraft.open_file reads the file, drives the wrapper input, and waits for the load', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileCtx(new Uint8Array([1, 2, 3]), wrapper);
+  const state = { activeComp: null };
+  const input = wrapper.document.getElementById('file');
+  const original = input.dispatchEvent;
+  input.dispatchEvent = event => { if (event?.type === 'change') state.activeComp = 1; return original(event); };
+  ctx.craft = () => Promise.resolve({ ...fakeCraft(), inspect: async () => state });
+  const out = await byName('effectcraft.open_file').run({ path: '/EffectCraft/ad.ecproj' }, ctx);
+  assert.deepEqual(ctx.calls.read, ['/EffectCraft/ad.ecproj']);
+  assert.equal(wrapper.opened.length, 1);
+  assert.equal(wrapper.opened[0].name, 'ad.ecproj');
+  assert.deepEqual(out, { name: 'ad.ecproj', bytes: 3, opened: 'the app state changed' });
+  assert.equal(byName('effectcraft.open_file').effect, 'destructive'); // a project open replaces the open one
+});
+
+test('effectcraft.save_copy triggers the no-path file.save and captures the effectcraft:save bytes', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileCtx(new Uint8Array([1, 2, 3]), wrapper);
+  const calls = [];
+  ctx.craft = () => Promise.resolve({
+    ...fakeCraft(),
+    commands: async () => [{ id: 'file.save' }],
+    execute: (command, params) => {
+      calls.push([command, params]);
+      wrapper.fire({ origin: 'https://pc.example', source: wrapper.frame, data: { type: 'effectcraft:save', name: 'ad.ecproj', bytes: new Uint8Array([6, 7]) } });
+      return { command, params };
+    },
+  });
+  const out = await byName('effectcraft.save_copy').run({ path: '/EffectCraft/ad.ecproj' }, ctx);
+  assert.deepEqual(calls, [['file.save', {}]]); // the no-path trigger (s.path after an open)
+  assert.deepEqual(ctx.calls.write, [{ path: '/EffectCraft/ad.ecproj', size: 2, overwrite: false }]);
+  assert.deepEqual(out, { path: '/EffectCraft/ad.ecproj', name: 'ad.ecproj', size: 2, created: true, note: 'the app also downloaded the file in the browser' });
+});
+
+test('effectcraft.save_copy passes overwrite through and refuses a foreign target extension', async () => {
+  const ctx = fileCtx(new Uint8Array([1]), fakeWrapper());
+  const tool = byName('effectcraft.save_copy');
+  assert.equal(tool.effect, 'change');
+  assert.equal(tool.effectFor({ overwrite: true }), 'destructive');
+  assert.equal(tool.effectFor({}), 'change');
+  ctx.craft = () => Promise.resolve({ ...fakeCraft(), commands: async () => [{ id: 'file.save' }], execute: async () => ({}) });
+  await assert.rejects(byName('effectcraft.save_copy').run({ path: '/EffectCraft/ad.mp4' }, ctx), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.match(error.message, /EffectCraft saves \.ecproj files; it cannot write \.mp4 here\./);
+    assert.equal(error.fix, callLine('effectcraft.save_copy', { path: '/EffectCraft/ad.ecproj' }));
+    return true;
+  });
+  assert.equal(ctx.calls.write.length, 0);
+});
+
 const { skills, errors: skillErrors } = parseSkills(SKILLS_MD, 'effectcraft');
 
-test('skills.md parses with the runtime parser without errors and has 8 skills', () => {
+test('skills.md parses with the runtime parser without errors and has 10 skills', () => {
   assert.deepEqual(skillErrors, []);
-  assert.equal(skills.length, 8);
+  assert.equal(skills.length, 10);
   for (const skill of skills) {
     assert.ok(skill.slug && skill.summary, `skill ${skill.slug} slug/summary`);
     assert.ok(skill.summary.length <= 160, `skill ${skill.slug} summary is ${skill.summary.length} chars`);
