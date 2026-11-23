@@ -16,9 +16,37 @@ import { resolveInGrants } from './file-tools.js';
 import { BGBM_ENGINES, ocrTextResult, nobgName, nobgTarget, downscalePlan, OCR_MAX_DIM, MAX_IMAGE_BYTES, validateImageFile, visionToolsEnabled } from './vision-tools.js';
 import { createExecClient } from './exec-client.js';
 import { createAgent, createPolicy, craftApi } from './runtime/index.mjs';
+import { initHelp, modelKindLine, stripApps } from './help.js';
 import { createFilesCtx } from './runtime/files-ctx.mjs';
 import { createThreadStore, ThreadLimitError } from './threads.js';
 import { createSharedModel } from './shared-model.js';
+// The welcome icons are clones of the desktop's own .pc-app-icon nodes: Buddy runs
+// in the desktop's same-origin iframe, so the strip and the starters reuse the
+// exact <img> or <svg> the desktop draws. The desktop's tile CSS (the .pc-icon-<id>
+// gradient, white glyph) does not apply inside Buddy, so the source's computed
+// background, color and padding (scaled to 28 px) are copied onto the clone.
+// Without a parent desktop (the standalone /pc/apps/ai-agent/ route) or without a
+// match, a round letter badge.
+const appIcon = (id, title) => {
+  let source = null;
+  try { source = parent.document.querySelector(`.pc-app-icon.pc-icon-${CSS.escape(id)}`); } catch { /* cross-origin parent */ }
+  if (source) {
+    const icon = source.cloneNode(true);
+    icon.setAttribute('aria-hidden', 'true');
+    icon.removeAttribute('id');
+    icon.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+    icon.classList.add('strip-icon');
+    const cs = parent.getComputedStyle(source);
+    const pad = (parseFloat(cs.paddingTop) || 0) * (28 / (source.offsetWidth || 54));
+    icon.style.cssText = `background-color:${cs.backgroundColor};background-image:${cs.backgroundImage};color:${cs.color};padding:${pad}px`;
+    return icon;
+  }
+  const icon = document.createElement('span');
+  icon.className = 'strip-icon strip-badge';
+  icon.setAttribute('aria-hidden', 'true');
+  icon.textContent = String(title ?? '?').trim().charAt(0).toUpperCase();
+  return icon;
+};
 const $ = id => document.getElementById(id);
 // ?eval=1 trace hook: when the page URL has ?eval=1, every tool call is recorded into
 // window.__buddyTrace as { name, arguments, ok, errorType, result } so an eval runner can
@@ -71,7 +99,7 @@ function imageInputControls() {
   box.disabled = !vision || loading || Boolean(session.active);
   if (!vision) box.checked = false;
   $('attach').disabled = !box.checked || loading || Boolean(session.active);
-  $('image-note').textContent = isChrome(selected) ? 'Chrome built-in model is text-only' : cloudSelected ? (cloud.ready ? `sent to ${cloud.host}` : 'enable it in Settings') : (MODELS[selected]?.vision ? `+${MODELS[selected].vision.size} when first used` : 'Qwen models only');
+  $('image-label').dataset.help = `Attach images to your message. ${isChrome(selected) ? 'Chrome built-in model is text-only' : cloudSelected ? (cloud.ready ? `sent to ${cloud.host}` : 'enable it in Settings') : (MODELS[selected]?.vision ? `+${MODELS[selected].vision.size} when first used` : 'Qwen models only')}`;
   applyVisionGates();
 }
 const nearBottom = () => $('conversation').scrollHeight - $('conversation').scrollTop - $('conversation').clientHeight < 100;
@@ -372,6 +400,32 @@ const agent = createAgent({ policy: { newTurn: text => livePolicy().newTurn(text
 // The per-turn skill note is off: on the clean 60-task eval (one chat per task) lfm3-1.7b scored
 // 29/60 without it and 24/60 with it. ?eval=1&prefetch=1 turns it back on, for eval comparisons only.
 if (!(EVAL_TRACE && new URLSearchParams(location.search).get('prefetch') === '1')) agent.prefetch = () => '';
+// The welcome strip: the apps Buddy has tools for, in catalog order, first 8 plus a +N chip.
+{
+  const { shown, hidden } = stripApps(agent.apps, [...agent.catalog.tools.keys()]);
+  const strip = $('app-strip');
+  for (const app of shown) {
+    const li = document.createElement('li');
+    const item = document.createElement('button'); item.type = 'button';
+    item.dataset.help = `${app.title}: Buddy can open it and work in it.`;
+    item.setAttribute('aria-label', app.title);
+    item.append(appIcon(app.id, app.title));
+    li.append(item); strip.append(li);
+  }
+  if (hidden.length) {
+    const li = document.createElement('li');
+    const chip = document.createElement('button'); chip.type = 'button'; chip.className = 'more';
+    chip.textContent = `+${hidden.length}`;
+    chip.dataset.help = hidden.map(app => app.title).join(', ');
+    chip.setAttribute('aria-label', `${hidden.length} more apps`);
+    li.append(chip); strip.append(li);
+  }
+  // The starters' empty icon spans (index.html) get the desktop's own icon.
+  for (const span of document.querySelectorAll('#welcome .examples [data-app-icon]')) {
+    const id = span.dataset.appIcon;
+    span.append(appIcon(id, agent.apps.find(a => a.id === id)?.title ?? id));
+  }
+}
 const desktopHost = () => { try { return parent !== window && parent.pcHost ? parent.pcHost : null; } catch { return null; } };
 const filesCtx = createFilesCtx(fileStore, { broadcast: path => filesChangeChannel?.postMessage({ type: 'changed', path }) });
 // ctx.craft(id): an ArtCraft app's page API (window.<id> inside its editor frame), opened if needed.
@@ -468,7 +522,7 @@ function onEvent(s, type, data) {
     return;
   }
   if (type === 'error') { setThreadStatus(id, 'failed'); if (s === session) error(data); return; }
-  if (type === 'saved') { if (s === session) { $('storage-warning').hidden = true; $('save-state').textContent = 'Saved in this browser'; } return; }
+  if (type === 'saved') { if (s === session) { $('storage-warning').hidden = true; $('save-state').textContent = 'Local'; } return; }
   if (type === 'storage-error') { if (s === session) storageError(data); return; }
   if (s !== session) return; // a background thread: its history updates inside the session, the DOM waits for the switch
   switch (type) {
@@ -662,17 +716,18 @@ function cancelAll(text) {
 }
 function modelInfo() {
   if (isCloud(selected)) {
-    $('download-note').textContent = 'Cloud model: nothing downloads locally. Enter your API key in Settings and confirm the opt-in; your prompts, tool results and attached images go to the provider named there.';
+    $('model').dataset.help = 'Cloud model: nothing downloads locally. Enter your API key in Settings and confirm the opt-in; your prompts, tool results and attached images go to the provider named there.';
     $('model-license').replaceChildren(document.createTextNode('The provider sets its own terms and pricing; the key is used only in this browser session.'));
     return;
   }
   if (isChrome(selected)) {
-    $('download-note').textContent = 'Chrome built-in model: nothing downloads from this site. Load it to start Chrome’s own on-device model download (needs at least 22 GB free space). Chat, translation and summarization stay on this device.';
+    $('model').dataset.help = 'Chrome built-in model: nothing downloads from this site. Load it to start Chrome’s own on-device model download (needs at least 22 GB free space). Chat, translation and summarization stay on this device.';
     $('model-license').replaceChildren(document.createTextNode('On-device: no data is sent to Google or any third party when using the model.'));
     return;
   }
   const model = MODELS[selected];
-  $('download-note').textContent = `Load ${model.label} when ready: ${model.size} of model files from Hugging Face. No model files download automatically. Chat and computation stay on device; web tools make the requests you ask for.`;
+  const kind = modelKindLine(selected);
+  $('model').dataset.help = `${kind ? `${kind} ` : ''}Load ${model.label} when ready: ${model.size} of model files from Hugging Face. No model files download automatically. Chat and computation stay on device; web tools make the requests you ask for.`;
   const link = document.createElement('a'); link.href = `https://huggingface.co/${model.repo}/tree/${model.revision}`; link.target = '_blank'; link.rel = 'noopener'; link.textContent = `${model.label} · ${model.license}`;
   $('model-license').replaceChildren(link, document.createTextNode('. Model weights have their own license. Sizes are approximate; small models may miss tools or return incorrect answers.'));
 }
@@ -889,4 +944,5 @@ try {
   }
 } catch (err) { storageError(`Could not open stored chats: ${err.message}`); }
 initialized = true; controls(); postBadge();
+initHelp();
 if (!navigator.gpu) status('WebGPU is unavailable here. You can still read, export, and recover saved conversations.');
