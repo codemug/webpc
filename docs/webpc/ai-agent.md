@@ -93,6 +93,8 @@ The pop-up uses the panel's own tokens (`--panel`, `--line`, `--text`, `--shadow
 
 The app strip and the starter icons are clones of the desktop's own icon nodes (`.pc-app-icon.pc-icon-<id>` in the same-origin parent page), with the tile background copied from its computed style, so Buddy shows exactly what the desktop shows. Without a parent desktop (the standalone `/pc/apps/ai-agent/` route) each icon is a round letter badge.
 
+The Settings dialog follows the same rule: one visual card per section with the controls and short chips in view, and every section's sentences on a help dot in the card header. Because the dialog opens with `showModal()` (the browser's top layer, above `#help-pop` in the body), `show()` mounts the pop-up inside the open dialog the trigger lives in and moves it back to the body when the dialog closes (the dialog's `close` event, which also hides the pop-up); placement stays `place()` in viewport coordinates. The dialog's first control (the close button) has no `data-help`, so a keyboard open focuses it without opening a pop-up, and its `autofocus` makes that deterministic. With a pop-up open, Esc closes the pop-up only: the capture handler `preventDefault()`s, so the dialog's native Esc does not fire; a second Esc closes the dialog and focus returns to Settings.
+
 To add help to a new control, give the element `data-help="..."`; an element without a visible label gets a `<button class="help-dot" type="button" aria-label="About ...">?</button>` next to it.
 
 ## Verification

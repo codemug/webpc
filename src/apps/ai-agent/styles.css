@@ -57,5 +57,60 @@ img.strip-icon{object-fit:cover}
 /* The <=600 px row layout: the label sits right after the icon (the base rule's
    space-between used to push it to the far right edge of the row). */
 @media(max-width:600px){.examples button{justify-content:flex-start;gap:10px}}
+/* Settings dialog: one visual card per section, panel tokens only. The prose
+   lives in the help dots; chips are the visible summaries. Two columns when
+   the dialog (max 590 px wide) has room, one column below that. */
+.set-title{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.set-title h2{font-size:20px;margin:0}
+.set-grid{display:grid;grid-template-columns:1fr;gap:10px;margin-top:14px}
+@media(min-width:560px){.set-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.set-card{border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:12px 14px;display:flex;flex-direction:column;gap:9px}
+.set-head{display:flex;align-items:center;gap:7px}
+.set-icon{font-size:14px;line-height:1}
+.set-head h3{margin:0;font-size:11px;font-weight:650;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);flex:1}
+.set-card .chip{align-self:flex-start}
+.set-card label:not(.check){display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted)}
+.set-card label:not(.check) input,.set-card label:not(.check) select{width:100%;font-size:12px}
+/* The cloud provider radios as a two-option segmented control: the radios stay
+   (name=cloud-provider, app.js reads the checked value), each pill shows its
+   radio inline, and the checked option gets the accent treatment. */
+#cloud-provider{display:flex;gap:6px}
+#cloud-provider .check{flex:1;justify-content:center;gap:5px;border:1px solid var(--line);border-radius:16px;padding:5px 8px;font-size:11px;color:var(--muted)}
+#cloud-provider .check input{width:14px;height:14px;margin:0;flex:none}
+#cloud-provider .check:has(input:checked){border-color:var(--accent);background:var(--tint);color:var(--text)}
+.set-chips{display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+.chip.warn{color:var(--error);border-color:var(--error)}
+#model-license{font-size:12px;color:var(--muted)}
+#close-settings{margin-top:14px}
+/* The header's Export and Import collapse to icon buttons on narrow panels, so
+   the header buttons fit a 390 px viewport (with the desktop panel's close
+   button); the wordmark and the label buttons compact as well. */
+.hdr-icon{display:none}
+@media(max-width:440px){
+.wordmark{gap:8px}
+.mark{width:28px;height:28px}
+h1{font-size:14px}
+nav{gap:3px}
+nav button{padding:5px 7px;font-size:10px}
+#new-chat .hdr-label,#export .hdr-label,#import .hdr-label{display:none}
+#new-chat,#export,#import{padding:5px 8px}
+.hdr-icon{display:inline;font-size:12px}
+}
+/* Assistant answers render Markdown (markdown.js): the tokens are panel tokens
+   only, and nothing may push the panel wider (390 px viewport). */
+.message-body p{margin:0 0 8px}
+.message-body>p:last-child{margin-bottom:0}
+.message-body ul,.message-body ol{margin:0 0 8px;padding-left:20px}
+.message-body li{margin-bottom:2px}
+.message-body li>p{margin:0}
+.message-body h3,.message-body h4,.message-body h5{margin:10px 0 4px;font-size:13px}
+.message-body h4,.message-body h5{font-size:12px}
+.message-body code{background:var(--tint);border-radius:4px;padding:1px 4px;font-family:var(--font-mono);font-size:12px}
+.message-body pre{background:var(--tint);border:1px solid var(--line);border-radius:6px;padding:8px 10px;overflow-x:auto;margin:0 0 8px}
+.message-body pre code{background:none;padding:0}
+.message-body table{display:block;overflow-x:auto;max-width:100%;border-collapse:collapse;margin:0 0 8px}
+.message-body th,.message-body td{border:1px solid var(--line);padding:4px 8px;font-size:12px}
+.message-body a{color:var(--accent)}
+.message .chip.cut{margin-top:6px;align-self:flex-start}
 @media(prefers-reduced-motion:reduce){#help-pop{transition:none}}
 @media print{#help-pop,.help-dot{display:none}}

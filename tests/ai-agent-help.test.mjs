@@ -2,7 +2,7 @@
 // Run: node --test tests/ai-agent-help.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { modelKindLine, place, stripApps } from '../src/apps/ai-agent/help.js';
+import { licenseNotice, modelKindLine, place, stripApps } from '../src/apps/ai-agent/help.js';
 
 const pop = { width: 200, height: 60 };
 const viewport = { width: 390, height: 700 };
@@ -47,6 +47,14 @@ test('modelKindLine: LFM3 points at the apps, Qwen at chat and images, no line f
   assert.equal(modelKindLine('cloud:anthropic'), null);
   assert.equal(modelKindLine('chrome:builtin'), null);
   assert.equal(modelKindLine(null), null);
+});
+
+test('licenseNotice: the About card line and help per backend', () => {
+  assert.deepEqual(licenseNotice('cloud'), { line: 'Provider terms apply', help: 'The provider sets its own terms and pricing; the key is used only in this browser session.' });
+  assert.equal(licenseNotice('chrome').line, 'On-device, nothing sent');
+  assert.match(licenseNotice('chrome').help, /no data is sent to Google/);
+  assert.equal(licenseNotice('local').line, '', 'local shows the license link only');
+  assert.match(licenseNotice('local').help, /Model weights have their own license/);
 });
 
 test('stripApps: drops apps with no tools and honours a custom limit', () => {

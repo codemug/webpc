@@ -41,7 +41,7 @@ test('Buddy is lazy, migrates legacy records without deleting them, and handles 
     await set('voice-agent:conversation',{history:[{role:'user',content:'legacy text'},{role:'assistant',content:'**kept**'}],summary:''});
     localStorage.setItem('voice-agent:model','qwen3.5-0.8b');
   });
-  await page.goto(route); await expect(page.locator('#messages')).toContainText('legacy text'); await expect(page.locator('#messages')).toContainText('**kept**');
+  await page.goto(route); await expect(page.locator('#messages')).toContainText('legacy text'); await expect(page.locator('.assistant .message-body strong')).toHaveText('kept');
   await expect(page.locator('#model')).toHaveValue('qwen3.5-0.8b');
   expect(requests.some(url=>/huggingface|\.wasm|worker\.js|transformers\.min/.test(url))).toBe(false);
   await page.locator('#load-model').click(); await expect(page.locator('#error')).toContainText('WebGPU is unavailable');
@@ -54,9 +54,9 @@ test('Buddy executes a real calculation, preserves Markdown, persists and isolat
   skipUnlessEnabled(test,'ai-agent');
   await modelFixture(page);page.on('dialog',d=>d.accept());await page.goto(route);
   expect(await page.evaluate(()=>window.workers.length)).toBe(0);await load(page);await send(page,'calculate 6*7');
-  await expect(page.locator('#messages')).toContainText('calculate · complete');await expect(page.locator('.assistant .message-body').last()).toContainText('**42**');await expect(page.locator('.assistant .message-body').last()).toContainText('```js');
+  await expect(page.locator('#messages')).toContainText('calculate · complete');await expect(page.locator('.assistant .message-body strong').last()).toHaveText('42');await expect(page.locator('.assistant .message-body pre code.language-js').last()).toContainText('6 * 7');await expect(page.locator('.message.user .message-body').last()).toHaveText('calculate 6*7');
   await expect(page.locator('#messages')).not.toContainText('private');await expect(page.locator('#send')).toBeEnabled();
-  await page.reload();await expect(page.locator('#messages')).toContainText('**42**');await load(page);await send(page,'HOLD prefill');await expect(page.locator('#model-state')).toContainText('Working');
+  await page.reload();await expect(page.locator('.assistant .message-body strong').last()).toHaveText('42');await expect(page.locator('.assistant .message-body pre code.language-js').last()).toContainText('6 * 7');await load(page);await send(page,'HOLD prefill');await expect(page.locator('#model-state')).toContainText('Working');
   await page.locator('#new-chat').click();await expect(page.locator('#messages')).toBeEmpty();await page.waitForTimeout(2200);await expect(page.locator('#messages')).toBeEmpty();
   // New chat never kills the worker: the old chat's held reply lands in the old thread, and the worker stays alive.
   expect(await page.evaluate(()=>window.workers.at(-1)?.wasTerminated)).not.toBe(true);expect(await page.evaluate(()=>window.voiceCalls)).toEqual([]);

@@ -10,6 +10,10 @@
 // and keeps a GRACE_MS grace while the pointer moves from the trigger onto the
 // pop-up. While open the trigger gets aria-describedby="help-pop"; a data-help
 // change on the open trigger updates the text in place.
+//
+// A modal dialog (showModal) sits in the top layer, above #help-pop in the body,
+// so while the trigger is inside an open dialog the pop-up is mounted in that
+// dialog and moved back to the body when the dialog closes.
 
 const MARGIN = 8; // keep the pop-up this far inside the viewport
 const GAP = 8; // distance from the trigger
@@ -56,6 +60,17 @@ export function modelKindLine(key) {
 }
 
 /**
+ * The About card's visible line and help text, per model backend. kind:
+ * 'local' | 'cloud' | 'chrome'. The local line is empty: the visible content
+ * there is the license link app.js builds.
+ */
+export function licenseNotice(kind) {
+  if (kind === 'cloud') return { line: 'Provider terms apply', help: 'The provider sets its own terms and pricing; the key is used only in this browser session.' };
+  if (kind === 'chrome') return { line: 'On-device, nothing sent', help: 'On-device: no data is sent to Google or any third party when using the model.' };
+  return { line: '', help: 'Model weights have their own license. Sizes are approximate; small models may miss tools or give wrong answers.' };
+}
+
+/**
  * Wire the shared #help-pop tooltip to every data-help trigger in root (Buddy's
  * whole document). The listeners are delegated on root and the text is read at
  * show time, so a trigger added later (chat rows, tool cards, a strip built after
@@ -79,6 +94,11 @@ export function initHelp(root = document) {
     clearTimers();
     if (openFor && openFor !== trigger) openFor.removeAttribute('aria-describedby');
     openFor = trigger;
+    // The settings dialog is in the top layer, above the pop-up in the body:
+    // while the trigger lives in an open dialog, mount the pop-up there.
+    const dialog = trigger.closest('dialog[open]');
+    const home = dialog ?? root.body;
+    if (pop.parentElement !== home) home.append(pop);
     pop.textContent = text;
     pop.hidden = false;
     const rect = trigger.getBoundingClientRect();
@@ -159,11 +179,22 @@ export function initHelp(root = document) {
 
   // Esc closes the pop-up first, before the page's own Escape handling (panel close);
   // capture phase, so stopPropagation keeps the panel handler from firing too.
+  // preventDefault keeps a modal dialog under the trigger (settings) from closing
+  // on this same Esc: a second Esc then closes the dialog natively.
   root.addEventListener('keydown', event => {
     if (event.key !== 'Escape' || !openFor) return;
     hide();
+    event.preventDefault();
     event.stopPropagation();
   }, true);
+
+  // A dialog's close event bubbles to the document: hide the pop-up and move it
+  // back out of the (now closed) dialog into the body.
+  root.addEventListener('close', event => {
+    if (event.target?.tagName !== 'DIALOG') return;
+    hide();
+    if (pop.parentElement === event.target) root.body.append(pop);
+  });
 
   if (conversation) conversation.addEventListener('scroll', hide, { passive: true });
 
