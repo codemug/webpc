@@ -10,8 +10,11 @@ import { parse } from 'yaml';
 const HERE = fileURLToPath(new URL('../../', import.meta.url));
 export const ROOT = existsSync(`${HERE}catalog.yaml`) ? HERE : `${process.cwd()}/`;
 const DESKTOP_KEYS = ['id', 'title', 'category', 'folder', 'keywords', 'description', 'src', 'kind', 'loadTimeout', 'width', 'height'];
-const APP_KEYS = new Set([...DESKTOP_KEYS, 'enabled', 'icon', 'sources']);
+const APP_KEYS = new Set([...DESKTOP_KEYS, 'enabled', 'icon', 'sources', 'wasm']);
 const KINDS = new Set(['iframe', 'external', 'panel']);
+// Added before the wasm rule (2026-11-23). Do not add to this list: a new packaged app must build to wasm.
+// (These iframe apps ship no wasm module built from their own source: JavaScript apps, or WebPC's own pages.)
+export const LEGACY_NON_WASM = new Set(['docs', 'sqliteviz', 'files', 'media', 'cyberchef', 'nettools', 'beepbox', 'excalidraw']);
 const HEX64 = /^[0-9a-f]{64}$/;
 // Keys each source type must have (plus `type`, `upgrade`); optional keys are listed after `|`.
 const SOURCE_KEYS = {
@@ -65,6 +68,7 @@ function appErrors(app) {
   for (const key of ['loadTimeout', 'width', 'height']) if (key in app && !isPositiveInt(app[key])) errors.push(`${id}: ${key} must be a positive whole number`);
   if ('folder' in app && !/^[A-Z][A-Za-z0-9 ]{0,29}$/.test(String(app.folder))) errors.push(`${id}: folder must be a short name starting with a capital letter (e.g. Games)`);
   if ('icon' in app) errors.push(...iconErrors(app));
+  errors.push(...wasmErrors(app));
   if ('sources' in app && !Array.isArray(app.sources)) errors.push(`${id}: sources must be a list`);
   (Array.isArray(app.sources) ? app.sources : []).forEach((s, i) => errors.push(...sourceErrors(app, s, i)));
   return errors;
@@ -89,6 +93,26 @@ function iconErrors(app) {
   if (icon.from !== 'release' && !HEX64.test(String(icon.sha256))) errors.push(`${at}.sha256 must be 64 lowercase hex characters`);
   if (!ICON_EXT.test(String(icon.path ?? icon.url))) errors.push(`${at} must be a .png, .jpg or .svg file`);
   if (icon.from === 'repo' && !(app.sources ?? []).some(s => s.type === 'github-release')) errors.push(`${at}: from: repo needs a github-release source`);
+  return errors;
+}
+
+// The wasm rule: every packaged app (kind: iframe, one WebPC prepares and ships under /pc/apps/)
+// declares `wasm.build`, the command that builds its wasm from the app's source repository at the
+// pinned version. WebPC's build never runs it; it ships the upstream artifact instead. Pre-existing
+// JavaScript apps are exempt through LEGACY_NON_WASM (closed list); external and panel apps are not
+// packaged as apps, so they need no wasm at all.
+function wasmErrors(app) {
+  const id = app.id, at = `${id}: wasm`;
+  if (!('wasm' in app)) {
+    return app.kind === 'iframe' && !LEGACY_NON_WASM.has(id)
+      ? [`${id}: wasm.build is required (the command that builds the app's wasm from its source, at the pinned version)`]
+      : [];
+  }
+  const wasm = app.wasm;
+  if (!wasm || typeof wasm !== 'object') return [`${at} must be a mapping`];
+  const errors = [];
+  for (const key of Object.keys(wasm)) if (key !== 'build') errors.push(`${at}: unknown key "${key}"`);
+  if (!isText(wasm.build)) errors.push(`${at}.build must be a non-empty string`);
   return errors;
 }
 

@@ -9,7 +9,11 @@
 #                       { from: repo, path, sha256 }  file in the app's GitHub-release repo at its tag (re-pinned on upgrade)
 #                       { from: release, path }       file inside the app's prepared release
 #                       { url, sha256 }               fixed https URL
-# Field order per app: desktop entry (title ... height), icon, then sources.
+#   wasm.build       -> the command that builds this app's wasm from its source repository, at the pinned
+#                       version (required for every packaged kind: iframe app; WebPC's build never runs it, it
+#                       ships the upstream artifact). Exempt: the closed LEGACY_NON_WASM list in
+#                       scripts/catalog/catalog.mjs, and external/panel apps (WebPC does not package them).
+# Field order per app: desktop entry (title ... height), wasm, icon, then sources.
 apps:
   - id: gridcraft
     enabled: true
@@ -22,6 +26,8 @@ apps:
     loadTimeout: 75000
     width: 1180
     height: 760
+    wasm:
+      build: "cd apps/gridcraft-web && trunk build --release"
     icon:
       from: repo
       path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.gridcraft.png
@@ -69,6 +75,8 @@ apps:
     loadTimeout: 75000
     width: 1180
     height: 760
+    wasm:
+      build: "cd apps/deckcraft-web && trunk build --release"
     icon:
       from: repo
       path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.deckcraft.png
@@ -91,6 +99,8 @@ apps:
     kind: iframe
     width: 940
     height: 680
+    wasm:
+      build: "make all"
     sources:
       - type: npm
         package: v86
@@ -224,6 +234,8 @@ apps:
     loadTimeout: 45000
     width: 1280
     height: 800
+    wasm:
+      build: "make"
     sources:
       - type: npm-tarball
         package: "@goodtools/wiregasm"
@@ -301,6 +313,8 @@ apps:
     loadTimeout: 75000
     width: 1180
     height: 760
+    wasm:
+      build: "cargo xtask web"
     icon:
       from: repo
       path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.lightcraft.png
@@ -324,6 +338,8 @@ apps:
     loadTimeout: 75000
     width: 1180
     height: 760
+    wasm:
+      build: "cd apps/figcraft-web && trunk build --release"
     icon:
       from: repo
       path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.figcraft.png
@@ -347,6 +363,8 @@ apps:
     loadTimeout: 75000
     width: 1180
     height: 760
+    wasm:
+      build: "cd apps/pdfcraft-web && trunk build --release"
     icon:
       from: repo
       path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.pdfcraft.png
@@ -370,6 +388,8 @@ apps:
     loadTimeout: 75000
     width: 1180
     height: 760
+    wasm:
+      build: "cd apps/soundcraft-web && trunk build --release"
     icon:
       from: repo
       path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.soundcraft.png
@@ -418,6 +438,8 @@ apps:
     loadTimeout: 75000
     width: 1280
     height: 800
+    wasm:
+      build: "cargo xtask web"
     icon:
       from: repo
       path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.filmcraft.png
@@ -441,6 +463,8 @@ apps:
     loadTimeout: 75000
     width: 1280
     height: 800
+    wasm:
+      build: "cd apps/cadcraft-web && trunk build --release"
     icon:
       from: repo
       path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.cadcraft.png
@@ -464,6 +488,8 @@ apps:
     loadTimeout: 75000
     width: 1280
     height: 800
+    wasm:
+      build: "cd apps/vectorcraft-web && trunk build --release"
     icon:
       from: repo
       path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.vectorcraft.png
@@ -487,6 +513,8 @@ apps:
     loadTimeout: 75000
     width: 1280
     height: 800
+    wasm:
+      build: "cd apps/photocraft-web && trunk build --release"
     icon:
       from: repo
       path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.photocraft.png
@@ -510,6 +538,8 @@ apps:
     loadTimeout: 75000
     width: 1280
     height: 800
+    wasm:
+      build: "cargo xtask web"
     icon:
       from: repo
       path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.effectcraft.png
@@ -533,6 +563,8 @@ apps:
     loadTimeout: 75000
     width: 1280
     height: 800
+    wasm:
+      build: "cd apps/materialcraft-web && trunk build --release"
     icon:
       from: repo
       path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.materialcraft.png
@@ -556,6 +588,8 @@ apps:
     loadTimeout: 75000
     width: 1280
     height: 800
+    wasm:
+      build: "cd apps/texturecraft-web && trunk build --release"
     icon:
       from: repo
       path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.texturecraft.png
