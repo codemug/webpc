@@ -19,8 +19,13 @@ if (shell) {
   let state = { windows: [], activeId: null };
   const bounds = () => ({ width: workspace.clientWidth, height: workspace.clientHeight });
   const announce = text => { announcement.textContent = text; };
-  const icon = id => shell.querySelector(`[data-shortcut="${id}"] .pc-app-icon`).cloneNode(true);
-  const appById = id => apps.find(app => app.id === id);
+  // The Help window is built in (kind "about"): it is no longer a catalog app, but saved
+  // state and the top bar still address it by its historical id, so resolve it here.
+  const HELP_WINDOW = { id: 'about', kind: 'about', title: 'Help', width: 520, height: 560 };
+  const appById = id => apps.find(app => app.id === id) ?? (id === 'about' ? HELP_WINDOW : undefined);
+  // The Help window has no desktop shortcut tile: clone its glyph from the hidden template.
+  const icon = id => shell.querySelector(`[data-shortcut="${id}"] .pc-app-icon`)?.cloneNode(true)
+    ?? (id === 'about' ? document.getElementById('pc-help-icon').content.firstElementChild.cloneNode(true) : null);
 
   // Right-click (or Shift+F10 / the ContextMenu key on a focused shortcut, or a 500 ms
   // touch long-press) opens a context menu for shortcuts, launcher entries and the
@@ -33,7 +38,6 @@ if (shell) {
       { label: 'Open in new tab', action: () => openAppTab(app) },
       { label: 'Open in new window', action: () => openAppWindow(app) },
     ];
-    if (app.kind === 'about') return [{ label: 'Open', action: () => openApp(app.id) }];
     return [
       { label: 'Open', action: () => openApp(app.id) },
       { label: 'Open in new window', action: () => openAppWindow(app) },
@@ -625,7 +629,7 @@ if (shell) {
     /** The app iframe's contentWindow once the app posted pc:ready (opens it first if needed). */
     appWindow: async (id, { timeoutMs } = {}) => {
       const app = checkAppId(apps, id);
-      if (app.kind === 'external' || app.kind === 'about') throw fail('not_iframe', `app "${app.id}" has no iframe window (kind "${app.kind}")`);
+      if (app.kind === 'external') throw fail('not_iframe', `app "${app.id}" has no iframe window (kind "${app.kind}")`);
       if (timeoutMs !== undefined) checkNumber('timeoutMs', timeoutMs, { positive: true });
       const timeout = timeoutMs ?? app.loadTimeout ?? 30000;
       if (!hostWindow(app.id)) openApp(app.id);

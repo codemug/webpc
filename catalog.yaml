@@ -606,12 +606,3 @@ apps:
     icon:
       url: https://raw.githubusercontent.com/VERT-sh/VERT/35ebeb1679eb0b1af3f099c03060cb89f72e70f8/static/favicon.png
       sha256: f0d82f01c177658038adff50b1af638c86d18f58e30e53fadc2f305263185888
-  - id: about
-    enabled: true
-    title: About WebPC
-    category: System
-    keywords: [ help, controls, keyboard, save ]
-    description: Controls, shortcuts, and local saves.
-    kind: about
-    width: 520
-    height: 560

@@ -7,7 +7,7 @@ import { apps, buddy, categories } from '../../scripts/pc/registry.mjs';
     <a href="/" class="pc-home" aria-label="Back to Usman Shahid's site"><span aria-hidden="true">↖</span> usmanshahid<span class="pc-domain">.is-a.dev</span></a>
     <span class="pc-breadcrumb">/ <strong>WebPC</strong></span>
     <div class="pc-top-actions">
-      <button type="button" data-open-app="about" class="pc-text-button">Help</button>
+      <button type="button" data-open-app="about" class="pc-icon-button" aria-label="Help" title="Help"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17v.01"/></svg></button>
       <button type="button" data-theme-toggle class="pc-icon-button" aria-label="Switch color theme" title="Switch color theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg></button>
     </div>
   </header>
@@ -44,6 +44,7 @@ import { apps, buddy, categories } from '../../scripts/pc/registry.mjs';
   <p class="pc-sr-only" data-announcement role="status" aria-live="polite"></p>
   <noscript><div class="pc-no-script">WebPC needs JavaScript to open its apps. <a href="/pc/apps/gridcraft/">Open GridCraft directly</a> or <a href="/">return to the site</a>.</div></noscript>
 </div>
+<template id="pc-help-icon"><svg class="pc-app-icon pc-icon-about" viewBox="0 0 64 64" fill="none" aria-hidden="true"><circle cx="32" cy="32" r="21" stroke="currentColor" stroke-width="3"/><circle cx="32" cy="22" r="3" fill="currentColor"/><path d="M32 31v13" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg></template>
 <template id="pc-about-content">
   <div class="pc-about">
     <div class="pc-about-mark" aria-hidden="true">WebPC<span>.</span></div>

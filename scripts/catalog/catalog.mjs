@@ -11,7 +11,7 @@ const HERE = fileURLToPath(new URL('../../', import.meta.url));
 export const ROOT = existsSync(`${HERE}catalog.yaml`) ? HERE : `${process.cwd()}/`;
 const DESKTOP_KEYS = ['id', 'title', 'category', 'folder', 'keywords', 'description', 'src', 'kind', 'loadTimeout', 'width', 'height'];
 const APP_KEYS = new Set([...DESKTOP_KEYS, 'enabled', 'icon', 'sources']);
-const KINDS = new Set(['iframe', 'external', 'about', 'panel']);
+const KINDS = new Set(['iframe', 'external', 'panel']);
 const HEX64 = /^[0-9a-f]{64}$/;
 // Keys each source type must have (plus `type`, `upgrade`); optional keys are listed after `|`.
 const SOURCE_KEYS = {

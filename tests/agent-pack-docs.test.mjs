@@ -16,7 +16,7 @@ import { parseSkills, checkSkills } from '../src/apps/ai-agent/runtime/skills.mj
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SKILLS_MD = readFileSync(join(HERE, '..', 'agent', 'apps', 'docs', 'skills.md'), 'utf8');
 // The enabled app ids scripts/agent/build.mjs resolves the live 'apps' enum with (catalog.yaml).
-const APP_IDS = ['gridcraft', 'docs', 'deckcraft', 'terminal', 'sqliteviz', 'files', 'media', 'cyberchef', 'vscode', 'nettools', 'packets', 'ai-agent', 'lightcraft', 'figcraft', 'pdfcraft', 'soundcraft', 'beepbox', 'filmcraft', 'cadcraft', 'vectorcraft', 'photocraft', 'effectcraft', 'materialcraft', 'texturecraft', 'excalidraw', 'vert', 'about'];
+const APP_IDS = ['gridcraft', 'docs', 'deckcraft', 'terminal', 'sqliteviz', 'files', 'media', 'cyberchef', 'vscode', 'nettools', 'packets', 'ai-agent', 'lightcraft', 'figcraft', 'pdfcraft', 'soundcraft', 'beepbox', 'filmcraft', 'cadcraft', 'vectorcraft', 'photocraft', 'effectcraft', 'materialcraft', 'texturecraft', 'excalidraw', 'vert'];
 const choices = name => (name === 'apps' || name === 'windows' ? APP_IDS : []);
 const byName = name => tools.find(tool => tool.name === name) ?? desktopTools.find(tool => tool.name === name);
 

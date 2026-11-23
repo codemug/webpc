@@ -67,6 +67,13 @@ test('resolveLayout: out-of-range saved cells after a resize are reassigned, fit
   assert.deepEqual(layout, { a: { col: 0, row: 0 }, b: { col: 0, row: 1 } });
 });
 
+test('resolveLayout: a saved cell for an id that left the catalog is ignored (stale about)', () => {
+  // Layouts saved before the About app became the built-in Help window carry an "about"
+  // entry; the real ids keep their cells and nothing is placed for "about".
+  const layout = resolveLayout(['a', 'b'], { a: { col: 0, row: 1 }, about: { col: 0, row: 0 }, b: { col: 1, row: 0 } }, 2, 2);
+  assert.deepEqual(layout, { a: { col: 0, row: 1 }, b: { col: 1, row: 0 } });
+});
+
 test('resolveLayout: more apps than cells — rows grow, no app is dropped, no cell shared', () => {
   const ids = ['a', 'b', 'c', 'd', 'e'];
   const layout = resolveLayout(ids, {}, 2, 2);
