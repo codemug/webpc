@@ -33,13 +33,15 @@ test('Buddy is lazy, migrates legacy records without deleting them, and handles 
   skipUnlessEnabled(test,'ai-agent');
   const requests=[]; page.on('request',r=>requests.push(r.url()));
   await page.addInitScript(() => Object.defineProperty(navigator,'gpu',{configurable:true,value:undefined}));
-  await page.goto(route);
+  // Seed the old app's records from another page on the same origin, before Buddy's first
+  // start: the first start migrates once and then blocks later legacy records by design.
+  await page.goto('/pc/vendor/ai-agent/NOTICE.txt');
   await page.evaluate(async () => {
-    const {set}=await import(new URL('vendor/idb-keyval.js',document.baseURI));
+    const {set}=await import('/pc/vendor/ai-agent/vendor/idb-keyval.js');
     await set('voice-agent:conversation',{history:[{role:'user',content:'legacy text'},{role:'assistant',content:'**kept**'}],summary:''});
     localStorage.setItem('voice-agent:model','qwen3.5-0.8b');
   });
-  await page.reload(); await expect(page.locator('#messages')).toContainText('legacy text'); await expect(page.locator('#messages')).toContainText('**kept**');
+  await page.goto(route); await expect(page.locator('#messages')).toContainText('legacy text'); await expect(page.locator('#messages')).toContainText('**kept**');
   await expect(page.locator('#model')).toHaveValue('qwen3.5-0.8b');
   expect(requests.some(url=>/huggingface|\.wasm|worker\.js|transformers\.min/.test(url))).toBe(false);
   await page.locator('#load-model').click(); await expect(page.locator('#error')).toContainText('WebGPU is unavailable');
