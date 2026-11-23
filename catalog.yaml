@@ -121,6 +121,24 @@ apps:
       - type: alpine
         lock: scripts/pc/linux/packages.lock.json
         upgrade: auto
+      - type: npm
+        package: unkernel
+        version: 0.2.0-261123-8f039c5
+        upgrade: manual
+      - type: github-release
+        repo: pithings/unkernel
+        tag: v0.2.0-261123-8f039c5
+        asset: distros.json
+        url: https://github.com/pithings/unkernel/releases/download/v0.2.0-261123-8f039c5/distros.json
+        sha256: 93dff645db9796f3f1303d4d09cec15cf8e6e58e4732a02d41f15e96ad389e64
+        upgrade: manual
+      - type: github-release
+        repo: pithings/unkernel
+        tag: v0.2.0-261123-8f039c5
+        asset: alpine.erofs
+        url: https://github.com/pithings/unkernel/releases/download/v0.2.0-261123-8f039c5/alpine.erofs
+        sha256: 72a89c2638ec4cb69767b2071d9a3492134cb00c00168c5c32a932859524ae7f
+        upgrade: manual
   - id: sqliteviz
     enabled: true
     title: SQLiteViz
