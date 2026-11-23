@@ -17,7 +17,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth 0 and fetch-tags: the publish step reads the history and the published
+      # version tags to compute the next version and the draft's notes.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - uses: actions/setup-node@v4
         with:

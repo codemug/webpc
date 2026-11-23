@@ -88,6 +88,7 @@ flowchart LR
   U[weekly upgrader<br/>bump, test, smoke-check] -->|commits passing apps| C
   B --> CI[CI on main]
   CI --> R[latest-dist release<br/>tarball + SHA-256]
+  CI --> D[versioned draft release<br/>next semver tag]
   R --> H[your site<br/>served at /pc/]
 ```
 
@@ -98,8 +99,13 @@ flowchart LR
    - builds the static site;
    - removes the pages and files of disabled apps;
    - fails if the result exceeds 990 MB (GitHub Pages allows 1 GB).
-3. **CI** runs the tests and the build on every push. On `main` it publishes the result as the [`latest-dist`](https://github.com/codemug/webpc/releases/tag/latest-dist) release.
-4. **A host site** downloads `latest-dist`, checks the checksum and serves it at `/pc/`. [codemug.github.io](https://github.com/codemug/codemug.github.io) does this on every deploy and once a day.
+3. **CI** runs the tests and the build on every push. On `main` it publishes the result as the [`latest-dist`](https://github.com/codemug/webpc/releases/tag/latest-dist) release and keeps one rolling draft of the next version:
+    - the version is a semver tag, bumped from the commits since the last published release: any `type!:` subject or `BREAKING CHANGE` in a body is a major, any `feat` a minor, otherwise a patch, and the first is `v0.1.0`;
+    - on every push the draft's assets are replaced, its target moves to the pushed commit and its notes are rewritten: one line per non-merge commit, newest first, capped at 100 lines;
+    - when a feat or a breaking change lands after the draft was cut, its tag and title move to the new version.
+
+   Publishing is manual: un-draft the release in the GitHub UI, or with `gh release edit v0.1.0 --draft=false --repo codemug/webpc`. Publishing creates the version's git tag at the draft's target commit (a draft only holds a pending tag), and a host site can then pin that version.
+4. **A host site** downloads `latest-dist`, checks the checksum and serves it at `/pc/`. [codemug.github.io](https://github.com/codemug/codemug.github.io) does this on every deploy and once a day. `latest-dist` stays the rolling build until the site pins a published version; `webpc-build.json` names the commit, the build time and the version it was built from.
 
 ## The catalog
 
@@ -145,7 +151,7 @@ Icons come from upstream wherever the app ships one: the Storytold apps' own ico
 - **npm packages:** within the pinned major version (for `0.x`, within the minor).
 - **The Linux guest:** whatever Alpine's index currently ships.
 
-Every release must be at least 3 days old. One app at a time, the upgrader writes the new pins (hashing the exact new files), then runs the tests, the build and that app's smoke check. A pass becomes one commit on `main`; a failure is reverted and reported. Manual sources (hand-written adapters, AI model revisions) and new major versions are listed in the issue instead.
+Every release must be at least 3 days old. One app at a time, the upgrader writes the new pins (hashing the exact new files), then runs the tests, the build and that app's smoke check. A pass becomes one commit on `main`; a failure is reverted and reported. Manual sources (hand-written adapters, AI model revisions) and new major versions are listed in the issue instead. That commit, like every push to main, refreshes the latest-dist release and the versioned draft (see How it ships).
 
 ```sh
 npm run upgrade -- --dry-run   # see what is newer upstream, change nothing
