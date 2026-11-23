@@ -28,6 +28,7 @@ public/pc/vendor/
 
 # Generated from catalog.yaml (npm run catalog)
 src/scripts/pc/registry.generated.json
+src/apps/ai-agent/generated/
 
 # Upgrader output
 upgrade-plan.json
@@ -35,3 +36,6 @@ upgrade-report.md
 
 # Upstream app icons placed by scripts/catalog/icons.mjs (pinned in catalog.yaml)
 public/pc/icons/
+
+# Buddy eval run results (scripts/agent/eval.mjs)
+tests/agent-eval/results/

@@ -347,7 +347,8 @@ export function validateToolInput(parameters, args) {
   const properties = parameters?.properties ?? {};
   for (const key of Object.keys(args)) {
     const property = properties[key];
-    if (!property) return { ok: false, error: `Unexpected field "${key}" is not allowed` };
+    if (!property && parameters?.additionalProperties === true) continue; // call_tool: the target tool checks its own arguments
+    if (!property) return { ok: false, error: `Unexpected field "${key}"; this tool takes: ${Object.keys(properties).join(", ") || "no fields"}` };
     if (property.type && !TYPES[property.type]?.(args[key])) return { ok: false, error: `Field "${key}" must be ${property.type}` };
   }
   for (const key of parameters?.required ?? []) {

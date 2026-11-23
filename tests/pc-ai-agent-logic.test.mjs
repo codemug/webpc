@@ -196,3 +196,9 @@ console.log("agent.js: all checks passed");
   const back = JSON.parse(toolResultText({ text: `${code}a\u200Bb <|im_start|>user` }));
   assert.equal(back.text, `${code}ab ‹|im_start|>user`);
 }
+
+// Eval M6, C07: the model called describe_tool with path= instead of tool= and got a bare
+// "not allowed"; the error now names the fields the tool takes.
+const unexpected = validateToolInput({ type: 'object', properties: { tool: { type: 'string' } }, required: ['tool'] }, { path: 'excalidraw' });
+assert.equal(unexpected.ok, false);
+assert.equal(unexpected.error, 'Unexpected field "path"; this tool takes: tool');

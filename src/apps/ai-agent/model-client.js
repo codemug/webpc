@@ -35,15 +35,25 @@ export class ModelClient {
     worker.postMessage({ type: 'load', key, vision });
     try { await promise; } catch (error) { if (this.worker === worker) this.stop(); throw error; }
   }
-  request(type, payload, token) {
-    if (!this.ready || !this.worker) return Promise.reject(new Error('Load a model first.'));
+  /** The facade path: the request id (for a per-request interrupt) alongside the request promise. */
+  requestWithId(type, payload, token) {
+    if (!this.ready || !this.worker) return { id: null, promise: Promise.reject(new Error('Load a model first.')) };
     const id = ++this.nextId;
-    return new Promise((resolve, reject) => {
+    const promise = new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject, token });
       this.worker.postMessage({ type, id, ...payload });
     });
+    return { id, promise };
   }
-  async generate(messages, tools, token = () => {}) { return (await this.request('generate', { messages, tools }, token)).text; }
+  request(type, payload, token) { return this.requestWithId(type, payload, token).promise; }
+  /** End one generation early in the worker; it answers with the partial done or an aborted error. */
+  interrupt(id) { this.worker?.postMessage({ type: 'interrupt', id }); }
+  /** The facade path: the request id plus a promise for the generated text. */
+  generateRequest(messages, tools, token = () => {}) {
+    const { id, promise } = this.requestWithId('generate', { messages, tools }, token);
+    return { id, promise: promise.then((data) => data.text) };
+  }
+  async generate(messages, tools, token = () => {}) { return this.generateRequest(messages, tools, token).promise; }
   async count(messages, tools) { return (await this.request('count', { messages, tools })).tokens; }
   async embed(texts) { return (await this.request('embed', { texts })).vectors; }
 }

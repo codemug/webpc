@@ -56,15 +56,17 @@ test('Buddy executes a real calculation, preserves Markdown, persists and isolat
   await expect(page.locator('#messages')).not.toContainText('private');await expect(page.locator('#send')).toBeEnabled();
   await page.reload();await expect(page.locator('#messages')).toContainText('**42**');await load(page);await send(page,'HOLD prefill');await expect(page.locator('#model-state')).toContainText('Working');
   await page.locator('#new-chat').click();await expect(page.locator('#messages')).toBeEmpty();await page.waitForTimeout(2200);await expect(page.locator('#messages')).toBeEmpty();
-  expect(await page.evaluate(()=>window.workers.every(w=>w.wasTerminated))).toBe(true);expect(await page.evaluate(()=>window.voiceCalls)).toEqual([]);
+  // New chat never kills the worker: the old chat's held reply lands in the old thread, and the worker stays alive.
+  expect(await page.evaluate(()=>window.workers.at(-1)?.wasTerminated)).not.toBe(true);expect(await page.evaluate(()=>window.voiceCalls)).toEqual([]);
   await page.reload();await expect(page.locator('#messages')).toBeEmpty();
 });
 
 test('Buddy stops download and prefill, and model switching terminates the old worker', async ({ page }) => {
   skipUnlessEnabled(test,'ai-agent');
   await modelFixture(page);await page.goto(route);await page.locator('#load-model').click();await page.locator('#stop').click();await page.waitForTimeout(200);
-  await expect(page.locator('#send')).toBeDisabled();await load(page);await send(page,'HOLD prompt');await page.locator('#stop').click();await expect(page.locator('#send')).toBeDisabled();
-  await load(page);await send(page,'HOLD another prompt');await page.locator('#model').selectOption('qwen3.5-2b');await page.waitForTimeout(2200);
+  await expect(page.locator('#send')).toBeDisabled();await load(page);await send(page,'HOLD prompt');await page.locator('#stop').click();await expect(page.locator('#send')).toBeEnabled();await expect(page.locator('#model-state')).toContainText('Ready');expect(await page.evaluate(()=>window.workers.at(-1)?.wasTerminated)).not.toBe(true);
+  // Stop during a generation keeps the model loaded, so the next prompt needs no reload.
+  await send(page,'HOLD another prompt');await page.locator('#model').selectOption('qwen3.5-2b');await page.waitForTimeout(2200);
   await expect(page.locator('#messages')).not.toContainText('STALE ANSWER');expect(await page.evaluate(()=>window.workers.every(w=>w.wasTerminated))).toBe(true);
 });
 
@@ -103,7 +105,7 @@ test('Buddy quota errors keep saved data and let the current chat export; invali
   await modelFixture(page);await page.goto(route);await load(page);await send(page,'first saved');await expect(page.locator('#send')).toBeEnabled();
   await page.evaluate(()=>{IDBObjectStore.prototype.put=function(){throw new DOMException('Test quota exhausted','QuotaExceededError')}});
   await send(page,'second in memory');await expect(page.locator('#storage-warning')).toContainText('Test quota exhausted');await expect(page.locator('#send')).toBeEnabled();
-  const stored=await page.evaluate(async()=> (await import(new URL('vendor/idb-keyval.js',document.baseURI))).get('pc:ai-agent:conversation:v1'));expect(stored.history.some(m=>m.content==='second in memory')).toBe(false);
+  const stored=await page.evaluate(async()=>{const idb=await import(new URL('vendor/idb-keyval.js',document.baseURI));return idb.get('buddy:thread:'+document.body.dataset.thread)});expect(stored.history.some(m=>m.content==='second in memory')).toBe(false);
   const exporting=page.waitForEvent('download');await page.locator('#export').click();await exporting;
   await page.locator('#settings').click();await page.locator('#file').setInputFiles({name:'bad.json',mimeType:'application/json',buffer:Buffer.from('{"history":"broken"}')});
   await expect(page.locator('#error')).toContainText('Backup was not opened');await expect(page.locator('#messages')).toContainText('second in memory');

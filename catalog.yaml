@@ -246,6 +246,10 @@ apps:
         package: "@anthropic-ai/sdk"
         version: 1.11.0
         upgrade: manual
+      - type: npm
+        package: minisearch
+        version: 7.2.0
+        upgrade: auto
       - type: cdn-file
         package: "@huggingface/transformers"
         version: 4.3.2

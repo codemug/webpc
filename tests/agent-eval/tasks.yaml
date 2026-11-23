@@ -1,0 +1,663 @@
+# M6 real-model eval task suite (60 tasks).
+# Each task: id, set (A desktop/files, B ArtCraft, C other apps, D cross-app),
+# prompt (what a user types), setup (runner-driven: seed_file / open_app / close_all),
+# expect.tools (catalog tool names the model should call, matched as an in-order
+# subsequence), and one end-state check from the supported set:
+#   window_open: <app> | theme: dark | file_exists: <path> |
+#   file_contains: {path, text} | cell: {app, cell, input} |
+#   docs_text_contains: <text> | excalidraw_count_at_least: <n> |
+#   cyberchef_output: <text>
+# Spread: A 20, B 20, C 15, D 5.
+
+tasks:
+  # ---------------- Set A: desktop and files (20) ----------------
+  - id: A01
+    set: A
+    prompt: "Open GridCraft for me."
+    setup:
+      - close_all: true
+    expect:
+      tools: [desktop.open_app]
+    check:
+      window_open: gridcraft
+
+  - id: A02
+    set: A
+    prompt: "Can you switch the desktop to dark mode?"
+    setup:
+      - close_all: true
+    expect:
+      tools: [desktop.set_theme]
+    check:
+      theme: dark
+
+  - id: A03
+    set: A
+    prompt: "Save a new note called todo.txt that says Buy milk."
+    setup:
+      - close_all: true
+    expect:
+      tools: [files.write]
+    check:
+      file_contains: { path: /todo.txt, text: "Buy milk" }
+
+  - id: A04
+    set: A
+    prompt: "Make me a folder call Reports."
+    setup:
+      - close_all: true
+    expect:
+      tools: [files.mkdir]
+    check:
+      file_exists: /Reports
+
+  - id: A05
+    set: A
+    prompt: "Add a line to my todo.txt saying Call Ana."
+    setup:
+      - close_all: true
+      - seed_file: { path: /todo.txt, text: "Buy milk" }
+    expect:
+      tools: [files.append]
+    check:
+      file_contains: { path: /todo.txt, text: "Call Ana" }
+
+  - id: A06
+    set: A
+    prompt: "Rename my todo.txt to ideas.txt."
+    setup:
+      - close_all: true
+      - seed_file: { path: /todo.txt, text: "old list" }
+    expect:
+      tools: [files.rename]
+    check:
+      file_exists: /ideas.txt
+
+  - id: A07
+    set: A
+    prompt: "Open Files so I can see what I have saved."
+    setup:
+      - close_all: true
+    expect:
+      tools: [desktop.open_app]
+    check:
+      window_open: files
+
+  - id: A08
+    set: A
+    prompt: "Open the Docs app."
+    setup:
+      - close_all: true
+    expect:
+      tools: [desktop.open_app]
+    check:
+      window_open: docs
+
+  - id: A09
+    set: A
+    prompt: "Tuck the Files window away to the taskbar."
+    setup:
+      - close_all: true
+      - open_app: files
+    expect:
+      tools: [desktop.minimize]
+    check:
+      window_open: files
+
+  - id: A10
+    set: A
+    prompt: "Maximise the GridCraft windw."
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+    expect:
+      tools: [desktop.maximize]
+    check:
+      window_open: gridcraft
+
+  - id: A11
+    set: A
+    prompt: "Put my open windows side by side."
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+      - open_app: docs
+    expect:
+      tools: [desktop.tile]
+    check:
+      window_open: gridcraft
+
+  - id: A12
+    set: A
+    prompt: "Show me the desktop, hide all the windows."
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+    expect:
+      tools: [desktop.show_desktop]
+    check:
+      window_open: gridcraft
+
+  - id: A13
+    set: A
+    prompt: "Move the Docs window to the top left of the screen."
+    setup:
+      - close_all: true
+      - open_app: docs
+    expect:
+      tools: [desktop.move]
+    check:
+      window_open: docs
+
+  - id: A14
+    set: A
+    prompt: "Make the Files window a bit smaller."
+    setup:
+      - close_all: true
+      - open_app: files
+    expect:
+      tools: [desktop.resize]
+    check:
+      window_open: files
+
+  - id: A15
+    set: A
+    prompt: "Replace the whole contents of note.txt with the words Fresh start."
+    setup:
+      - close_all: true
+      - seed_file: { path: /note.txt, text: "old content that goes away" }
+    expect:
+      tools: [files.overwrite]
+    check:
+      file_contains: { path: /note.txt, text: "Fresh start" }
+
+  - id: A16
+    set: A
+    prompt: "Save a summary file called summary.txt inside the reports folder."
+    setup:
+      - close_all: true
+      - seed_file: { path: /reports/placeholder.txt, text: "x" }
+    expect:
+      tools: [files.write]
+    check:
+      file_exists: /reports/summary.txt
+
+  - id: A17
+    set: A
+    prompt: "Switch over to the Docs window."
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+      - open_app: docs
+    expect:
+      tools: [desktop.focus]
+    check:
+      window_open: docs
+
+  - id: A18
+    set: A
+    prompt: "Open the Terminal."
+    setup:
+      - close_all: true
+    expect:
+      tools: [desktop.open_app]
+    check:
+      window_open: terminal
+
+  - id: A19
+    set: A
+    prompt: "Create a note at /notes/list.txt with the lines: Milk, Eggs, Bread."
+    setup:
+      - close_all: true
+    expect:
+      tools: [files.write]
+    check:
+      file_contains: { path: /notes/list.txt, text: "Eggs" }
+
+  - id: A20
+    set: A
+    prompt: "Open CyberChef."
+    setup:
+      - close_all: true
+    expect:
+      tools: [desktop.open_app]
+    check:
+      window_open: cyberchef
+
+  # ---------------- Set B: ArtCraft (20) ----------------
+  - id: B01
+    set: B
+    prompt: "Type the word Total in cell A1 of my spreadsheet."
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+    expect:
+      tools: [gridcraft.set_cell]
+    check:
+      cell: { app: gridcraft, cell: A1, input: Total }
+
+  - id: B02
+    set: B
+    prompt: "Put 100 in B1 an 200 in B2."
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+    expect:
+      tools: [gridcraft.set_cells]
+    check:
+      cell: { app: gridcraft, cell: B1, input: "100" }
+
+  - id: B03
+    set: B
+    prompt: "B1 is 100 and B2 is 200. Put a formula in B3 that adds them."
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+    expect:
+      tools: [gridcraft.set_cells, gridcraft.set_cell]
+    check:
+      cell: { app: gridcraft, cell: B3, input: "300" }
+
+  - id: B04
+    set: B
+    prompt: "Make a header row with Item in A1 and Cost in B1."
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+    expect:
+      tools: [gridcraft.set_cells]
+    check:
+      cell: { app: gridcraft, cell: A1, input: Item }
+
+  - id: B05
+    set: B
+    prompt: "Type Rent in A2 and 1200 in B2."
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+    expect:
+      tools: [gridcraft.set_cells]
+    check:
+      cell: { app: gridcraft, cell: B2, input: "1200" }
+
+  - id: B06
+    set: B
+    prompt: "Type Item,Cost in A1, Rent,1200 in A2, then make a bar chart of A1:B2."
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+    expect:
+      tools: [gridcraft.set_cells, gridcraft.insert_chart]
+    check:
+      window_open: gridcraft
+
+  - id: B07
+    set: B
+    prompt: "Type Apple,3 in A1, Banana,1 in A2, Cherry,2 in A3. Then sort A1:B3 by column B."
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+    expect:
+      tools: [gridcraft.set_cells, gridcraft.sort_range]
+    check:
+      cell: { app: gridcraft, cell: A1, input: Banana }
+
+  - id: B08
+    set: B
+    prompt: "Type Title in A1 and make that cell bold."
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+    expect:
+      tools: [gridcraft.set_cell, gridcraft.format_range]
+    check:
+      cell: { app: gridcraft, cell: A1, input: Title }
+
+  - id: B09
+    set: B
+    prompt: "Start a brand new workbook, then put Hello in A1."
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+    expect:
+      tools: [gridcraft.new_workbook, gridcraft.set_cell]
+    check:
+      cell: { app: gridcraft, cell: A1, input: Hello }
+
+  - id: B10
+    set: B
+    prompt: "Type Hello in A1, then read A1 back and tell me what it says."
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+    expect:
+      tools: [gridcraft.set_cell, gridcraft.get_cell]
+    check:
+      cell: { app: gridcraft, cell: A1, input: Hello }
+
+  - id: B11
+    set: B
+    prompt: "Start a new presentation in DeckCraft and add the title Quarterly."
+    setup:
+      - close_all: true
+      - open_app: deckcraft
+    expect:
+      tools: [deckcraft.new_presentation, deckcraft.set_text]
+    check:
+      window_open: deckcraft
+
+  - id: B12
+    set: B
+    prompt: "Open a fresh document in VectorCraft and draw a rectangle."
+    setup:
+      - close_all: true
+      - open_app: vectorcraft
+    expect:
+      tools: [vectorcraft.new_document, vectorcraft.draw_shape]
+    check:
+      window_open: vectorcraft
+
+  - id: B13
+    set: B
+    prompt: "Start a new drawing in CADCraft."
+    setup:
+      - close_all: true
+      - open_app: cadcraft
+    expect:
+      tools: [cadcraft.new_drawing]
+    check:
+      window_open: cadcraft
+
+  - id: B14
+    set: B
+    prompt: "Open FigCraft and start a new document with one node."
+    setup:
+      - close_all: true
+      - open_app: figcraft
+    expect:
+      tools: [figcraft.new_document, figcraft.create_node]
+    check:
+      window_open: figcraft
+
+  - id: B15
+    set: B
+    prompt: "Create a new project in FilmCraft."
+    setup:
+      - close_all: true
+      - open_app: filmcraft
+    expect:
+      tools: [filmcraft.new_project]
+    check:
+      window_open: filmcraft
+
+  - id: B16
+    set: B
+    prompt: "Open the PDFCraft app."
+    setup:
+      - close_all: true
+    expect:
+      tools: [desktop.open_app]
+    check:
+      window_open: pdfcraft
+
+  - id: B17
+    set: B
+    prompt: "Open LightCraft."
+    setup:
+      - close_all: true
+    expect:
+      tools: [desktop.open_app]
+    check:
+      window_open: lightcraft
+
+  - id: B18
+    set: B
+    prompt: "Open EffectCraft."
+    setup:
+      - close_all: true
+    expect:
+      tools: [desktop.open_app]
+    check:
+      window_open: effectcraft
+
+  - id: B19
+    set: B
+    prompt: "Tell me what sheets my GridCraft workbook has."
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+    expect:
+      tools: [gridcraft.inspect]
+    check:
+      window_open: gridcraft
+
+  - id: B20
+    set: B
+    prompt: "Read the values in A1:B2 of my spreadsheet."
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+    expect:
+      tools: [gridcraft.read_range]
+    check:
+      window_open: gridcraft
+
+  # ---------------- Set C: other apps (15) ----------------
+  - id: C01
+    set: C
+    prompt: "Open Docs and type the words Meeting notes."
+    setup:
+      - close_all: true
+      - open_app: docs
+    expect:
+      tools: [docs.insert_text]
+    check:
+      docs_text_contains: "Meeting notes"
+
+  - id: C02
+    set: C
+    prompt: "Add a paragraph that says Action items to my document."
+    setup:
+      - close_all: true
+      - open_app: docs
+    expect:
+      tools: [docs.insert_text]
+    check:
+      docs_text_contains: "Action items"
+
+  - id: C03
+    set: C
+    prompt: "Type the word Draft into Docs, then change it to Final."
+    setup:
+      - close_all: true
+      - open_app: docs
+    expect:
+      tools: [docs.insert_text, docs.find_replace]
+    check:
+      docs_text_contains: "Final"
+
+  - id: C04
+    set: C
+    prompt: "Type the word Summary into Docs and make it a heading."
+    setup:
+      - close_all: true
+      - open_app: docs
+    expect:
+      tools: [docs.insert_text, docs.set_heading]
+    check:
+      docs_text_contains: "Summary"
+
+  - id: C05
+    set: C
+    prompt: "Type the words Draft v1 into Docs, then read the document back."
+    setup:
+      - close_all: true
+      - open_app: docs
+    expect:
+      tools: [docs.insert_text, docs.get_text]
+    check:
+      docs_text_contains: "Draft v1"
+
+  - id: C06
+    set: C
+    prompt: "Open Excalidraw and draw a rectangle on the canvas."
+    setup:
+      - close_all: true
+      - open_app: excalidraw
+    expect:
+      tools: [excalidraw.add_shapes]
+    check:
+      excalidraw_count_at_least: 1
+
+  - id: C07
+    set: C
+    prompt: "Add a circle to my Excalidraw canvas."
+    setup:
+      - close_all: true
+      - open_app: excalidraw
+    expect:
+      tools: [excalidraw.add_shapes]
+    check:
+      excalidraw_count_at_least: 1
+
+  - id: C08
+    set: C
+    prompt: "Write the word Hello as text on the Excalidraw canvas."
+    setup:
+      - close_all: true
+      - open_app: excalidraw
+    expect:
+      tools: [excalidraw.add_text]
+    check:
+      excalidraw_count_at_least: 1
+
+  - id: C09
+    set: C
+    prompt: "Draw two shapes on my Excalidraw canvas."
+    setup:
+      - close_all: true
+      - open_app: excalidraw
+    expect:
+      tools: [excalidraw.add_shapes]
+    check:
+      excalidraw_count_at_least: 2
+
+  - id: C10
+    set: C
+    prompt: "Clear my Excalidraw canvas, then add a square."
+    setup:
+      - close_all: true
+      - open_app: excalidraw
+    expect:
+      tools: [excalidraw.clear, excalidraw.add_shapes]
+    check:
+      excalidraw_count_at_least: 1
+
+  - id: C11
+    set: C
+    prompt: "Base64 encode the text hello world in CyberChef."
+    setup:
+      - close_all: true
+      - open_app: cyberchef
+    expect:
+      tools: [cyberchef.bake]
+    check:
+      cyberchef_output: "aGVsbG8gd29ybGQ="
+
+  - id: C12
+    set: C
+    prompt: "Dode this Base64 in CyberChef: aGVsbG8="
+    setup:
+      - close_all: true
+      - open_app: cyberchef
+    expect:
+      tools: [cyberchef.bake]
+    check:
+      cyberchef_output: "hello"
+
+  - id: C13
+    set: C
+    prompt: "Hash the text abc with SHA256 in CyberChef."
+    setup:
+      - close_all: true
+      - open_app: cyberchef
+    expect:
+      tools: [cyberchef.bake]
+    check:
+      cyberchef_output: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+
+  - id: C14
+    set: C
+    prompt: "Open BeepBox."
+    setup:
+      - close_all: true
+    expect:
+      tools: [desktop.open_app]
+    check:
+      window_open: beepbox
+
+  - id: C15
+    set: C
+    prompt: "Set the tempo of my BeepBox song to 120."
+    setup:
+      - close_all: true
+      - open_app: beepbox
+    expect:
+      tools: [beepbox.set_tempo]
+    check:
+      window_open: beepbox
+
+  # ---------------- Set D: cross-app (5) ----------------
+  - id: D01
+    set: D
+    prompt: "Open GridCraft and Docs, then put them side by side."
+    setup:
+      - close_all: true
+    expect:
+      tools: [desktop.open_app, desktop.tile]
+    check:
+      window_open: gridcraft
+
+  - id: D02
+    set: D
+    prompt: "Type Q3 in GridCraft A1, then save a note to /q3-note.txt saying Q3 started."
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+    expect:
+      tools: [gridcraft.set_cell, files.write]
+    check:
+      file_contains: { path: /q3-note.txt, text: "Q3 started" }
+
+  - id: D03
+    set: D
+    prompt: "Add a shape in Excalidraw, then open GridCraft next to it."
+    setup:
+      - close_all: true
+      - open_app: excalidraw
+    expect:
+      tools: [excalidraw.add_shapes, desktop.open_app]
+    check:
+      excalidraw_count_at_least: 1
+
+  - id: D04
+    set: D
+    prompt: "Encode the text hi with Base64 in CyberChef, then save the result to /enc.txt."
+    setup:
+      - close_all: true
+      - open_app: cyberchef
+    expect:
+      tools: [cyberchef.bake, files.write]
+    check:
+      file_contains: { path: /enc.txt, text: "aGk=" }
+
+  - id: D05
+    set: D
+    prompt: "Type the word Report into Docs, then save it to /report.txt."
+    setup:
+      - close_all: true
+      - open_app: docs
+    expect:
+      tools: [docs.insert_text, files.write]
+    check:
+      file_contains: { path: /report.txt, text: "Report" }

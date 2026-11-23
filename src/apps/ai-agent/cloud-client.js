@@ -48,7 +48,9 @@ export class CloudClient {
   /** `loadSdk` is injectable so the Anthropic streaming path is unit-testable (default: the vendored bundle). */
   constructor({ fetch: fetcher = globalThis.fetch, loadSdk = null } = {}) {
     this.fetch = fetcher; this.loadSdk = loadSdk ?? (() => import('./vendor/anthropic-sdk.mjs'));
-    this.ready = false; this.provider = null; this.model = null; this.baseUrl = null; this.key = null; this.effort = 'medium'; this.active = null;
+    this.ready = false; this.provider = null; this.model = null; this.baseUrl = null; this.key = null; this.effort = 'medium';
+    this.active = new Map(); // request id -> AbortController: several requests may run at once
+    this.nextId = 0;
   }
   /** Validate and activate a provider. @returns {{ host: string }} the host prompts are sent to (for the opt-in notice). */
   configure({ provider, model, baseUrl = null, key, effort = 'medium' }) {
@@ -68,16 +70,28 @@ export class CloudClient {
     return { host: new URL(this.baseUrl).hostname };
   }
   get host() { return this.ready ? new URL(this.baseUrl).hostname : ''; }
-  /** Abort an in-flight request only; the key and opt-in survive a Stop. */
-  stop() { this.active?.abort(); this.active = null; }
+  /** Abort every in-flight request only; the key and opt-in survive a Stop. */
+  stop() { for (const controller of this.active.values()) controller.abort(); this.active.clear(); }
   /** New chat, switching to a local model, or closing the app: forget everything. */
   clear() { this.stop(); this.ready = false; this.provider = null; this.model = null; this.baseUrl = null; this.key = null; }
   count(messages) { return Promise.resolve(estimateTokens(messages)); }
-  async generate(messages, schemas, onToken = () => {}) {
-    if (!this.ready) throw new Error('Enable a cloud model in Settings first.');
-    return this.provider === 'anthropic' ? this.generateAnthropic(messages, schemas, onToken) : this.generateOpenAI(messages, schemas, onToken);
+  /** The facade path: the request id plus its promise; each request gets its own AbortController. */
+  generateRequest(messages, schemas, onToken = () => {}) {
+    const id = ++this.nextId;
+    const controller = new AbortController();
+    const promise = new Promise((resolve, reject) => {
+      if (!this.ready) return reject(new Error('Enable a cloud model in Settings first.'));
+      this.active.set(id, controller);
+      const run = this.provider === 'anthropic' ? this.generateAnthropic(messages, schemas, onToken, controller) : this.generateOpenAI(messages, schemas, onToken, controller);
+      const done = run.then((value) => { this.active.delete(id); return value; }, (error) => { this.active.delete(id); throw error; });
+      done.then(resolve, reject);
+    });
+    return { id, promise };
   }
-  async generateAnthropic(messages, schemas, onToken) {
+  /** Abort one request only (a thread's Stop). */
+  abort(id) { this.active.get(id)?.abort(); }
+  async generate(messages, schemas, onToken = () => {}) { return this.generateRequest(messages, schemas, onToken).promise; }
+  async generateAnthropic(messages, schemas, onToken, controller) {
     const sdk = await this.loadSdk();
     const { Anthropic, APIError, APIConnectionError, APIUserAbortError, AuthenticationError, RateLimitError } = sdk;
     const client = new Anthropic({ apiKey: this.key, dangerouslyAllowBrowser: true });
@@ -94,9 +108,8 @@ export class CloudClient {
       output_config: { effort: this.effort },
     };
     if (schemas.length) params.tools = anthropicToolDefinitions(schemas);
-    this.active = new AbortController();
     try {
-      const stream = client.beta.messages.stream(params, { signal: this.active.signal });
+      const stream = client.beta.messages.stream(params, { signal: controller.signal });
       // The SDK's `text` event passes (textDelta: string, textSnapshot: string) — the delta itself is the text.
       stream.on('text', (delta) => onToken(delta));
       const final = await stream.finalMessage();
@@ -111,16 +124,15 @@ export class CloudClient {
       if (err instanceof APIConnectionError) throw new Error('Could not reach api.anthropic.com. Check your connection and try again.');
       if (err instanceof APIError) throw new Error(`Anthropic error ${err.status}: ${err.message}`);
       throw err;
-    } finally { this.active = null; }
+    }
   }
-  async generateOpenAI(messages, schemas, onToken) {
+  async generateOpenAI(messages, schemas, onToken, controller) {
     const { messages: apiMessages } = openAIMapping(messages);
     const body = { model: this.model, messages: apiMessages, stream: true };
     if (schemas.length) { body.tools = schemas; body.tool_choice = 'auto'; } // toolSchemas() is already the function format
-    this.active = new AbortController();
     try {
       const response = await this.fetch(`${this.baseUrl}/chat/completions`, {
-        method: 'POST', signal: this.active.signal,
+        method: 'POST', signal: controller.signal,
         headers: { 'content-type': 'application/json', authorization: `Bearer ${this.key}` },
         body: JSON.stringify(body),
       });
@@ -130,8 +142,8 @@ export class CloudClient {
         http.httpStatus = response.status;
         throw http;
       }
-      // One try/finally around the whole method: `active` must survive past the headers so
-      // stop() can still abort while parseSSE reads the body.
+      // The controller stays in the active map until the request settles, so stop() can still abort
+      // while parseSSE reads the body.
       let accumulated = '';
       const { text, toolCalls } = await parseSSE(response.body, (piece) => (accumulated += piece, onToken(piece)));
       return { text, toolCalls };
@@ -139,6 +151,6 @@ export class CloudClient {
       if (err?.name === 'AbortError') throw new DOMException('Stopped', 'AbortError');
       if (err?.httpStatus) throw err;
       throw new Error('Could not reach the OpenAI-compatible endpoint. Check the base URL and your connection.');
-    } finally { this.active = null; }
+    }
   }
 }

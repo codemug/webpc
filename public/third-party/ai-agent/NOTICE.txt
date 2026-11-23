@@ -53,3 +53,14 @@ Additional license copies cover declared JS dependencies: @huggingface/jinja (MI
 Buddy's icon: "Robot" 3D from Fluent Emoji, Microsoft, MIT (licenses/Fluent-Emoji-MIT.txt).
 https://github.com/microsoft/fluentui-emoji/blob/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Robot/3D/robot_3d.png
 Unchanged; pinned by SHA-256 in catalog.yaml and served at /pc/icons/ai-agent.png.
+
+Buddy's ArtCraft app packs (agent/apps/<app>/tools.js) adapt the tool names, descriptions and control-method mappings of each app's own MCP server, at the release WebPC pins, under that app's licence (MIT OR Apache-2.0; see /third-party/<app>/). ArtCraft names and logos are trademarks of their owners and are used only to refer to the apps.
+GridCraft: storytold/gridcraft v0.19.1, crates/mcp/src/tools.rs.
+DeckCraft: storytold/deckcraft v0.18.1, crates/mcp/src/tools.rs.
+CADCraft: storytold/cadcraft v0.20.1, crates/mcp/src/tools.rs.
+PDFCraft: storytold/pdfcraft v0.21.1, crates/automation/src/mcp.rs.
+FigCraft: storytold/figcraft v0.18.1, crates/mcp/src/tools.rs; several skills adapt crates/mcp/src/prompts.rs.
+VectorCraft: storytold/vectorcraft v0.24.1, crates/mcp/src (tool definitions and dispatch).
+FilmCraft: storytold/filmcraft v0.20.1, crates/automation/src/server.rs.
+EffectCraft: storytold/effectcraft v0.24.1, crates/automation/src/tools.rs.
+LightCraft: storytold/lightcraft v0.21.1, crates/mcp/src/tools.rs and its web command bridge.

@@ -8,7 +8,7 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "catalog": "node scripts/catalog/catalog.mjs",
+    "catalog": "node scripts/catalog/catalog.mjs && node scripts/agent/build.mjs",
     "predev": "npm run catalog",
     "dev": "npm run assets:pc && astro dev",
     "prebuild": "npm run catalog",
@@ -24,6 +24,7 @@
   "dependencies": {
     "@tailwindcss/vite": "^4.3.0",
     "astro": "^6.4.2",
+    "minisearch": "7.2.0",
     "tailwindcss": "^4.3.0"
   },
   "devDependencies": {
