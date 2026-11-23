@@ -1,9 +1,10 @@
 // Unit tests for the Terminal pack: agent/apps/terminal/tools.js and skills.md.
-// The fake terminal page mirrors the app DOM the pack reads (src/scripts/pc/apps/terminal.mjs):
-// #linux-pause (controls(): disabled when the VM is off or the page is busy; textContent
-// "Pause" = running, "Resume" = paused), #terminal-status (the last report() line) and
-// #linux-save (the app's own save action, disabled until booted). terminal.run delegates to
-// ctx.legacy.run_code, the AI-4 exec bridge the model also sees as the run_code tool.
+// The fake terminal page mirrors the app DOM the pack reads (src/scripts/pc/apps/terminal-unkernel.mjs):
+// #linux-start (controls(): disabled while the guest runs or the page is busy) and
+// #linux-restart (disabled while the guest is off or the page is busy), plus #terminal-status
+// (the last report() line). There is no pause and no save: files are kept automatically on
+// the guest's IndexedDB data disk. terminal.run delegates to ctx.legacy.run_code, the exec
+// bridge the model also sees as the run_code tool.
 // Run: node --test tests/agent-pack-terminal.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,34 +23,28 @@ const APP_IDS = ['gridcraft', 'docs', 'deckcraft', 'terminal', 'sqliteviz', 'fil
 const choices = name => (name === 'apps' || name === 'windows' ? APP_IDS : []);
 const byName = name => tools.find(tool => tool.name === name) ?? desktopTools.find(tool => tool.name === name);
 
-const fakeTerminal = (overrides = {}) => {
-  const state = { opened: 0, runs: [], saves: 0, runResult: { exitCode: 0, output: 'ok\n', truncated: false }, saveOutcome: 'Saved in this browser · 1.0 MB · 12:00:00. Linux is paused.' };
+const fakeTerminal = () => {
+  const state = { opened: 0, runs: [], runResult: { exitCode: 0, output: 'ok\n', truncated: false } };
   const statusEl = { textContent: '', dataset: {} };
-  const pause = { disabled: false, textContent: 'Pause' };
-  const save = {
-    disabled: false,
-    click() {
-      state.saves += 1;
-      statusEl.textContent = 'Capturing Linux memory and files… this may take several seconds.';
-      queueMicrotask(() => { statusEl.textContent = state.saveOutcome; });
-    },
-  };
-  const document = { getElementById: id => ({ 'linux-pause': pause, 'terminal-status': statusEl, 'linux-save': save }[id] ?? null) };
+  const start = { disabled: false };
+  const restart = { disabled: true };
+  const buttons = { 'linux-start': start, 'linux-restart': restart, 'terminal-status': statusEl };
+  const document = { getElementById: id => buttons[id] ?? null };
   const win = { document };
   const host = { appWindow: async () => { state.opened += 1; return win; } };
   const legacy = { run_code: { run: args => { state.runs.push(args); return Promise.resolve(state.runResult); } } };
-  const runTool = (name, args, extra = {}) => byName(name).run(args, { host, legacy, sleep: async () => {}, ...extra });
-  return { state, win, pause, save, statusEl, runTool };
+  const runTool = (name, args, extra = {}) => byName(name).run(args, { host, legacy, ...extra });
+  return { state, win, start, restart, statusEl, runTool };
 };
 
 test('the pack declares its id and title', () => {
   assert.deepEqual(pack, { id: 'terminal', title: 'Terminal' });
 });
 
-test('the pack exposes exactly the 4 terminal tools', () => {
-  assert.equal(tools.length, 4);
+test('the pack exposes exactly the 3 terminal tools', () => {
+  assert.equal(tools.length, 3);
   assert.deepEqual(tools.map(tool => tool.name).sort(), [
-    'terminal.open', 'terminal.run', 'terminal.save_session', 'terminal.status',
+    'terminal.open', 'terminal.run', 'terminal.status',
   ]);
 });
 
@@ -90,19 +85,27 @@ test('terminal.open opens the app window', async () => {
   assert.equal(term.state.opened, 1);
 });
 
-test('terminal.status maps the pause control to running, paused or unavailable', async () => {
+test('terminal.status maps the start and restart controls to running, stopped or busy', async () => {
   const term = fakeTerminal();
-  term.statusEl.textContent = 'Linux started · Alpine 3.20';
+  term.statusEl.textContent = 'Ready to start. The Linux image loads only when you start.';
   let got = await term.runTool('terminal.status', {});
-  assert.deepEqual(got, { state: 'running', status: 'Linux started · Alpine 3.20' });
-  term.pause.textContent = 'Resume';
-  term.statusEl.textContent = 'Linux paused · memory is retained until this page closes.';
+  assert.deepEqual(got, { state: 'stopped', status: 'Ready to start. The Linux image loads only when you start.' });
+  term.start.disabled = true;
+  term.restart.disabled = false;
+  term.statusEl.textContent = 'Linux is running · offline · files are kept in this browser.';
   got = await term.runTool('terminal.status', {});
-  assert.equal(got.state, 'paused');
-  term.pause.disabled = true;
-  term.statusEl.textContent = 'Capturing Linux memory and files… this may take several seconds.';
+  assert.deepEqual(got, { state: 'running', status: 'Linux is running · offline · files are kept in this browser.' });
+  term.start.disabled = true;
+  term.restart.disabled = true;
+  term.statusEl.textContent = 'Booting Alpine Linux…';
   got = await term.runTool('terminal.status', {});
-  assert.deepEqual(got, { state: 'unavailable', status: 'Capturing Linux memory and files… this may take several seconds.' });
+  assert.deepEqual(got, { state: 'busy', status: 'Booting Alpine Linux…' });
+});
+
+test('terminal.status reports unavailable when the page controls are missing', async () => {
+  const win = { document: { getElementById: () => null } };
+  const got = await byName('terminal.status').run({}, { host: { appWindow: async () => win } });
+  assert.deepEqual(got, { state: 'unavailable', status: '' });
 });
 
 test('terminal.run opens the window first, then delegates to the run_code bridge', async () => {
@@ -127,9 +130,9 @@ test('terminal.run passes the bridge reply through unchanged', async () => {
   term.state.runResult = { error: 'The user denied this run.' };
   const got = await term.runTool('terminal.run', { lang: 'node', code: 'x' });
   assert.deepEqual(got, { error: 'The user denied this run.' });
-  term.state.runResult = { error: 'The run exceeded its time limit and was interrupted with Ctrl+C.', output: 'partial\n', truncated: true };
+  term.state.runResult = { error: 'The run exceeded its time limit and was killed in the guest.', output: '', truncated: false };
   const timed = await term.runTool('terminal.run', { lang: 'sh', code: 'sleep 99' });
-  assert.deepEqual(timed, { error: 'The run exceeded its time limit and was interrupted with Ctrl+C.', output: 'partial\n', truncated: true });
+  assert.deepEqual(timed, { error: 'The run exceeded its time limit and was killed in the guest.', output: '', truncated: false });
 });
 
 test('terminal.run rejects with not_available when the run_code bridge is not wired', async () => {
@@ -146,45 +149,6 @@ test('terminal.run rejects a lang outside the app languages', () => {
   const tool = byName('terminal.run');
   assert.equal(checkArgs(tool, { lang: 'ruby', code: 'x' }, { choices }).ok, false, 'ruby is not an app language');
   assert.equal(checkArgs(tool, { lang: 'sh' }, { choices }).ok, false, 'code is required');
-});
-
-test('terminal.save_session clicks the app save action and waits for the status line', async () => {
-  const term = fakeTerminal();
-  const got = await term.runTool('terminal.save_session', {});
-  assert.equal(term.state.saves, 1);
-  assert.deepEqual(got, { saved: true, status: term.state.saveOutcome });
-});
-
-test('terminal.save_session reports a storage failure as saved false', async () => {
-  const term = fakeTerminal();
-  term.state.saveOutcome = 'Could not save in this browser. Export session now to keep your work. QuotaExceededError';
-  const got = await term.runTool('terminal.save_session', {});
-  assert.deepEqual(got, { saved: false, status: term.state.saveOutcome });
-});
-
-test('terminal.save_session rejects when the save action is disabled', async () => {
-  const term = fakeTerminal();
-  term.save.disabled = true;
-  await assert.rejects(term.runTool('terminal.save_session', {}), error => {
-    assert.ok(error instanceof ToolError);
-    assert.equal(error.type, 'app_error');
-    assert.match(error.message, /not ready to save/);
-    return true;
-  });
-  assert.equal(term.state.saves, 0, 'nothing was clicked');
-});
-
-test('terminal.save_session does not report a stale Saved line as the new save', async () => {
-  const term = fakeTerminal();
-  // The status already holds the result of an earlier save, and this save reports the same
-  // text: only a status change counts, so the tool times out instead of a false positive.
-  term.statusEl.textContent = term.state.saveOutcome;
-  await assert.rejects(term.runTool('terminal.save_session', {}), error => {
-    assert.ok(error instanceof ToolError);
-    assert.equal(error.type, 'app_error');
-    assert.match(error.message, /did not finish/);
-    return true;
-  });
 });
 
 test('a tool rejects with not_available when ctx.host is absent', async () => {
@@ -231,4 +195,13 @@ test('every skill opens by launching the terminal, then uses numbered terminal s
 test('skill steps and tools lines validate against the runtime checkArgs', () => {
   const errors = checkSkills(skills, byName, { checkArgs: (tool, args) => checkArgs(tool, args, { choices }) });
   assert.deepEqual(errors, []);
+});
+
+test('no skill or tool tells the user to save the session', () => {
+  for (const tool of tools) {
+    assert.ok(!/save the (Linux )?session/i.test(`${tool.purpose} ${tool.when}`), `${tool.name} mentions saving`);
+  }
+  for (const skill of skills) {
+    assert.ok(!/call_tool tool=terminal\.save_session/.test(skill.body), `skill ${skill.slug} calls the retired save tool`);
+  }
 });

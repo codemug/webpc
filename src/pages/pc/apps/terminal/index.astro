@@ -2,20 +2,25 @@
 import UtilityLayout from '../../../../components/pc/UtilityLayout.astro';
 ---
 <UtilityLayout title="Linux Terminal">
-  <header class="linux-header"><h1>Linux Terminal</h1><button id="linux-start">Start Linux</button><button id="linux-pause" hidden disabled>Pause</button><button id="linux-restart" disabled>Restart</button><button id="linux-save" hidden disabled>Save session</button></header>
-  <p class="utility-note">Alpine Linux · 64-bit · Python 3 and Node.js · offline. Uses 512 MB guest RAM plus browser overhead. Files are kept in this browser automatically.</p>
+  <header class="linux-header"><h1>Linux Terminal</h1><button id="linux-start">Start Linux</button><button id="linux-restart" disabled>Restart</button></header>
+  <p class="utility-note linux-chips" aria-label="What runs in the guest">
+    <span class="linux-chip" title="A 64-bit Alpine Linux 3.24 guest image, pinned at build time.">Alpine 3.24</span>
+    <span class="linux-chip" title="Python 3 is pre-installed in the guest and works offline.">Python 3</span>
+    <span class="linux-chip" title="Node.js is pre-installed in the guest and works offline.">Node.js</span>
+    <span class="linux-chip" title="The guest has no network access: no browsing, no package installs, no reach into this computer.">Offline</span>
+    <span class="linux-chip" data-chip="saved" title="Files you write are kept in this browser (IndexedDB) across restarts and page reloads.">Saved in this browser</span>
+  </p>
   <div class="linux-tools" aria-label="Session and keyboard controls">
-    <button id="linux-restore" hidden disabled>Restore saved</button><button id="linux-export" hidden disabled>Export session</button><button id="linux-import" hidden>Import session</button>
     <button id="linux-fit" disabled title="Re-measure the window and update the guest's rows and columns; safe inside running programs">Fit guest</button>
     <button data-linux-key="interrupt" disabled aria-label="Send Control C">Ctrl+C</button><button data-linux-key="tab" disabled aria-label="Send Tab">Tab</button><button data-linux-key="escape" disabled aria-label="Send Escape">Esc</button>
     <button id="linux-help" aria-expanded="false" aria-controls="linux-help-panel">Help</button>
-    <input id="linux-backup" type="file" accept=".webpcvm,application/octet-stream" hidden/>
   </div>
   <section id="linux-help-panel" class="linux-help" hidden>
-    <p>This is a real Linux kernel (64-bit) running locally in a worker. Try <code>python3 hello.py</code>, <code>node hello.js</code>, or <code>echo hello | tr a-z A-Z</code>. Ctrl+C interrupts programs. The touch buttons send keys to the guest.</p>
-    <p>Files you write are kept in this browser across restarts and page reloads. The saved-session controls (Save, Restore, Export, Import) are hidden until they return in a later milestone.</p>
+    <p>This is a real Linux kernel (64-bit) running locally in a worker. The shell is busybox sh (no bash); the shell user is <code>user</code>, with passwordless <code>sudo</code> for system changes. Try <code>python3 hello.py</code>, <code>node hello.js</code>, or <code>echo hello | tr a-z A-Z</code>. Ctrl+C interrupts programs. The touch buttons send keys to the guest.</p>
+    <p>Files you write are kept in this browser across restarts and page reloads.</p>
+    <p>The guest runs in 512 MB of RAM, plus the browser's overhead. Long sessions and large workloads may exceed a mobile browser's memory.</p>
     <p>The display fits the window automatically. <strong>Fit guest</strong> re-measures after resizing and updates the guest's rows and columns directly, so it is safe inside running programs.</p>
-    <p>No public network relay is configured. The guest cannot browse the Internet, install packages online, SSH, or access your computer's files. General networking needs a separately hosted relay; this app does not supply one. Long sessions and large workloads may exceed a mobile browser's memory.</p>
+    <p>No public network relay is configured. The guest cannot browse the Internet, install packages online, SSH, or access your computer's files. General networking needs a separately hosted relay; this app does not supply one.</p>
     <p><a href="/third-party/terminal/README.txt" target="_blank" rel="noopener">Runtime, guest licenses, and source provenance</a></p>
   </section>
   <p class="utility-status" id="terminal-status" role="status">Ready to start. The Linux image loads only when you start.</p>
@@ -28,6 +33,8 @@ import UtilityLayout from '../../../../components/pc/UtilityLayout.astro';
   <main id="terminal" aria-label="Linux terminal"></main>
   <script>import '../../../../scripts/pc/apps/terminal-unkernel.mjs';</script>
   <style>
+    .linux-chips { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+    .linux-chip { background:var(--color-surface); border:1px solid var(--color-border-strong); border-radius:4px; padding:2px 8px; font-size:11px; line-height:1.5; cursor:help; }
     .linux-tools { display:flex; flex-wrap:wrap; gap:6px; padding:8px 14px; border-bottom:1px solid var(--color-border); }
     .linux-tools button { font-size:11px; min-height:34px; padding:6px 8px; }
     .linux-help { padding:8px 14px; overflow:auto; max-height:45vh; border-bottom:1px solid var(--color-border); font-size:12px; line-height:1.6; }

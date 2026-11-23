@@ -31,12 +31,12 @@ test('validation names the app and field for each defect', () => {
 
 test('npm pins that drift from package.json or the lockfile are reported', () => {
   const catalog = base();
-  const pinned = appSources(catalog, 'terminal', 'npm', 'v86')[0].version;
-  const pkg = { dependencies: {}, devDependencies: { v86: `${pinned}-other` } };
-  const lock = { packages: { 'node_modules/v86': { version: pinned } } };
+  const pinned = appSources(catalog, 'terminal', 'npm', '@xterm/xterm')[0].version;
+  const pkg = { dependencies: {}, devDependencies: { '@xterm/xterm': `${pinned}-other` } };
+  const lock = { packages: { 'node_modules/@xterm/xterm': { version: pinned } } };
   const errors = checkNpmPins({ apps: [byId(catalog, 'terminal')] }, pkg, lock).join('\n');
-  assert.ok(errors.includes(`terminal: v86 is ${pinned} in the catalog but ${pinned}-other in package.json`), errors);
-  assert.match(errors, /terminal: @xterm\/xterm is missing from package\.json/);
+  assert.ok(errors.includes(`terminal: @xterm/xterm is ${pinned} in the catalog but ${pinned}-other in package.json`), errors);
+  assert.match(errors, /terminal: @xterm\/addon-fit is missing from package\.json/);
 });
 
 test('a disabled app leaves the desktop registry; the others keep their order and fields', () => {
@@ -55,7 +55,7 @@ test('a disabled app leaves the desktop registry; the others keep their order an
 test('appSources filters an app\'s sources by type and package', () => {
   const catalog = base();
   assert.equal(appSources(catalog, 'gridcraft', 'github-release')[0].repo, 'storytold/gridcraft');
-  assert.equal(appSources(catalog, 'terminal', 'npm', 'v86')[0].version, byId(catalog, 'terminal').sources[0].version);
+  assert.equal(appSources(catalog, 'terminal', 'npm', '@xterm/xterm')[0].version, byId(catalog, 'terminal').sources[0].version);
   assert.deepEqual(appSources(catalog, 'files'), []);
 });
 

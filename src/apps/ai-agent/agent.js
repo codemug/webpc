@@ -17,7 +17,7 @@ const LANG_CODE = /^[a-z]{2,3}(-[A-Za-z]{2,8})*$/;
  */
 export function execReplyToToolResult(reply) {
   if (reply?.type === "exec-result") return { exitCode: reply.exitCode, output: String(reply.output ?? ""), truncated: reply.truncated === true };
-  if (reply?.type === "exec-error" && reply.reason === "timeout") return { error: "The run exceeded its time limit and was interrupted with Ctrl+C.", output: String(reply.output ?? ""), truncated: reply.truncated === true };
+  if (reply?.type === "exec-error" && reply.reason === "timeout") return { error: "The run exceeded its time limit and was killed in the guest.", output: String(reply.output ?? ""), truncated: reply.truncated === true };
   const reason = reply?.type === "exec-error" ? reply.reason : "invalid";
   const message = {
     "not-running": "The Linux guest is not running. The user needs to open the Linux Terminal app and press Start Linux first.",
@@ -121,7 +121,7 @@ export function createTools(host) {
       properties: {
         code: { type: "string", description: `Code to run (max ${MAX_CODE_CHARS} characters)` },
         lang: { type: "string", description: "python, node or sh" },
-        timeout_ms: { type: "number", description: "Optional run limit in milliseconds, 1-120000 (default 30000); the run is interrupted with Ctrl+C at the limit and the partial output is returned" },
+        timeout_ms: { type: "number", description: "Optional run limit in milliseconds, 1-120000 (default 30000); the run is killed at the limit" },
       },
       required: ["code", "lang"],
     },

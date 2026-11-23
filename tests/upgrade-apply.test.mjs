@@ -10,8 +10,6 @@ const repo = new URL('..', import.meta.url).pathname;
 function sandbox() {
   const root = mkdtempSync(join(tmpdir(), 'webpc-apply-'));
   copyFileSync(join(repo, 'catalog.yaml'), join(root, 'catalog.yaml'));
-  mkdirSync(join(root, 'scripts/pc/linux'), { recursive: true });
-  copyFileSync(join(repo, 'scripts/pc/linux/packages.lock.json'), join(root, 'scripts/pc/linux/packages.lock.json'));
   return root;
 }
 const hashes = [];
@@ -51,16 +49,22 @@ test('npm: the catalog version changes and npm installs that exact version', asy
 
 test('alpine: the lock file is rewritten from the index and the catalog is untouched', async () => {
   const root = sandbox();
-  const lock = JSON.parse(readFileSync(join(root, 'scripts/pc/linux/packages.lock.json'), 'utf8'));
+  const lockPath = 'scripts/pc/terminal/alpine-test.lock.json';
+  const lock = { branch: 'v3.24', architecture: 'aarch64', packages: [
+    { name: 'python3', version: '3.14.10-r1', origin: 'python3', license: 'PSF-2.0', sourceCommit: 'a'.repeat(40), url: 'u' },
+    { name: 'nodejs', version: '24.22.3-r0', origin: 'nodejs', license: 'MIT', sourceCommit: 'b'.repeat(40), url: 'v' },
+  ] };
+  mkdirSync(join(root, 'scripts/pc/terminal'), { recursive: true });
+  writeFileSync(join(root, lockPath), JSON.stringify(lock));
+  const before = `apps:\n  - id: alpinetest\n    enabled: true\n    sources:\n      - type: alpine\n        lock: ${lockPath}\n        upgrade: auto\n`;
+  writeFileSync(join(root, 'catalog.yaml'), before);
   const index = new Map(lock.packages.map(p => [p.name, { ...p }]));
   index.set(lock.packages[0].name, { ...lock.packages[0], version: `${lock.packages[0].version}-next` });
-  const terminal = parse(readFileSync(join(root, 'catalog.yaml'), 'utf8')).apps.find(a => a.id === 'terminal');
-  const at = terminal.sources.findIndex(s => s.type === 'alpine');
-  const changed = await applyApp([{ app: 'terminal', index: at, type: 'alpine' }], { root, hash, apk: async () => index });
-  assert.deepEqual(changed, ['scripts/pc/linux/packages.lock.json']);
-  const next = JSON.parse(readFileSync(join(root, 'scripts/pc/linux/packages.lock.json'), 'utf8'));
+  const changed = await applyApp([{ app: 'alpinetest', index: 0, type: 'alpine' }], { root, hash, apk: async () => index });
+  assert.deepEqual(changed, [lockPath]);
+  const next = JSON.parse(readFileSync(join(root, lockPath), 'utf8'));
   assert.equal(next.packages[0].version, `${lock.packages[0].version}-next`);
-  assert.equal(readFileSync(join(root, 'catalog.yaml'), 'utf8'), readFileSync(join(repo, 'catalog.yaml'), 'utf8'));
+  assert.equal(readFileSync(join(root, 'catalog.yaml'), 'utf8'), before);
 });
 
 test('github release: an icon taken from the app repo is re-pinned at the new tag', async () => {

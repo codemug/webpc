@@ -1,0 +1,21 @@
+Pre-baked data disk template for the Terminal (unkernel, Alpine Linux 3.24, aarch64)
+
+File: webpc-terminal-data-v1.kwsparse.gz (gzipped kwsparse, 39,665,635 bytes)
+SHA-256: 058a918d3772ddb5976692aa093e8ef1c6368a75a376e800ea39f0877ce413bd
+It is the public asset of this repository's "terminal-data-v1" release,
+published 2026-11-23:
+https://github.com/codemug/webpc/releases/tag/terminal-data-v1
+
+The release notes list every package the template adds on top of the
+pinned unkernel alpine.erofs image (28 packages from Alpine's v3.24 main
+repository, including python3 3.14.10-r1 and nodejs 24.22.3-r0) with its
+licence, and how the template is rebuilt:
+  node --experimental-wasm-jspi scripts/pc/terminal/prebake.mjs
+(versions pinned in scripts/pc/terminal/packages.json).
+
+These are Alpine Linux's own binary packages, unmodified. Their source is
+Alpine's: the aports build recipes at branch 3.24-stable
+(https://gitlab.alpinelinux.org/alpine/aports/-/tree/3.24-stable) and the
+source archives on Alpine's distfiles mirror
+(https://distfiles.alpinelinux.org/distfiles/). Each package keeps the
+licence listed in the release notes.
