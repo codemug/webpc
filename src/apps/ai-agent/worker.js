@@ -22,7 +22,8 @@ async function loadWasm() {
   for (const part of parts) { joined.set(part, offset); offset += part.length; }
   env.backends.onnx.wasm.wasmBinary = joined.buffer;
 }
-const MAX_NEW_TOKENS = 384;
+// 1024: a full 26-app list needs about 500 tokens; tool-call rounds stay far shorter.
+const MAX_NEW_TOKENS = 1024;
 // Long prompts are prefilled in chunks: one pass over the whole prompt makes an attention buffer of about
 // prompt² × 32 bytes, and ONNX Runtime WebGPU overflows ("SafeIntOnOverflow") once that passes 4 GiB
 // (~11.6k tokens on LFM3). A chunk's buffer is only chunk × context × 32 bytes, so the chunk shrinks as the
@@ -196,7 +197,8 @@ async function generate({ id, messages, tools }) {
   // The last generated token was never fed back, so the cache covers one token less than `sequences`.
   cached = { ids: Array.from(sequences.data).slice(0, past_key_values.get_seq_length()), pkv: past_key_values };
   const [text] = tokenizer.batch_decode(sequences.slice(null, [ids.length, null]), { skip_special_tokens: true });
-  postMessage({ type: "done", id, text });
+  // Stop also ends a generation early; only reaching the token cap marks a cut-off answer.
+  postMessage({ type: "done", id, text, ...(sequences.dims[1] - ids.length >= MAX_NEW_TOKENS && { truncated: true }) });
 }
 
 /**
@@ -222,7 +224,7 @@ async function generateImage({ id, messages, images }) {
     return_dict_in_generate: true,
   });
   const [answer] = tokenizer.batch_decode(output.sequences.slice(null, [promptLength, null]), { skip_special_tokens: true });
-  postMessage({ type: "done", id, text: answer });
+  postMessage({ type: "done", id, text: answer, ...(output.sequences.dims[1] - promptLength >= MAX_NEW_TOKENS && { truncated: true }) });
 }
 
 // Serialize requests. The host terminates this worker on cancellation, including model download and prefill.

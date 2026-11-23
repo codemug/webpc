@@ -153,10 +153,13 @@ export class AgentSession {
         }
         const content = dropStampEcho(visibleText(raw), formatTime(work.findLast(m => m.role === 'user').at)).trim();
         this.emit('reply-token', { bubble, text: content });
-        const calls = canTools ? (typeof gen === 'string' ? parseToolCalls(raw) : gen.toolCalls) : [];
+        const calls = canTools ? (typeof gen === 'string' ? parseToolCalls(raw) : gen.toolCalls ?? parseToolCalls(raw)) : [];
         if (!calls.length) {
           work.push({ role: 'assistant', content: content || 'The model returned no visible answer. Try a clearer request or another model.' });
           this.emit('reply-token', { bubble, text: work.at(-1).content });
+          // A cut-off final answer gets a visible marker (the UI adds the notice); cut tool-call
+          // rounds say nothing new, since the existing guards handle a broken call.
+          if (gen.truncated) this.emit('reply-cut', { bubble });
           this.history = [...work]; await this.persist(); this.check(run); break;
         }
         const records = calls.slice(0, 8).map((call, i) => ({ id: `call_${run.version}_${round}_${i}`, type: 'function', function: call }));

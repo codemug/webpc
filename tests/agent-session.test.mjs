@@ -189,3 +189,16 @@ test('nextStepFor points each repeated meta tool at its next step, or the plain 
   assert.equal(nextStepFor('desktop.list_apps', { hits: [{ path: 'a/b' }] }), null);
 });
 
+test('a truncated final answer emits reply-cut once; an untruncated answer emits nothing', async () => {
+  const { session } = setup([{ text: 'Your apps:', truncated: true }]);
+  const events = [];
+  session.emit = (type) => { events.push(type); };
+  await session.send('List my apps');
+  assert.deepEqual(events.filter(type => type === 'reply-cut'), ['reply-cut']);
+  const plain = setup(['No cut here.']);
+  const none = [];
+  plain.session.emit = (type) => { none.push(type); };
+  await plain.session.send('Hi');
+  assert.ok(!none.includes('reply-cut'), `events: ${none.join(', ')}`);
+});
+

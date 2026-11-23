@@ -6,6 +6,34 @@ import { anthropicImageBlock, openAIImagePart, anthropicToolDefinitions, parseSS
 const isToolResultMessage = (m, last) => last?.role === 'user' && Array.isArray(last.content) && last.content.every((b) => b.type === 'tool_result');
 const toolResultHasError = (m) => { try { return Boolean(JSON.parse(m.content).error); } catch { return false; } };
 
+// Scan one tee'd branch of an SSE body for choices[0].finish_reason (the last one wins); '' when
+// absent. The body can reject (an aborted stream); the finish reason is then unknown, not an error.
+async function readFinishReason(stream) {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let finish = '';
+  let buffer = '';
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        const data = line.trim().replace(/^data:/, '').trim();
+        if (!data || data === '[DONE]') continue;
+        let chunk; try { chunk = JSON.parse(data); } catch { continue; }
+        const reason = chunk.choices?.[0]?.finish_reason;
+        if (reason) finish = reason;
+      }
+    }
+  } catch {
+    // Aborted or failed body: stop scanning, the finish reason stays what it was.
+  }
+  return finish;
+}
+
 /** Local history → Anthropic Messages shape (system out to the `system` parameter; tool results merged into one user message). */
 export function anthropicMapping(messages) {
   const system = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n');
@@ -116,7 +144,7 @@ export class CloudClient {
       const toolCalls = (final.content ?? []).filter((b) => b.type === 'tool_use').map((b) => ({ name: b.name, arguments: b.input ?? {} }));
       const text = (final.content ?? []).filter((b) => b.type === 'text').map((b) => b.text).join('');
       if (final.stop_reason === 'refusal') return { text, toolCalls: [], refusal: refusalNotice(final.stop_details) };
-      return { text, toolCalls };
+      return { text, toolCalls, ...(final.stop_reason === 'max_tokens' && { truncated: true }) };
     } catch (err) {
       if (err?.name === 'AbortError' || err instanceof APIUserAbortError) throw new DOMException('Stopped', 'AbortError');
       if (err instanceof AuthenticationError) throw new Error('The Anthropic API key was rejected. Check it in Settings and try again.');
@@ -145,8 +173,12 @@ export class CloudClient {
       // The controller stays in the active map until the request settles, so stop() can still abort
       // while parseSSE reads the body.
       let accumulated = '';
-      const { text, toolCalls } = await parseSSE(response.body, (piece) => (accumulated += piece, onToken(piece)));
-      return { text, toolCalls };
+      // parseSSE (cloud.js, another lane's file) does not report finish_reason; tee the body and
+      // scan the second branch so a length stop gets the same truncated flag as the local worker.
+      const [main, probe] = response.body.tee();
+      const finish = readFinishReason(probe);
+      const { text, toolCalls } = await parseSSE(main, (piece) => (accumulated += piece, onToken(piece)));
+      return { text, toolCalls, ...((await finish) === 'length' && { truncated: true }) };
     } catch (err) {
       if (err?.name === 'AbortError') throw new DOMException('Stopped', 'AbortError');
       if (err?.httpStatus) throw err;
