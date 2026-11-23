@@ -42,7 +42,7 @@ function fakeWorker({ autoReady = true } = {}) {
           started.push(handle.id);
           const end = (msg) => { if (handle.state !== 'running') return; runningId = null; handle.state = 'done'; this.dispatch(msg); resolve(); };
           handle.token = (text) => { handle.partial += text; this.dispatch({ type: 'token', id: handle.id, text }); };
-          handle.finish = (text) => end({ type: 'done', id: handle.id, text });
+          handle.finish = (text, extra = {}) => end({ type: 'done', id: handle.id, text, ...extra });
           handle.fail = (message) => end({ type: 'error', id: handle.id, message });
           handle.interrupt = () => end({ type: 'done', id: handle.id, text: handle.partial });
         }));
@@ -216,6 +216,20 @@ test('stop on a thread with only queued jobs drops them without starting them', 
   assert.deepEqual(genIds(harness.posted), [idA], 'b was never posted to the worker');
   assert.deepEqual(harness.started, [idA], 'b never ran in the worker');
   assert.equal(await pa, 'a done', 'the running thread is untouched');
+});
+
+test('a truncated done resolves to { text, truncated }; an uncut done stays a plain string', async () => {
+  const { harness, facades: [a] } = await localShared(fakeWorker(), ['a']);
+  const p1 = a.generate(userMsg('hi'), []);
+  await sleep(20);
+  const [id1] = genIds(harness.posted);
+  harness.jobs.get(id1).finish('Your apps:');
+  assert.equal(await p1, 'Your apps:', 'the facade contract keeps an uncut answer a string');
+  const p2 = a.generate(userMsg('hi again'), []);
+  await sleep(20);
+  const id2 = genIds(harness.posted).at(-1);
+  harness.jobs.get(id2).finish('Your apps:', { truncated: true });
+  assert.deepEqual(await p2, { text: 'Your apps:', truncated: true }, 'only a cut-off answer is an object, with the flag');
 });
 
 test('cloud: a thread stop aborts only its own in-flight request', async () => {

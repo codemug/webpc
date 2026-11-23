@@ -40,14 +40,16 @@ async function ask(buddy, text, timeout = 15000) {
   return buddy.locator('.message.assistant').last().innerText();
 }
 
-test('Buddy opens an app through call_tool, with the skill note and only the six meta tools', async ({ page }) => {
+test('Buddy opens an app through call_tool, with no skill note by default and only the six meta tools', async ({ page }) => {
   skipUnlessEnabled(test, 'ai-agent');
   await scriptedModel(page);
   const buddy = await openBuddy(page);
   const reply = await ask(buddy, 'Open the Files app please');
   await expect(page.locator('[data-window="files"]')).toBeVisible();
   expect(reply).toContain('"ok":true');
-  expect(reply).toContain('NOTE=true');
+  // The per-turn skill note is off by default (app.js): on the clean 60-task eval lfm3-1.7b
+  // scored 29/60 without it and 24/60 with it. Only ?eval=1&prefetch=1 turns it on.
+  expect(reply).toContain('NOTE=false');
   expect(reply).toContain('TOOLS=lookup_skill_index,read_skill,find_in_skill,find_tool,describe_tool,call_tool');
 });
 

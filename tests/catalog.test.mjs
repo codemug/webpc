@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parse } from 'yaml';
-import { validateCatalog, checkNpmPins, registryEntries, loadCatalog, appSources, isEnabled } from '../scripts/catalog/catalog.mjs';
+import { validateCatalog, checkNpmPins, registryEntries, loadCatalog, appSources, isEnabled, LEGACY_NON_WASM } from '../scripts/catalog/catalog.mjs';
 
 const base = () => parse(readFileSync(new URL('../catalog.yaml', import.meta.url), 'utf8'));
 const errorsOf = mutate => { const c = base(); mutate(c); return validateCatalog(c); };
@@ -83,4 +83,28 @@ test('panel: Buddy is the one kind: panel app, with an iframe-style src', () => 
   assert.equal(registryEntries(base()).find(e => e.id === 'ai-agent').title, 'Buddy');
   assert.match(errorsOf(c => { byId(c, 'ai-agent').src = '/pc/apps/other/'; }).join('\n'), /ai-agent: src must be \/pc\/apps\/ai-agent\//);
   assert.match(errorsOf(c => { byId(c, 'sqliteviz').kind = 'panel'; }).join('\n'), /only one app may be kind: panel .* found sqliteviz, ai-agent|only one app may be kind: panel .* found ai-agent, sqliteviz/);
+});
+
+test('wasm.build: every packaged (kind: iframe) app declares how its wasm is built; the legacy list is the only exception', () => {
+  const addApp = c => c.apps.push({ id: 'newapp', enabled: true, title: 'New App', category: 'Utilities', keywords: ['new'], description: 'A newly packaged app.', src: '/pc/apps/newapp/', kind: 'iframe' });
+  // A new iframe app without wasm.build fails, naming the app and the field to add.
+  assert.match(errorsOf(addApp).join('\n'), /newapp: wasm\.build is required/);
+  // ...and the same app with a build command validates.
+  assert.deepEqual(errorsOf(c => { addApp(c); c.apps.at(-1).wasm = { build: 'cargo xtask web' }; }), []);
+  // The committed catalog has a wasm block for exactly the non-legacy iframe apps and validates.
+  const catalog = base();
+  for (const app of catalog.apps) {
+    const needsWasm = app.kind === 'iframe' && !LEGACY_NON_WASM.has(app.id);
+    assert.equal('wasm' in app, needsWasm, `${app.id}: the committed catalog must ${needsWasm ? 'have' : 'not have'} a wasm block`);
+  }
+  assert.equal(validateCatalog(catalog).length, 0, 'the real catalog.yaml validates');
+});
+
+test('wasm block shape: unknown keys and empty builds are rejected; legacy, external and panel apps pass without one', () => {
+  assert.match(errorsOf(c => { byId(c, 'gridcraft').wasm.note = 'trunk'; }).join('\n'), /gridcraft: wasm: unknown key "note"/);
+  assert.match(errorsOf(c => { byId(c, 'gridcraft').wasm.build = '   '; }).join('\n'), /gridcraft: wasm\.build must be a non-empty string/);
+  assert.match(errorsOf(c => { byId(c, 'gridcraft').wasm = 'trunk build'; }).join('\n'), /gridcraft: wasm must be a mapping/);
+  // Dropping every wasm block still leaves the legacy, external and panel apps valid.
+  assert.deepEqual(errorsOf(c => { for (const id of LEGACY_NON_WASM) delete byId(c, id).wasm; }), []);
+  assert.deepEqual(errorsOf(c => { for (const id of ['vscode', 'vert', 'ai-agent']) delete byId(c, id).wasm; }), []);
 });

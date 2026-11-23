@@ -116,6 +116,8 @@ Each entry under `apps:` has a desktop entry (`title`, `category`, `keywords`, `
   enabled: true
   title: GridCraft
   category: Office
+  wasm:
+    build: "cd apps/gridcraft-web && trunk build --release"
   icon:                     # the app's own icon, pinned and served by WebPC
     from: repo              # a file in the app's repo at its release tag
     path: assets/app-icon/hicolor/256x256/apps/ai.storyteller.gridcraft.png
@@ -140,6 +142,8 @@ Each entry under `apps:` has a desktop entry (`title`, `category`, `keywords`, `
 | `huggingface` | model repo and commit | Buddy's models |
 
 Icons come from upstream wherever the app ships one: the Storytold apps' own icon set (re-pinned by the upgrader whenever the tag moves), the icons inside the SQLiteViz, BeepBox and CyberChef releases, and pinned files for Excalidraw and VERT. WebPC's own apps keep its gradient tiles.
+
+**A packaged app builds to WebAssembly.** An app is *packaged* when WebPC downloads its pinned release, prepares it under `/pc/apps/<id>/` and ships its bytes with the site: every `kind: iframe` app. Each packaged entry carries a `wasm` block whose single key `build` is the command that builds the app's wasm module from its source repository at the pinned version (for example `cd apps/gridcraft-web && trunk build --release`). WebPC's build never runs that command; it ships the upstream artifact as-is. An app added after 2026-11-23 must provide a real `wasm.build`. The pre-existing apps that ship no wasm module built from their own source (JavaScript apps such as CyberChef and BeepBox, and WebPC's own Files and Media pages) are exempted by the `LEGACY_NON_WASM` list in `scripts/catalog/catalog.mjs`, which is closed: do not add ids to it. `external` apps (a link to a hosted service) and the one `panel` app (Buddy) are not packaged, so they need no `wasm` block.
 
 `npm run catalog` validates the file, naming the app and field of every defect, and generates the desktop registry. `npm test` and `npm run build` run it first.
 

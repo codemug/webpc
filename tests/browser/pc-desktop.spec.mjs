@@ -38,11 +38,12 @@ test('PC launches lazily and reuses app state after minimize and close', async (
 
 test('PC manages keyboard geometry, stacking, maximize, and launcher focus', async ({ page }) => {
   skipUnlessEnabled(test, 'gridcraft');
-  skipUnlessEnabled(test, 'about'); // this test also drives the About (Help) window
   await fakeGridcraft(page);
   await page.goto('/pc/');
+  await expect(page.locator('.pc-shortcuts').getByText('About WebPC', { exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Apps', exact: true }).click();
   await expect(page.locator('#pc-launcher')).toBeVisible();
+  await expect(page.locator('#pc-launcher').getByText('About WebPC', { exact: true })).toHaveCount(0);
   await page.keyboard.press('Escape');
   await expect(page.locator('[data-launcher-toggle]')).toBeFocused();
   await page.locator('[data-shortcut="gridcraft"]').focus();
@@ -58,9 +59,9 @@ test('PC manages keyboard geometry, stacking, maximize, and launcher focus', asy
   const moved = await win(page, 'about').boundingBox();
   expect(moved.x).toBe(before.x - 20);
   expect(moved.width).toBe(before.width - 20);
-  await page.getByRole('button', { name: 'Maximize About WebPC', exact: true }).click();
+  await page.getByRole('button', { name: 'Maximize Help', exact: true }).click();
   await expect(win(page, 'about')).toHaveAttribute('data-maximized', 'true');
-  await page.getByRole('button', { name: 'Restore About WebPC', exact: true }).click();
+  await page.getByRole('button', { name: 'Restore Help', exact: true }).click();
   expect((await win(page, 'about').boundingBox()).width).toBe(moved.width);
   await page.frameLocator('iframe').getByLabel('Cell A1').click();
   await expect(win(page, 'gridcraft')).toHaveAttribute('data-active', 'true');
@@ -70,9 +71,8 @@ test('PC manages keyboard geometry, stacking, maximize, and launcher focus', asy
 });
 
 test('PC pointer dragging and resizing work without escaping the workspace', async ({ page }) => {
-  skipUnlessEnabled(test, 'about');
   await page.goto('/pc/');
-  await page.locator('[data-shortcut="about"]').dblclick();
+  await page.getByRole('button', { name: 'Help', exact: true }).click();
   const title = await win(page, 'about').locator('[data-move]').boundingBox();
   const before = await win(page, 'about').boundingBox();
   await page.mouse.move(title.x + 100, title.y + 22);
@@ -121,18 +121,17 @@ test('PC keeps a window open if its synchronous save hook fails', async ({ page 
 test.describe('PC touch and responsive layout' , () => {
   test.use({ hasTouch: true });
   test('touch launch and visible window controls at 320/375/414/768', async ({ page }) => {
-    skipUnlessEnabled(test, 'about');
     for (const width of [320, 375, 414, 768]) {
       await page.setViewportSize({ width, height: 760 });
       await page.goto('/pc/');
-      await page.locator('[data-shortcut="about"]').tap();
+      await page.getByRole('button', { name: 'Help', exact: true }).tap();
       await expect(win(page, 'about')).toBeVisible();
       const box = await win(page, 'about').boundingBox();
       expect(box.x).toBeGreaterThanOrEqual(0);
       expect(box.x + box.width).toBeLessThanOrEqual(width);
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
-      await expect(page.getByRole('button', { name: 'Close About WebPC', exact: true })).toBeInViewport();
-      await page.getByRole('button', { name: 'Close About WebPC', exact: true }).tap();
+      await expect(page.getByRole('button', { name: 'Close Help', exact: true })).toBeInViewport();
+      await page.getByRole('button', { name: 'Close Help', exact: true }).tap();
       await expect(win(page, 'about')).toBeHidden();
     }
   });
@@ -150,8 +149,9 @@ test('WebPC launcher filters apps and launches a keyboard search result', async 
   await expect(page.locator('[data-app-empty]')).toBeVisible();
   await search.fill('spreadsheet');
   await expect(page.locator('[data-app-result=gridcraft]')).toBeVisible();
-  await expect(page.locator('[data-app-result=about]')).toBeHidden();
-  await page.getByLabel('App category').selectOption('System');
+  await expect(page.locator('[data-app-result=terminal]')).toBeHidden(); // a real app that does not match
+  // Developer holds no spreadsheet app (System went with the About app), so the filter empties the list.
+  await page.getByLabel('App category').selectOption('Developer');
   await expect(page.locator('[data-app-empty]')).toBeVisible();
   await page.getByLabel('App category').selectOption('all');
   await search.press('Enter');

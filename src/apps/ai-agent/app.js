@@ -16,9 +16,38 @@ import { resolveInGrants } from './file-tools.js';
 import { BGBM_ENGINES, ocrTextResult, nobgName, nobgTarget, downscalePlan, OCR_MAX_DIM, MAX_IMAGE_BYTES, validateImageFile, visionToolsEnabled } from './vision-tools.js';
 import { createExecClient } from './exec-client.js';
 import { createAgent, createPolicy, craftApi } from './runtime/index.mjs';
+import { initHelp, licenseNotice, modelKindLine, stripApps } from './help.js';
+import { renderMarkdown } from './markdown.js';
 import { createFilesCtx } from './runtime/files-ctx.mjs';
 import { createThreadStore, ThreadLimitError } from './threads.js';
 import { createSharedModel } from './shared-model.js';
+// The welcome icons are clones of the desktop's own .pc-app-icon nodes: Buddy runs
+// in the desktop's same-origin iframe, so the strip and the starters reuse the
+// exact <img> or <svg> the desktop draws. The desktop's tile CSS (the .pc-icon-<id>
+// gradient, white glyph) does not apply inside Buddy, so the source's computed
+// background, color and padding (scaled to 28 px) are copied onto the clone.
+// Without a parent desktop (the standalone /pc/apps/ai-agent/ route) or without a
+// match, a round letter badge.
+const appIcon = (id, title) => {
+  let source = null;
+  try { source = parent.document.querySelector(`.pc-app-icon.pc-icon-${CSS.escape(id)}`); } catch { /* cross-origin parent */ }
+  if (source) {
+    const icon = source.cloneNode(true);
+    icon.setAttribute('aria-hidden', 'true');
+    icon.removeAttribute('id');
+    icon.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+    icon.classList.add('strip-icon');
+    const cs = parent.getComputedStyle(source);
+    const pad = (parseFloat(cs.paddingTop) || 0) * (28 / (source.offsetWidth || 54));
+    icon.style.cssText = `background-color:${cs.backgroundColor};background-image:${cs.backgroundImage};color:${cs.color};padding:${pad}px`;
+    return icon;
+  }
+  const icon = document.createElement('span');
+  icon.className = 'strip-icon strip-badge';
+  icon.setAttribute('aria-hidden', 'true');
+  icon.textContent = String(title ?? '?').trim().charAt(0).toUpperCase();
+  return icon;
+};
 const $ = id => document.getElementById(id);
 // ?eval=1 trace hook: when the page URL has ?eval=1, every tool call is recorded into
 // window.__buddyTrace as { name, arguments, ok, errorType, result } so an eval runner can
@@ -71,7 +100,7 @@ function imageInputControls() {
   box.disabled = !vision || loading || Boolean(session.active);
   if (!vision) box.checked = false;
   $('attach').disabled = !box.checked || loading || Boolean(session.active);
-  $('image-note').textContent = isChrome(selected) ? 'Chrome built-in model is text-only' : cloudSelected ? (cloud.ready ? `sent to ${cloud.host}` : 'enable it in Settings') : (MODELS[selected]?.vision ? `+${MODELS[selected].vision.size} when first used` : 'Qwen models only');
+  $('image-label').dataset.help = `Attach PNG, JPEG or WebP images up to 10 MB for Qwen models to read. Images are not saved; the chat keeps a text marker. ${isChrome(selected) ? 'Chrome built-in model is text-only' : cloudSelected ? (cloud.ready ? `sent to ${cloud.host}` : 'enable it in Settings') : (MODELS[selected]?.vision ? `+${MODELS[selected].vision.size} when first used` : 'Qwen models only')}`;
   applyVisionGates();
 }
 const nearBottom = () => $('conversation').scrollHeight - $('conversation').scrollTop - $('conversation').clientHeight < 100;
@@ -80,7 +109,8 @@ function message(role, content = '') {
   const near = nearBottom(); $('welcome').hidden = true;
   const root = document.createElement('article'); root.className = `message ${role}`;
   const label = document.createElement('div'); label.className = 'message-label'; label.textContent = role === 'user' ? 'You' : 'Buddy';
-  const body = document.createElement('div'); body.className = 'message-body'; body.textContent = content;
+  const body = document.createElement('div'); body.className = 'message-body';
+  if (role === 'assistant') body.replaceChildren(renderMarkdown(content)); else body.textContent = content;
   root.append(label, body); $('messages').append(root); follow(near); return body;
 }
 function toolCard(data) {
@@ -177,7 +207,7 @@ function renderIndexControls() {
   const busy = indexAbort !== null;
   $('files-build').disabled = busy || !fileGrants.length;
   $('files-cancel-index').disabled = !busy;
-  $('files-build').textContent = searchHost.has() ? 'Rebuild search index' : 'Build search index (downloads about 23 MB once)';
+  $('files-build').textContent = searchHost.has() ? 'Rebuild search index' : 'Build search index · 23 MB';
 }
 function applyFileGates() {
   const on = fileGrants.length > 0;
@@ -348,7 +378,9 @@ function applyVisionGates() {
 function renderVisionEngine() {
   $('vision-engine').value = visionTools.engine;
   const engine = BGBM_ENGINES.find((e) => e.id === visionTools.engine) ?? BGBM_ENGINES[0];
-  $('vision-note').textContent = `ocr_image downloads the OCR model (about 262 MB) once; remove_background downloads about ${engine.sizeMB} MB (${engine.name}) on first use. After the download both run entirely on this device; the vision tools themselves send nothing.`;
+  // The download facts live on the select's data-help (the card's help dot has the
+  // tool prose); #vision-note is kept for ids but stays empty and hidden.
+  $('vision-engine').dataset.help = `ocr_image downloads the OCR model (about 262 MB) once; remove_background downloads about ${engine.sizeMB} MB (${engine.name}) on first use. After that both run on this device and send nothing.`;
 }
 $('vision-engine').addEventListener('change', () => {
   visionTools.engine = $('vision-engine').value;
@@ -372,6 +404,32 @@ const agent = createAgent({ policy: { newTurn: text => livePolicy().newTurn(text
 // The per-turn skill note is off: on the clean 60-task eval (one chat per task) lfm3-1.7b scored
 // 29/60 without it and 24/60 with it. ?eval=1&prefetch=1 turns it back on, for eval comparisons only.
 if (!(EVAL_TRACE && new URLSearchParams(location.search).get('prefetch') === '1')) agent.prefetch = () => '';
+// The welcome strip: the apps Buddy has tools for, in catalog order, first 8 plus a +N chip.
+{
+  const { shown, hidden } = stripApps(agent.apps, [...agent.catalog.tools.keys()]);
+  const strip = $('app-strip');
+  for (const app of shown) {
+    const li = document.createElement('li');
+    const item = document.createElement('button'); item.type = 'button';
+    item.dataset.help = `${app.title}: Buddy can open it and work in it.`;
+    item.setAttribute('aria-label', app.title);
+    item.append(appIcon(app.id, app.title));
+    li.append(item); strip.append(li);
+  }
+  if (hidden.length) {
+    const li = document.createElement('li');
+    const chip = document.createElement('button'); chip.type = 'button'; chip.className = 'more';
+    chip.textContent = `+${hidden.length}`;
+    chip.dataset.help = hidden.map(app => app.title).join(', ');
+    chip.setAttribute('aria-label', `${hidden.length} more apps`);
+    li.append(chip); strip.append(li);
+  }
+  // The starters' empty icon spans (index.html) get the desktop's own icon.
+  for (const span of document.querySelectorAll('#welcome .examples [data-app-icon]')) {
+    const id = span.dataset.appIcon;
+    span.append(appIcon(id, agent.apps.find(a => a.id === id)?.title ?? id));
+  }
+}
 const desktopHost = () => { try { return parent !== window && parent.pcHost ? parent.pcHost : null; } catch { return null; } };
 const filesCtx = createFilesCtx(fileStore, { broadcast: path => filesChangeChannel?.postMessage({ type: 'changed', path }) });
 // ctx.craft(id): an ArtCraft app's page API (window.<id> inside its editor frame), opened if needed.
@@ -468,7 +526,7 @@ function onEvent(s, type, data) {
     return;
   }
   if (type === 'error') { setThreadStatus(id, 'failed'); if (s === session) error(data); return; }
-  if (type === 'saved') { if (s === session) { $('storage-warning').hidden = true; $('save-state').textContent = 'Saved in this browser'; } return; }
+  if (type === 'saved') { if (s === session) { $('storage-warning').hidden = true; $('save-state').textContent = 'Local'; } return; }
   if (type === 'storage-error') { if (s === session) storageError(data); return; }
   if (s !== session) return; // a background thread: its history updates inside the session, the DOM waits for the switch
   switch (type) {
@@ -476,7 +534,29 @@ function onEvent(s, type, data) {
     case 'reset': render(s); break;
     case 'user': message('user', data.content); break;
     case 'reply-start': data.element = message('assistant'); break;
-    case 'reply-token': { const near = nearBottom(); data.bubble.element.textContent = data.text; follow(near); } break;
+    // While streaming, keep only the latest text and render at most once per
+    // animation frame (Markdown parsing the whole answer every token is the cost
+    // the old textContent avoided).
+    case 'reply-token': {
+      data.bubble.latest = data.text;
+      if (!data.bubble.frame) data.bubble.frame = requestAnimationFrame(() => {
+        data.bubble.frame = null;
+        const near = nearBottom();
+        data.bubble.element.replaceChildren(renderMarkdown(data.bubble.latest));
+        follow(near);
+      });
+      break;
+    }
+    // The answer hit the length limit (worker done with truncated): a visible marker
+    // on the bubble, with the explanation in the help pop-up.
+    case 'reply-cut': {
+      const chip = document.createElement('span');
+      chip.className = 'chip cut';
+      chip.textContent = 'Cut short';
+      chip.dataset.help = 'The answer hit the length limit. Ask Buddy to continue.';
+      data.bubble.element.parentElement.append(chip);
+      break;
+    }
     case 'tool-start': toolCard(data); traceStart(data.name, data.arguments); break;
     case 'tool-result': toolResult(data.toolCard, data.result); traceResult(data.toolCard.name, data.toolCard.arguments, data.result); break;
   }
@@ -661,20 +741,24 @@ function cancelAll(text) {
   controls();
 }
 function modelInfo() {
+  const notice = kind => { const n = licenseNotice(kind); $('model-license').replaceChildren(document.createTextNode(n.line)); $('about-help').dataset.help = n.help; };
   if (isCloud(selected)) {
-    $('download-note').textContent = 'Cloud model: nothing downloads locally. Enter your API key in Settings and confirm the opt-in; your prompts, tool results and attached images go to the provider named there.';
-    $('model-license').replaceChildren(document.createTextNode('The provider sets its own terms and pricing; the key is used only in this browser session.'));
+    $('model').dataset.help = 'Cloud model: nothing downloads locally. Enter your API key in Settings and confirm the opt-in; your prompts, tool results and attached images go to the provider named there.';
+    notice('cloud');
     return;
   }
   if (isChrome(selected)) {
-    $('download-note').textContent = 'Chrome built-in model: nothing downloads from this site. Load it to start Chrome’s own on-device model download (needs at least 22 GB free space). Chat, translation and summarization stay on this device.';
-    $('model-license').replaceChildren(document.createTextNode('On-device: no data is sent to Google or any third party when using the model.'));
+    $('model').dataset.help = 'Chrome built-in model: nothing downloads from this site. Load it to start Chrome’s own on-device model download (needs at least 22 GB free space). Chat, translation and summarization stay on this device.';
+    notice('chrome');
     return;
   }
   const model = MODELS[selected];
-  $('download-note').textContent = `Load ${model.label} when ready: ${model.size} of model files from Hugging Face. No model files download automatically. Chat and computation stay on device; web tools make the requests you ask for.`;
+  const kind = modelKindLine(selected);
+  $('model').dataset.help = `${kind ? `${kind} ` : ''}Load ${model.label} when ready: ${model.size} of model files from Hugging Face. No model files download automatically. Chat and computation stay on device; web tools make the requests you ask for.`;
   const link = document.createElement('a'); link.href = `https://huggingface.co/${model.repo}/tree/${model.revision}`; link.target = '_blank'; link.rel = 'noopener'; link.textContent = `${model.label} · ${model.license}`;
-  $('model-license').replaceChildren(link, document.createTextNode('. Model weights have their own license. Sizes are approximate; small models may miss tools or return incorrect answers.'));
+  // Local: the visible About line is the license link itself; the sentence is in the help dot.
+  $('model-license').replaceChildren(link);
+  $('about-help').dataset.help = licenseNotice('local').help;
 }
 async function doLoad(vision) {
   stopVisible(undefined, true); const version = ++loadVersion; loading = true; controls(); error(''); $('progress').hidden = false; $('progress').removeAttribute('value');
@@ -793,12 +877,19 @@ $('image-input').addEventListener('change', async () => {
 // ---------- cloud model (BYOK, opt-in per session) ----------
 const cloudProvider = () => document.querySelector('input[name="cloud-provider"]:checked').value;
 function cloudNotice() {
-  const host = cloudProvider() === 'anthropic' ? 'api.anthropic.com' : 'the host in your base URL';
-  $('cloud-notice').textContent = `By confirming, you agree that your prompts, tool results and any attached image are sent to ${host}. The key is kept in memory only and cleared on reload, when the app closes and when the model is switched.`;
-  $('cloud-model').placeholder = cloudProvider() === 'anthropic' ? 'claude-opus-5-5 (cheaper: claude-sonnet-5-5, claude-haiku-5-5)' : 'model name served by this endpoint';
-  $('cloud-base-row').hidden = cloudProvider() !== 'openai';
-  $('cloud-effort').hidden = cloudProvider() !== 'anthropic';
-  if (cloudProvider() === 'anthropic' && !$('cloud-model').value.trim()) $('cloud-model').value = 'claude-opus-5-5';
+  const provider = cloudProvider();
+  const host = provider === 'anthropic' ? 'api.anthropic.com' : 'the host in your base URL';
+  // The visible text is a short chip; the full sentence lives on the chip and the
+  // opt-in button as data-help (same text, both open the pop-up).
+  const notice = `Your prompts, tool results and any attached image are sent to ${host}. The key is kept in memory only and cleared on reload, when Buddy closes and when you switch models.`;
+  $('cloud-notice').textContent = host ? `Sends to ${host}` : '';
+  $('cloud-notice').hidden = !host;
+  $('cloud-notice').dataset.help = notice;
+  $('cloud-use').dataset.help = notice;
+  $('cloud-model').placeholder = provider === 'anthropic' ? 'claude-opus-5-5 (cheaper: claude-sonnet-5-5, claude-haiku-5-5)' : 'model name served by this endpoint';
+  $('cloud-base-row').hidden = provider !== 'openai';
+  $('cloud-effort').hidden = provider !== 'anthropic';
+  if (provider === 'anthropic' && !$('cloud-model').value.trim()) $('cloud-model').value = 'claude-opus-5-5';
 }
 for (const radio of document.querySelectorAll('input[name="cloud-provider"]')) radio.addEventListener('change', cloudNotice);
 $('cloud-use').addEventListener('click', () => {
@@ -810,7 +901,14 @@ $('cloud-use').addEventListener('click', () => {
     bindClient(); controls();
   } catch (err) { error(err.message); }
 });
-$('message').addEventListener('keydown', event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); $('composer').requestSubmit(); } });
+$('message').addEventListener('keydown', event => {
+  // Enter sends (Shift + Enter keeps the newline; Ctrl or ⌘ + Enter still sends);
+  // an IME's Enter confirms the composition, it does not send.
+  if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
+  if (event.shiftKey) return;
+  event.preventDefault();
+  $('composer').requestSubmit();
+});
 for (const button of document.querySelectorAll('[data-prompt]')) button.addEventListener('click', () => { $('message').value = button.dataset.prompt; $('message').focus(); });
 function download(name, value) {
   const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' }));
@@ -821,6 +919,7 @@ $('raw-export').addEventListener('click', async () => { try { download('ai-agent
 $('retry-save').addEventListener('click', () => session.persist());
 $('settings').addEventListener('click', () => $('settings-dialog').showModal());
 $('close-settings').addEventListener('click', () => $('settings-dialog').close());
+$('settings-close').addEventListener('click', () => $('settings-dialog').close());
 $('import').addEventListener('click', () => $('file').click());
 // Import opens the backup as a NEW thread: nothing is replaced or lost, so no confirm is needed.
 async function openImported(value) {
@@ -889,4 +988,5 @@ try {
   }
 } catch (err) { storageError(`Could not open stored chats: ${err.message}`); }
 initialized = true; controls(); postBadge();
+initHelp();
 if (!navigator.gpu) status('WebGPU is unavailable here. You can still read, export, and recover saved conversations.');

@@ -36,7 +36,7 @@ body { margin: 0; }
 .pc-breadcrumb { font: 12px var(--font-mono); word-spacing: 8px; }
 .pc-breadcrumb strong { font-weight: 500; color: var(--color-text); }
 .pc-top-actions { margin-left: auto; display: flex; align-items: center; }
-.pc-text-button, .pc-icon-button { background: transparent; min-height: 44px; min-width: 44px; font-size: 12px !important; }
+.pc-icon-button { background: transparent; min-height: 44px; min-width: 44px; font-size: 12px !important; }
 .pc-icon-button { display: grid; place-items: center; }
 .pc-icon-button svg { width: 20px; height: 20px; }
 .pc-desktop { position: relative; overflow: clip; background: var(--pc-wallpaper); color: var(--color-text); min-height: 0; }
@@ -178,7 +178,7 @@ body { margin: 0; }
 @media (hover: hover) { .pc-context-menu-item:hover:not(:disabled) { background: var(--pc-selection); } }
 @keyframes pc-load { to { transform: rotate(360deg); } }
 @media (hover: hover) {
-  .pc-shortcut:hover, .pc-launcher-app:hover, .pc-task:hover, .pc-icon-button:hover, .pc-text-button:hover, .pc-window-controls button:hover, .pc-show-desktop:hover { background: var(--pc-selection); }
+  .pc-shortcut:hover, .pc-launcher-app:hover, .pc-task:hover, .pc-icon-button:hover, .pc-window-controls button:hover, .pc-show-desktop:hover { background: var(--pc-selection); }
   .pc-window-controls [data-close]:hover { background: var(--pc-error); color: var(--pc-error-ink); }
 }
 @media (pointer: coarse) {

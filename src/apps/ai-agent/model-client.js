@@ -48,10 +48,14 @@ export class ModelClient {
   request(type, payload, token) { return this.requestWithId(type, payload, token).promise; }
   /** End one generation early in the worker; it answers with the partial done or an aborted error. */
   interrupt(id) { this.worker?.postMessage({ type: 'interrupt', id }); }
-  /** The facade path: the request id plus a promise for the generated text. */
+  /**
+   * The facade path: the request id plus a promise for the generated text. Normal results stay
+   * a plain string (the shared-model contract); only a cut-off answer resolves to
+   * { text, truncated: true }, which the session turns into the reply-cut event.
+   */
   generateRequest(messages, tools, token = () => {}) {
     const { id, promise } = this.requestWithId('generate', { messages, tools }, token);
-    return { id, promise: promise.then((data) => data.text) };
+    return { id, promise: promise.then((data) => (data.truncated ? { text: data.text, truncated: true } : data.text)) };
   }
   async generate(messages, tools, token = () => {}) { return this.generateRequest(messages, tools, token).promise; }
   async count(messages, tools) { return (await this.request('count', { messages, tools })).tokens; }
