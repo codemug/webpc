@@ -3,7 +3,7 @@
 // <|audio|> placeholder expansion. Run: node --test tests/omni-plan.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { prefillChunks, initialCaches, audioTokenCount, expandAudioTokens } from '../src/apps/ai-agent/omni/plan.js';
+import { prefillChunks, initialCaches, audioTokenCount, expandAudioTokens, presentToPast, sideInputShape } from '../src/apps/ai-agent/omni/plan.js';
 
 // text_config of the pinned ONNX export's config.json (LiquidAI/LFM3-Omni-2B-ONNX @ d2e656f0,
 // keys the plan reads): 24 layers, conv/attention pattern, hidden 2048, conv_L_cache 7,
@@ -84,4 +84,21 @@ test('expandAudioTokens: each <|audio|> becomes its clip count, in prompt order'
   assert.deepEqual(two.slice(0, 5), [1, AUDIO, AUDIO, 2, AUDIO]);
   assert.throws(() => expandAudioTokens([1, AUDIO, AUDIO, 2], AUDIO, [1]), RangeError, 'more placeholders than clips');
   assert.throws(() => expandAudioTokens([1, AUDIO, 2], AUDIO, [2, 3]), RangeError, 'more clips than placeholders');
+});
+
+test('presentToPast: present.* outputs map to the cache inputs of the next step', () => {
+  assert.equal(presentToPast('present_conv.0'), 'past_conv.0');
+  assert.equal(presentToPast('present_conv.23'), 'past_conv.23');
+  assert.equal(presentToPast('present.2.key'), 'past_key_values.2.key');
+  assert.equal(presentToPast('present.22.value'), 'past_key_values.22.value');
+  assert.equal(presentToPast('logits'), null);
+  assert.equal(presentToPast('hidden_states'), null);
+});
+
+test('sideInputShape: the unused feature and code inputs are zero rows', () => {
+  assert.deepEqual(sideInputShape('image_features', TEXT_CONFIG, 12), { dtype: 'float32', shape: [0, 2048] });
+  assert.deepEqual(sideInputShape('video_features', TEXT_CONFIG, 12), { dtype: 'float32', shape: [0, 2048] });
+  assert.deepEqual(sideInputShape('audio_out_codes', TEXT_CONFIG, 12), { dtype: 'int64', shape: [0, 12] });
+  assert.equal(sideInputShape('input_ids', TEXT_CONFIG, 12), null, 'base feeds are not side inputs');
+  assert.equal(sideInputShape('past_conv.0', TEXT_CONFIG, 12), null, 'caches are not side inputs');
 });

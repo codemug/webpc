@@ -49,6 +49,25 @@ export function audioTokenCount(frames, cfg = { encoder_stride: 8 }) {
   return Math.ceil(frames / cfg.encoder_stride);
 }
 
+// A decoder present-cache output back to the cache input it feeds on the next step
+// (LFM3 cache names, lfm3/session.py:65-75): present_conv.N -> past_conv.N,
+// present.N.key / .value -> past_key_values.N.key / .value; everything else (logits,
+// hidden_states) maps to nothing.
+export function presentToPast(outputName) {
+  if (outputName.startsWith('present_conv.')) return outputName.replace('present_conv.', 'past_conv.', 1);
+  if (outputName.startsWith('present.')) return outputName.replace('present.', 'past_key_values.', 1);
+  return null;
+}
+
+// The decoder's feature and code inputs that a text-plus-audio run does not use, fed as
+// zero rows, as the reference's side_inputs does (audio_session.py:407-426): image and
+// video features are float32 [0, hidden_size], the speech codes are int64 [0, num_codebooks].
+export function sideInputShape(name, textConfig, numCodebooks) {
+  if (name === 'image_features' || name === 'video_features') return { dtype: 'float32', shape: [0, textConfig.hidden_size] };
+  if (name === 'audio_out_codes') return { dtype: 'int64', shape: [0, numCodebooks] };
+  return null;
+}
+
 // The audio side of prompt_ids: replace each <|audio|> id with its clip's token count, in
 // prompt order (LiquidONNX expands each placeholder to its clip's encoder tokens in place; the
 // template's media markers are already in the text). Throws on a count mismatch, as the
