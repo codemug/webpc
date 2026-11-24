@@ -551,3 +551,16 @@ export function stripImages(history) {
     return rest;
   });
 }
+
+/** The text stored for a sent recording; the samples themselves are never persisted. */
+export function audioMarker(audio) {
+  return `[audio ${audio.seconds} s]`;
+}
+
+/** Drop audio payloads ({name,seconds,sampleRate,samples}) from a history before it is stored or exported. */
+export function stripAudio(history) {
+  return history.map((m) => {
+    const { audio, ...rest } = m;
+    return rest;
+  });
+}

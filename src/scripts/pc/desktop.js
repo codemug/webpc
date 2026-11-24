@@ -221,6 +221,7 @@ if (shell) {
     frame.title = 'WebPC Agent';
     frame.className = 'pc-app-frame';
     frame.src = buddy.src;
+    frame.allow = 'microphone'; // the composer's mic button needs it in the panel
     buddyPanel.querySelector('.pc-buddy-body').append(frame);
     return (buddyFrame = frame);
   };

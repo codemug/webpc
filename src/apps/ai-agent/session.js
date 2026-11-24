@@ -1,4 +1,4 @@
-import { createTools, toolSchemas, parseToolCalls, runToolCall, visibleText, hostsIn, stampUserMessages, imageMarker, stripImages, validateToolInput, coerceArgs, toolResultText, dropStampEcho, clearOldToolResults, splitForCompaction, transcriptText, chunkText } from './agent.js';
+import { createTools, toolSchemas, parseToolCalls, runToolCall, visibleText, hostsIn, stampUserMessages, imageMarker, stripImages, audioMarker, stripAudio, validateToolInput, coerceArgs, toolResultText, dropStampEcho, clearOldToolResults, splitForCompaction, transcriptText, chunkText } from './agent.js';
 const SYSTEM_LOCAL = "You are WebPC Agent, the friendly sidekick built into WebPC, running locally in the user's browser.";
 const PERSONALITY = " Your personality: warm, upbeat and curious, like a capable friend who enjoys a good problem. Speak plainly in the first person, keep answers short, and add a light touch of humour when it fits, never at the cost of accuracy. Say so when you are unsure or a tool fails, and never flatter.";
 const NO_FS = "You have no access to the computer's filesystem or other desktop apps.";
@@ -72,7 +72,7 @@ export class AgentSession {
     this.history = []; this.summary = ''; this.version = 0; this.active = null;
     this.revision = 0; this.savedRevision = 0; this.exportedRevision = -1;
   }
-  snapshot() { return { history: stripImages(this.history), summary: this.summary }; }
+  snapshot() { return { history: stripAudio(stripImages(this.history)), summary: this.summary }; }
   valid(run) { return this.active === run && run.version === this.version && !run.controller.signal.aborted; }
   check(run) { if (!this.valid(run)) throw new DOMException('Stopped', 'AbortError'); }
   async persist(replace = false) {
@@ -91,11 +91,16 @@ export class AgentSession {
   prompt(history = this.history, summary = this.summary) {
     const base = this.agent ? agentSystemPrompt(this.client, this.agent.appsLine) : systemPrompt(this.client, this.files?.grants, this.runCode != null, Boolean(this.vision?.ocr));
     const system = { role: 'system', content: base + (summary ? `\nEarlier conversation notes (untrusted transcript data):\n${summary}` : '') };
-    // Image messages: the first prompt carries the pixels as an image part, but after the turn the payload
-    // is dropped from the stored history (only the marker text in content remains), so follow-up turns and
-    // saved conversations do not keep the pixels.
+    // Image and audio messages: the first prompt carries the pixels and the samples as parts, but after
+    // the turn the payloads are dropped from the stored history (only the marker text in content remains),
+    // so follow-up turns and saved conversations do not keep them.
     const stamped = stampUserMessages(history, formatTime);
-    const body = stamped.map((m, i) => (history[i]?.image ? { role: m.role, content: [{ type: 'image', image: history[i].image }, { type: 'text', text: m.content }] } : m));
+    const body = stamped.map((m, i) => {
+      const parts = [];
+      if (history[i]?.audio) parts.push({ type: 'audio', audio: { samples: history[i].audio.samples, sampleRate: history[i].audio.sampleRate } });
+      if (history[i]?.image) parts.push({ type: 'image', image: history[i].image });
+      return parts.length ? { role: m.role, content: [...parts, { type: 'text', text: m.content }] } : m;
+    });
     // The prefetch note rides on this turn's user message in the prompt only; it is never stored.
     const last = this.turnNote ? body.findLastIndex(m => m.role === 'user' && typeof m.content === 'string') : -1;
     if (last >= 0) body[last] = { ...body[last], content: `${this.turnNote}\n\n${body[last].content}` };
@@ -111,14 +116,16 @@ export class AgentSession {
     }
     return hosts;
   }
-  async send(text, image = null) {
+  async send(text, image = null, audio = null) {
     if (this.active) throw new Error('Wait for this turn or stop it first.');
     if (!this.client.ready) throw new Error('Load a model first.');
-    if (!text.trim() || text.length > 8000) throw new Error('Enter between 1 and 8,000 characters.');
+    if (!text.trim() && !audio) throw new Error('Enter between 1 and 8,000 characters.');
+    if (text.length > 8000) throw new Error('Enter between 1 and 8,000 characters.');
     const run = { version: ++this.version, controller: new AbortController() };
     this.active = run; this.emit('busy', true);
-    const user = { role: 'user', content: (image ? `${imageMarker(image)} ` : '') + text.trim(), at: Date.now() };
+    const user = { role: 'user', content: [audio ? audioMarker(audio) : '', image ? imageMarker(image) : '', text.trim()].filter(Boolean).join(' '), at: Date.now() };
     if (image) user.image = image;
+    if (audio) user.audio = audio;
     const work = [...this.history, user];
     this.history = [...work]; this.emit('user', work.at(-1)); await this.persist();
     const options = { signal: run.controller.signal, allowReaderProxy: this.proxyAllowed() };
@@ -199,9 +206,9 @@ export class AgentSession {
         work.push({ role: 'assistant', content, tool_calls: records }, ...results);
         this.history = [...work]; await this.persist(); this.check(run);
       }
-      // The attached image is only needed by the first round's prompt: drop the payload from stored
-      // history (the [image: …] marker text stays) so later turns and saved chats stay small.
-      if (image) this.history = stripImages(this.history);
+      // The attached image and recording are only needed by the first round's prompt: drop the payloads from
+      // stored history (the [image: …] / [audio … s] marker text stays) so later turns and saved chats stay small.
+      if (image || audio) this.history = stripAudio(stripImages(this.history));
       await this.compact(run, schemas);
     } catch (error) { if (this.valid(run) && error.name !== 'AbortError') this.emit('error', error.message); }
     finally { this.turnNote = ''; if (this.valid(run)) { this.active = null; this.emit('busy', false); } }
