@@ -88,6 +88,10 @@ test('the WebPC Agent button shows background chats from pc:buddy-status', async
   await page.goto('/pc/');
   await button(page).click();
   await expect(frame(page).locator('html')).toHaveAttribute('data-theme', /light|dark/);
+  // The app posts its own counts (0, 0) in the same step that enables New chat (app.js init:
+  // initialized, controls(), postBadge()); wait for it, or that post can land after the fake
+  // ones below and reset the badge (seen on a slow run).
+  await expect(frame(page).locator('#new-chat')).toBeEnabled();
   const badge = page.locator('[data-buddy-badge]');
   await expect(badge).toBeHidden();
   const post = data => page.evaluate(d => document.querySelector('#pc-buddy iframe').contentWindow.parent.postMessage(d, location.origin), data);
