@@ -2,8 +2,9 @@
 import "./hf-pin.js"; // also installs the fetch pinning (must precede the bundle import)
 import {
   AutoTokenizer, AutoModelForCausalLM, TextStreamer, InterruptableStoppingCriteria, Tensor, DynamicCache, ones, env,
-  AutoProcessor, Qwen3_5ForConditionalGeneration, RawImage,
+  AutoProcessor, Qwen3_5ForConditionalGeneration, Gemma4ForConditionalGeneration, RawImage,
 } from "./vendor/transformers.min.js";
+import { gemmaToCanonical, gemmaVisible } from "./gemma-calls.js";
 
 import { MODELS } from "./models.js";
 // Local runtime files; the worker itself is created only by the explicit Load model action.
@@ -35,6 +36,8 @@ let tokenizer = null;
 let model = null;
 // Qwen vision models only: the processor builds the chat template + pixel inputs; loaded with the vision model.
 let processor = null;
+// "gemma4" while Gemma 4 is loaded: it has its own generate path (generateGemma).
+let family = null;
 // The model state after the last generate(): the token ids it has seen and their cache. The next prompt
 // usually starts with exactly those tokens (same chat plus a tool result), so only the new tail is prefilled.
 // Qwen3.5 and LFM3 keep recurrent/conv state that cannot be rewound, so any other prompt starts over.
@@ -47,10 +50,21 @@ async function load(key, vision = false) {
   await loadWasm();
   await dropCache();
   if (model) await model.dispose(); // free GPU memory before the next download
-  model = tokenizer = processor = null;
+  model = tokenizer = processor = family = null;
 
   const progress_callback = (p) => postMessage({ type: "progress", key, ...p });
   tokenizer = await AutoTokenizer.from_pretrained(spec.repo, { revision: spec.revision, progress_callback });
+  // Gemma 4 is one multimodal model: the processor and all four q4f16 graphs (every file under
+  // Chrome's 2^31-byte Response limit; the q8 embeddings have a 2.35 GB shard) load together.
+  if (spec.family === "gemma4") {
+    processor = await AutoProcessor.from_pretrained(spec.repo, { revision: spec.revision, progress_callback });
+    model = await Gemma4ForConditionalGeneration.from_pretrained(spec.repo, {
+      revision: spec.revision, dtype: spec.dtype, device: "webgpu", progress_callback,
+    });
+    family = "gemma4";
+    postMessage({ type: "ready", key, vision: true });
+    return;
+  }
   // Image input (Qwen only): the vision-encoder submodel downloads only on this path, with the same
   // dtype as the rest; the text-only load above stays byte-identical to the pre-vision behaviour.
   const useVision = Boolean(vision && spec.vision);
@@ -159,6 +173,7 @@ const toRawImage = (img) => new RawImage(new Uint8Array(img.data), img.width, im
 
 async function generate({ id, messages, tools }) {
   if (!model) throw new Error("No model loaded");
+  if (family === "gemma4") return generateGemma({ id, messages, tools });
   const images = imagePayloads(messages);
   if (images.length) return generateImage({ id, messages, images });
   stopper.reset();
@@ -225,6 +240,53 @@ async function generateImage({ id, messages, images }) {
   });
   const [answer] = tokenizer.batch_decode(output.sequences.slice(null, [promptLength, null]), { skip_special_tokens: true });
   postMessage({ type: "done", id, text: answer, ...(output.sequences.dims[1] - promptLength >= MAX_NEW_TOKENS && { truncated: true }) });
+}
+
+/**
+ * Gemma 4 turn: the processor renders the template (tools, tool calls and tool results included)
+ * and the image parts, and the decoded text keeps Gemma's special tokens so gemma-calls.js can turn
+ * its <|tool_call>call:NAME{...}<tool_call|> markup into the canonical form parseToolCalls reads.
+ * The stream shows only the prose before a call (gemmaVisible). No chunked prefill or prefix-cache
+ * reuse, as on the image path; Stop still ends it through the shared stopper.
+ */
+const gemmaConversation = (messages) => messages.map((m) => Array.isArray(m.content)
+  ? { ...m, content: m.content.map((p) => (p.type === "image" || p.type === "audio" ? { type: p.type } : { type: "text", text: p.text })) }
+  : m);
+// Recorded audio (16 kHz mono Float32Array samples) in the order its parts appear; Gemma's processor
+// reads the first one.
+const audioPayloads = (messages) => {
+  const out = [];
+  for (const m of messages) for (const part of Array.isArray(m.content) ? m.content : []) if (part.type === "audio" && part.audio?.samples) out.push(part.audio.samples);
+  return out;
+};
+async function generateGemma({ id, messages, tools }) {
+  stopper.reset();
+  const images = imagePayloads(messages).map(toRawImage);
+  const prompt = processor.apply_chat_template(gemmaConversation(messages), {
+    ...(tools?.length && { tools }), add_generation_prompt: true, enable_thinking: false,
+  });
+  const audio = audioPayloads(messages);
+  const inputs = await processor(prompt, images.length ? (images.length === 1 ? images[0] : images) : null, audio.length ? audio : null, { add_special_tokens: false });
+  const promptLength = inputs.input_ids.dims.at(-1);
+  let raw = "", shown = "";
+  const streamer = new TextStreamer(tokenizer, {
+    skip_prompt: true,
+    skip_special_tokens: false,
+    callback_function: (chunk) => {
+      raw += chunk;
+      const visible = gemmaVisible(raw);
+      if (visible.length > shown.length && visible.startsWith(shown)) {
+        postMessage({ type: "token", id, text: visible.slice(shown.length) });
+        shown = visible;
+      }
+    },
+  });
+  const output = await model.generate({
+    ...inputs, max_new_tokens: MAX_NEW_TOKENS, do_sample: false, streamer, stopping_criteria: stopper,
+    return_dict_in_generate: true,
+  });
+  const [decoded] = tokenizer.batch_decode(output.sequences.slice(null, [promptLength, null]), { skip_special_tokens: false });
+  postMessage({ type: "done", id, text: gemmaToCanonical(decoded), ...(output.sequences.dims[1] - promptLength >= MAX_NEW_TOKENS && { truncated: true }) });
 }
 
 // Serialize requests. The host terminates this worker on cancellation, including model download and prefill.

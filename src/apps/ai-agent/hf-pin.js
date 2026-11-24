@@ -15,6 +15,7 @@ export const HF_PINNED = {
   'onnx-community/Qwen3.5-0.8B-ONNX-OPT': '9a4c21d8f724176b0a7edaaed36303044451886e',
   'onnx-community/Qwen3.5-2B-ONNX-OPT': 'ed446636739bf426e73c5a00714fd8e010d36c21',
   'LiquidAI/LFM3-1.7B-ONNX': '57c125dfa29f2d39157e280b1d1f7480b8736d8d',
+  'onnx-community/gemma-4-E2B-it-ONNX': '6f21c99d7e18237f8d2ce92aadfdbfeba877f63a',
 };
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const REWRITES = Object.entries(HF_PINNED).flatMap(([repo, sha]) => [
