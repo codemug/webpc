@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateExecRequest, planExec, execReply, base64Encode, handleExecChannelMessage, execGate, MAX_OUTPUT, MAX_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, EXEC_ARG_LIMIT } from '../src/scripts/pc/apps/terminal-exec.mjs';
+import { validateExecRequest, planExec, execReply, base64Encode, handleExecChannelMessage, execGate, formatAgentRun, redrawAbovePrompt, MAX_OUTPUT, MAX_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, EXEC_ARG_LIMIT } from '../src/scripts/pc/apps/terminal-exec.mjs';
 
 const req = { type: 'exec-request', id: 'r1', from: 'WebPC Agent', lang: 'sh', code: 'echo hi', timeoutMs: DEFAULT_TIMEOUT_MS };
 
@@ -97,4 +97,66 @@ test('channel triage: exec-request runs at once; exec-cancel matches only the ru
     { type: 'something-else' },
     null, undefined, 'a string', 42,
   ]) assert.deepEqual(handleExecChannelMessage(foreign, runSlot), { action: 'ignore' }, `must ignore: ${JSON.stringify(foreign)}`);
+});
+
+test('formatAgentRun: the sh header is the code as typed (its newlines become header lines), the output, and a dim exit footer', () => {
+  assert.deepEqual(formatAgentRun({ from: 'WebPC Agent', lang: 'sh', code: 'uname -a', exitCode: 0, output: 'Linux unkernel 7.3.4+ aarch64\n', truncated: false, durationMs: 7 }), [
+    '\x1b[36mWebPC Agent $ uname -a\x1b[0m',
+    'Linux unkernel 7.3.4+ aarch64',
+    '\x1b[2m[exit 0 · 7 ms]\x1b[0m',
+  ]);
+  assert.deepEqual(formatAgentRun({ from: 'W', lang: 'sh', code: 'echo a\necho b', exitCode: 0, output: 'x\n', truncated: false, durationMs: 1 }).slice(0, 3), [
+    '\x1b[36mW $ echo a\x1b[0m',
+    '\x1b[36mecho b\x1b[0m',
+    'x',
+  ]);
+});
+
+test('formatAgentRun: python and node name the interpreter -c/-e, then the code lines, at most 6 with the note', () => {
+  assert.deepEqual(formatAgentRun({ from: 'WebPC Agent', lang: 'python', code: 'a\nb\nc\nd\ne\nf\ng\nh', exitCode: 0, output: 'out\n', truncated: false, durationMs: 2 }), [
+    '\x1b[36mWebPC Agent $ python3 -c\x1b[0m',
+    '\x1b[36ma\x1b[0m', '\x1b[36mb\x1b[0m', '\x1b[36mc\x1b[0m', '\x1b[36md\x1b[0m', '\x1b[36me\x1b[0m', '\x1b[36mf\x1b[0m',
+    '… (2 more lines)',
+    'out',
+    '\x1b[2m[exit 0 · 2 ms]\x1b[0m',
+  ]);
+  const node = formatAgentRun({ from: 'WebPC Agent', lang: 'node', code: 'console.log(1)', exitCode: 1, output: '', truncated: false, durationMs: 3 });
+  assert.deepEqual(node.slice(0, 2), ['\x1b[36mWebPC Agent $ node -e\x1b[0m', '\x1b[36mconsole.log(1)\x1b[0m']);
+  assert.equal(node.at(-1), '\x1b[2m[exit 1 · 3 ms]\x1b[0m');
+  const six = formatAgentRun({ from: 'W', lang: 'python', code: 'a\nb\nc\nd\ne\nf', exitCode: 0, output: '', truncated: false, durationMs: 1 });
+  assert.equal(six.length, 8, 'one header line + exactly 6 code lines + the footer: no note');
+});
+
+test('formatAgentRun: the output shows at most 200 lines, then the note, with no blank line before the footer', () => {
+  const many = formatAgentRun({ from: 'W', lang: 'sh', code: 'seq 205', exitCode: 0, output: Array.from({ length: 205 }, (_, i) => `line ${i}`).join('\n') + '\n', truncated: false, durationMs: 1 });
+  assert.equal(many.length, 203, 'one header line, 200 output lines, the note, the footer');
+  assert.equal(many[1], 'line 0');
+  assert.equal(many[200], 'line 199');
+  assert.equal(many[201], '… (5 more lines; the agent got the full output)');
+  assert.equal(many[202], '\x1b[2m[exit 0 · 1 ms]\x1b[0m');
+  const exact = formatAgentRun({ from: 'W', lang: 'sh', code: 'seq 200', exitCode: 0, output: Array.from({ length: 200 }, (_, i) => `l${i}`).join('\n'), truncated: false, durationMs: 1 });
+  assert.equal(exact.length, 202, 'exactly 200 lines: no note');
+  const empty = formatAgentRun({ from: 'W', lang: 'sh', code: 'true', exitCode: 0, output: '', truncated: false, durationMs: 1 });
+  assert.deepEqual(empty, ['\x1b[36mW $ true\x1b[0m', '\x1b[2m[exit 0 · 1 ms]\x1b[0m'], 'no output line at all, no blank line before the footer');
+});
+
+test('formatAgentRun: the footer names the ending - exit with ms, timed out, cancelled, error', () => {
+  const foot = args => formatAgentRun({ from: 'W', lang: 'sh', code: 'x', exitCode: 0, output: '', truncated: false, durationMs: 9, ...args }).at(-1);
+  assert.equal(foot({}), '\x1b[2m[exit 0 · 9 ms]\x1b[0m');
+  assert.equal(foot({ exitCode: 3 }), '\x1b[2m[exit 3 · 9 ms]\x1b[0m');
+  assert.equal(foot({ reason: 'timeout' }), '\x1b[2m[timed out]\x1b[0m');
+  assert.equal(foot({ reason: 'cancelled' }), '\x1b[2m[cancelled]\x1b[0m');
+  assert.equal(foot({ reason: 'the guest pty was lost' }), '\x1b[2m[error: the guest pty was lost]\x1b[0m');
+});
+
+test('redrawAbovePrompt: erases the prompt line, the block above it, the row restored, the cursor back at its column; every break is \\r\\n', () => {
+  const block = ['H', 'O', 'F'];
+  assert.equal(redrawAbovePrompt(block, '', 0), '\r\x1b[2KH\r\nO\r\nF\r\n\r', 'an empty row with the cursor at column 0');
+  assert.equal(redrawAbovePrompt(block, 'echo hi', 5), '\r\x1b[2KH\r\nO\r\nF\r\necho hi\r\x1b[5C', 'typed text with the cursor mid-line: the column is restored');
+  assert.equal(redrawAbovePrompt(block, '', 3), '\r\x1b[2KH\r\nO\r\nF\r\n\r\x1b[3C', 'an empty row with the cursor away from column 0');
+  const written = redrawAbovePrompt(formatAgentRun({ from: 'W', lang: 'sh', code: 'echo a\necho b', exitCode: 0, output: 'x\ny\n', truncated: false, durationMs: 1 }), '~ $', 4);
+  assert.ok(written.startsWith('\r\x1b[2K'));
+  assert.ok(written.endsWith('\r\x1b[4C'));
+  assert.ok(written.includes('\r\n'));
+  assert.equal(written.replaceAll('\r\n', '').includes('\n'), false, 'the output and the line breaks all reach the terminal as \\r\\n, never a bare \\n');
 });

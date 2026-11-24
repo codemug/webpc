@@ -90,6 +90,26 @@ test('the terminal exec service runs requests at once via vm.exec and reports re
   const recovered = await run('recover', 'echo ok');
   expect(recovered).toMatchObject({ type: 'exec-result', exitCode: 0 });
   expect(recovered.output).toBe('ok\n');
+  // M5: a finished run is drawn into the xterm above the user's prompt line (never into the
+  // pty), and the shell still works after the redraw. The marker SHOW_42 appears only in the
+  // output, not in the header (which shows the code as typed).
+  const shown = await post({ type: 'exec-request', id: 'show-run', from: 'WebPC Agent', lang: 'sh', code: 'echo SHOW_$((40+2))', timeoutMs: 30000 });
+  expect(shown).toMatchObject({ type: 'exec-result', exitCode: 0 });
+  expect(shown.output).toBe('SHOW_42\n');
+  await expect.poll(async () => screen(page).textContent(), { timeout: 10000 }).toContain('SHOW_42');
+  const screenText = await screen(page).textContent();
+  expect(screenText).toContain('WebPC Agent $ echo SHOW_$((40+2))');
+  expect(screenText).toMatch(/\[exit 0 · \d+ ms\]/);
+  const promptRow = await page.evaluate(() => {
+    const rows = Array.from(document.querySelectorAll('.xterm-rows > div')).map(row => row.textContent ?? '');
+    for (let i = rows.length - 1; i >= 0; i--) if (rows[i].trim() !== '') return rows[i];
+    return '';
+  });
+  expect(promptRow.trimEnd()).toMatch(/[$#⇒]$/, 'the prompt line is restored under the block');
+  await page.locator('#terminal').click();
+  await page.keyboard.type('echo AFTER_$((1+1))');
+  await page.keyboard.press('Enter');
+  await expect.poll(async () => screen(page).textContent(), { timeout: 10000 }).toContain('AFTER_2');
   // The 64 KiB output cap keeps the tail and flags truncation.
   const capped = await run('py-cap', 'import sys; sys.stdout.write("A"*80000 + "B"*80000)', 'python');
   expect(capped).toMatchObject({ type: 'exec-result', exitCode: 0, truncated: true });

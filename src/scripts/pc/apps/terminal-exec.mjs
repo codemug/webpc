@@ -77,6 +77,47 @@ export function execGate({ owner, running, inFlight }) {
   return 'run';
 }
 
+// The finished run's block for the xterm (M5): display lines, ANSI escapes included, in
+// writing order. The header is cyan so it reads as the agent's, not the user's: the sh code
+// as typed (its own newlines become further header lines), or the interpreter's -c/-e line
+// plus the code's own lines for python and node, at most 6 then a note. The output shows at
+// most 200 lines (its trailing newline never leaves a blank line before the footer), then a
+// note that the agent still got the output. The footer is dim and names the ending: the
+// exit code with the run's time, or timed out, cancelled, error. redrawAbovePrompt() turns
+// the lines into the one term.write string that puts the block above the user's prompt line
+// and restores that line and its cursor; the pty never sees any of it.
+const AGENT_CODE_LINES = 6;
+const AGENT_OUTPUT_LINES = 200;
+export function formatAgentRun({ from, lang, code, exitCode, output, truncated, durationMs, reason }) {
+  void truncated; // the reply says whether the agent got the full output; the display only caps its own lines
+  const lines = [];
+  const colour = text => `\x1b[36m${text}\x1b[0m`;
+  if (lang === 'sh') {
+    for (const line of `${from} $ ${code}`.split('\n')) lines.push(colour(line));
+  } else {
+    lines.push(colour(`${from} $ ${lang === 'python' ? 'python3 -c' : 'node -e'}`));
+    const codeLines = code.split('\n');
+    for (const line of codeLines.slice(0, AGENT_CODE_LINES)) lines.push(colour(line));
+    if (codeLines.length > AGENT_CODE_LINES) lines.push(`… (${codeLines.length - AGENT_CODE_LINES} more lines)`);
+  }
+  const outputLines = output.split('\n');
+  while (outputLines.length > 0 && outputLines[outputLines.length - 1] === '') outputLines.pop();
+  for (const line of outputLines.slice(0, AGENT_OUTPUT_LINES)) lines.push(line);
+  if (outputLines.length > AGENT_OUTPUT_LINES) lines.push(`… (${outputLines.length - AGENT_OUTPUT_LINES} more lines; the agent got the full output)`);
+  const footer = reason === 'timeout' ? '[timed out]' : reason === 'cancelled' ? '[cancelled]' : reason ? `[error: ${reason}]` : `[exit ${exitCode} · ${durationMs} ms]`;
+  lines.push(`\x1b[2m${footer}\x1b[0m`);
+  return lines;
+}
+
+// The one string to term.write: to the start of the user's prompt line (the cursor is on it
+// while the shell waits), erase the line, write the block - every line starts at column 0
+// via \r\n, so the output's \n never reaches the terminal raw - then rewrite the saved row
+// text and put the cursor back at the saved column. This is how a line editor prints above
+// its own prompt, so the shell's buffer is untouched and its next redraw reflows normally.
+export function redrawAbovePrompt(blockLines, rowText, cursorX) {
+  return `\r\x1b[2K` + blockLines.join('\r\n') + `\r\n` + rowText + `\r` + (cursorX > 0 ? `\x1b[${cursorX}C` : '');
+}
+
 // Channel-message triage for the exec protocol: an 'exec-request' runs at once (no approval
 // prompt, M3); an 'exec-cancel' for the id this Terminal is running - Buddy's Stop, New chat
 // or its wall timer - aborts that run. Everything else, including the replies this Terminal

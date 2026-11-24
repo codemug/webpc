@@ -13,7 +13,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { setupApp } from './common.mjs';
-import { validateExecRequest, planExec, execReply, handleExecChannelMessage, execGate } from './terminal-exec.mjs';
+import { validateExecRequest, planExec, execReply, handleExecChannelMessage, execGate, formatAgentRun, redrawAbovePrompt } from './terminal-exec.mjs';
 
 const $ = selector => document.querySelector(selector);
 const base = new URL('/pc/vendor/unkernel/', location.href).href;
@@ -316,6 +316,18 @@ function handleExecRequest(data) {
   execRespond({ type: 'exec-pending', id: check.id });
   void runExec(check);
 }
+// M5: the finished run's block lands in the xterm above the user's prompt line, never in the
+// pty: read the cursor row's text and column from term.buffer.active, then redraw the block
+// above that row and restore the row and the cursor. The shell never sees the block or a
+// keystroke, so its line buffer is untouched and the next keypress reflows the prompt
+// normally (single-row prompt lines are the case that must stay exact).
+function showAgentRun({ from, lang, code, exitCode, output, truncated, durationMs, reason }) {
+  const buffer = term.buffer?.active;
+  if (!buffer) return; // xterm not open yet: the status line already said how the run ended
+  const row = buffer.getLine(buffer.baseY + buffer.cursorY);
+  const rowText = row ? row.translateToString(true) : '';
+  term.write(redrawAbovePrompt(formatAgentRun({ from, lang, code, exitCode, output, truncated, durationMs, reason }), rowText, buffer.cursorX));
+}
 async function runExec(req) {
   const slot = exec;
   const startedAt = Date.now();
@@ -329,16 +341,22 @@ async function runExec(req) {
     const reply = execReply(result);
     const durationMs = Date.now() - startedAt;
     report(`Command finished · exit ${reply.exitCode} · ${durationMs} ms${reply.truncated ? ' · output truncated' : ''}.`);
+    showAgentRun({ from: req.from, lang: req.lang, code: req.code, exitCode: reply.exitCode, output: reply.output, truncated: reply.truncated, durationMs });
     execRespond({ type: 'exec-result', id: req.id, exitCode: reply.exitCode, output: reply.output, truncated: reply.truncated, durationMs });
   } catch (error) {
     if (controller.signal.aborted) {
       // The run's limit passed, or Buddy cancelled it: the guest got SIGKILL, and
       // vm.exec() carries no partial output.
-      execRespond({ type: 'exec-error', id: req.id, reason: slot.cancelled ? 'cancelled' : 'timeout', output: '', truncated: false, durationMs: Date.now() - startedAt });
+      const reason = slot.cancelled ? 'cancelled' : 'timeout';
+      const durationMs = Date.now() - startedAt;
+      execRespond({ type: 'exec-error', id: req.id, reason, output: '', truncated: false, durationMs });
       report(slot.cancelled ? `Command from ${req.from} was cancelled.` : `Command from ${req.from} timed out and was interrupted.`, true);
+      showAgentRun({ from: req.from, lang: req.lang, code: req.code, reason, durationMs });
     } else {
-      execRespond({ type: 'exec-error', id: req.id, reason: error?.code ?? 'error', durationMs: Date.now() - startedAt });
+      const durationMs = Date.now() - startedAt;
+      execRespond({ type: 'exec-error', id: req.id, reason: error?.code ?? 'error', durationMs });
       report(`The command did not finish: ${error?.message ?? error}`, true);
+      showAgentRun({ from: req.from, lang: req.lang, code: req.code, reason: error?.message || 'error', durationMs });
     }
   } finally {
     clearTimeout(timer);
