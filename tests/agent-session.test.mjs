@@ -7,15 +7,15 @@ import { AgentSession, nextStepFor } from '../src/apps/ai-agent/session.js';
 import { createAgent, createPolicy, META_TOOL_NAMES } from '../src/apps/ai-agent/runtime/index.mjs';
 
 const call = (name, args) => `<tool_call><function=${name}>${Object.entries(args).map(([k, v]) => `<parameter=${k}>${v}</parameter>`).join('')}</function></tool_call>`;
-function setup(outputs, { approve = async () => true } = {}) {
-  const seen = { prompts: [], schemas: [], host: [], files: [], approvals: [] };
+function setup(outputs) {
+  const seen = { prompts: [], schemas: [], host: [], files: [] };
   const client = { ready: true, stop() {}, count: async () => 100, generate: async (messages, schemas) => { seen.prompts.push(messages); seen.schemas.push(schemas); return outputs.shift() ?? 'Done.'; } };
   const record = (name, value) => async (...args) => { seen.host.push([name, ...args]); return value; };
   const host = { open: record('open', { id: 'gridcraft', opened: true }), close: record('close', { closed: true }), setTheme: record('setTheme', 'dark'), apps: record('apps', []), windows: record('windows', []) };
   const filesCtx = { mkdir: async path => { seen.files.push(['mkdir', path]); return { path }; }, remove: async (path, opts) => { seen.files.push(['remove', path, opts]); return { path, removed: true }; } };
   const session = new AgentSession({
     client, store: { save: async () => {} }, webSearch: async () => ({ results: [] }), httpGet: async () => ({}), runJavaScript: async () => ({ result: 42 }),
-    agent: createAgent(), host: () => host, filesCtx, approve: async request => { seen.approvals.push(request); return approve(request); },
+    agent: createAgent(), host: () => host, filesCtx,
   });
   return { session, seen };
 }
@@ -56,13 +56,12 @@ test('repairs: signature text in the tool name, an app title, and a directly cal
   assert.ok(results[0].repaired?.length, 'the model is told what was repaired');
 });
 
-test('a destructive tool asks first; a refusal comes back as needs_approval_denied', async () => {
-  const { session, seen } = setup([call('call_tool', { tool: 'files.delete', path: '/Old' }), 'OK, I left it.'], { approve: async () => false });
+test('a destructive tool runs without asking', async () => {
+  const { session, seen } = setup([call('call_tool', { tool: 'files.delete', path: '/Old' }), 'OK, I left it.']);
   await session.send('Delete the Old folder');
-  assert.equal(seen.approvals.length, 1);
-  assert.match(seen.approvals[0].preview, /files\.delete path=\/Old/);
-  assert.equal(seen.files.length, 0);
-  assert.equal(toolMessages(session)[0].error.type, 'needs_approval_denied');
+  assert.equal(seen.files.length, 1);
+  assert.deepEqual(seen.files[0].slice(0, 2), ['remove', '/Old']);
+  assert.equal(toolMessages(session)[0].ok, true, JSON.stringify(toolMessages(session)[0]));
 });
 
 test('bad arguments get a teaching error with a fix, and an old tool name still works', async () => {
@@ -89,26 +88,22 @@ test('prefetch skips skills that only share filler words with the request', asyn
   assert.equal(agent.prefetch('zzz qqq'), '');
 });
 
-test('with the real policy, a cloud model cannot touch ungranted Files and a web read taints later changes', async () => {
+test('with the real policy, a cloud model cannot touch ungranted Files and everything else runs', async () => {
   const outputs = [call('call_tool', { tool: 'files.mkdir', path: '/Secret' }), 'Done.'];
   const { session, seen } = setup(outputs);
   session.agent = createAgent({ policy: createPolicy({ backend: 'cloud', grants: ['/Shared'] }) });
   await session.send('Make a folder called Secret');
   assert.equal(seen.files.length, 0);
   assert.equal(toolMessages(session)[0].error.type, 'not_allowed');
-  const policy = createPolicy({ backend: 'local' }); const turn = policy.newTurn('read this page');
-  policy.noteResult({ name: 'system.http_get', effect: 'read', untrusted: true }, { url: 'https://example.com/' }, turn);
-  assert.equal(policy.decide({ name: 'desktop.open_app', effect: 'change', purpose: 'Open an app window.' }, { app: 'docs' }, turn).action, 'ask');
 });
 
-test('a generic run_command that deletes asks first, through the tool effectFor', async () => {
-  const { session, seen } = setup([call('call_tool', { tool: 'gridcraft.run_command', command: 'sheet.delete', params: 'sheet=Sheet2' }), 'OK.'], { approve: async () => false });
+test('a generic run_command that deletes runs without asking, through the tool effectFor', async () => {
+  const { session } = setup([call('call_tool', { tool: 'gridcraft.run_command', command: 'sheet.delete', params: 'sheet=Sheet2' }), 'OK.']);
   const sent = [];
   session.craft = async () => ({ commands: async () => [{ id: 'sheet.delete', label: 'Delete sheet', params: '{sheet}' }], execute: async (...a) => { sent.push(a); return {}; } });
   await session.send('Delete Sheet2 in GridCraft');
-  assert.equal(seen.approvals.length, 1);
-  assert.equal(sent.length, 0);
-  assert.equal(toolMessages(session)[0].error.type, 'needs_approval_denied');
+  assert.equal(sent.length, 1, 'the command executed without an approval gate');
+  assert.equal(toolMessages(session)[0].error, undefined, JSON.stringify(toolMessages(session)[0]));
 });
 
 test('lookup_skill_index: "open LightCraft" never ranks another app\'s skill above the named app or the general packs (eval M6, B17)', async () => {

@@ -8,9 +8,9 @@ import { releases } from '../../../scripts/pc/craft/releases.mjs';
 
 const APP = 'pdfcraft';
 const NEEDS = ['host', 'app:pdfcraft'];
-// run_command ids that destroy or close data: effectFor marks those calls destructive,
-// so the policy asks the user first (the upstream destructive flags on doc_close and
-// page_delete, plus the lane rule that closing the document is destructive).
+// run_command ids that destroy or close data: effectFor marks those calls destructive
+// (the upstream destructive flags on doc_close and page_delete, plus the lane rule that
+// closing the document is destructive).
 const DESTRUCTIVE = ['file.close', 'file.save', 'page.delete'];
 // With no PDF open the page's command gate refuses calls with "<id> is disabled right
 // now" (control/host.rs:172) and the page rejects (the control protocol ok:false,
@@ -306,7 +306,7 @@ export const tools = [
   {
     name: 'pdfcraft.run_command',
     purpose: 'Run any PdfCraft registry command by id with parameters.',
-    when: `Use when a menu action is wanted by id; ${DESTRUCTIVE.join(', ')} are destructive, so ask first.`,
+    when: `Use when a menu action is wanted by id; ${DESTRUCTIVE.join(', ')} are destructive.`,
     params: {
       command: { type: 'string', required: true, description: 'Command id from pdfcraft.command_list, e.g. page.rotate or edit.find' },
       params: { type: 'text', description: 'Parameters as key=value lines, one per line; omit for the defaults' },

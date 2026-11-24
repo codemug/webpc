@@ -8,10 +8,10 @@ export const MAX_EXEC_OUTPUT_CHARS = 20_000;
 /**
  * @param {{ postMessage: (msg: object) => void, addEventListener: (type: string, cb: (e: { data: object }) => void) => void }} channel
  * @param {{ graceMs?: number, wallExtraMs?: number }} opts graceMs: the not-running/busy grace
- *   (default 1500). wallExtraMs: added to the run's timeoutMs for the wall timer (default 60000:
- *   time for the user to approve before the run limit counts).
+ *   (default 1500). wallExtraMs: added to the run's timeoutMs for the wall timer (default 10000:
+ *   backstop for a Terminal tab that closes mid-run; there is no approval wait any more).
  */
-export function createExecClient(channel, { graceMs = 1500, wallExtraMs = 60_000 } = {}) {
+export function createExecClient(channel, { graceMs = 1500, wallExtraMs = 10_000 } = {}) {
   // id -> { settle, grace, wall, gotPending }
   const pending = new Map();
   let seq = 0;
@@ -36,22 +36,22 @@ export function createExecClient(channel, { graceMs = 1500, wallExtraMs = 60_000
       settle(reply.id, { type: 'exec-result', exitCode: reply.exitCode, output: truncated ? output.slice(0, MAX_EXEC_OUTPUT_CHARS) : output, truncated });
       return;
     }
-    if (reply.type === 'exec-started') { entry.started = true; return; } // the user clicked Run
-    if (reply.type === 'exec-error' && !entry.started && (reply.reason === 'not-running' || reply.reason === 'busy')) {
-      // Another Terminal tab may be the one prompting: after an exec-pending ack, its
-      // not-running/busy replies are ignored; before one, they settle after the grace.
+    if (reply.type === 'exec-error' && (reply.reason === 'not-running' || reply.reason === 'busy')) {
+      // The other Terminal tab (the snapshot side, which never runs) replies not-running or
+      // busy: after the owner's exec-pending ack those replies are ignored; before one, they
+      // settle after the grace.
       if (entry.gotPending || entry.grace) return;
       entry.grace = setTimeout(() => settle(reply.id, reply), graceMs);
       return;
     }
-    settle(reply.id, reply); // other errors (denied, timeout, guest crash) settle immediately
+    settle(reply.id, reply); // other errors (cancelled, timeout, guest crash) settle immediately
   };
   channel.addEventListener('message', (event) => handle(event.data));
   /** @returns {Promise<{type: string, id?: string, reason?: string, exitCode?: number, output?: string, truncated?: boolean}>} */
   const run = (lang, code, timeoutMs) => {
     const id = `agent-${Date.now()}-${seq++}`;
     return new Promise((resolve) => {
-      const entry = { settle: resolve, grace: null, wall: null, gotPending: false, started: false };
+      const entry = { settle: resolve, grace: null, wall: null, gotPending: false };
       pending.set(id, entry);
       entry.wall = setTimeout(() => {
         channel.postMessage({ type: 'exec-cancel', id, from: 'Buddy' });

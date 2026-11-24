@@ -30,7 +30,7 @@ async function openBuddy(page) {
   const buddy = page.frameLocator('#pc-buddy iframe');
   await expect(buddy.locator('html')).toHaveAttribute('data-theme', /light|dark/);
   await buddy.locator('#load-model').click();
-  await expect(buddy.locator('#send')).toBeEnabled();
+  await expect(buddy.locator('#model-state')).toContainText('Ready'); // Send stays disabled while the box is empty
   return buddy;
 }
 async function ask(buddy, text, timeout = 15000) {

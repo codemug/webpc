@@ -7,8 +7,8 @@ import { releases } from '../../../scripts/pc/craft/releases.mjs';
 
 const APP = 'gridcraft';
 const NEEDS = ['host', 'app:gridcraft'];
-// gridcraft.run_command ids that destroy or close data: the when text warns the model to
-// ask the user first: effectFor marks those calls destructive, so the policy asks.
+// gridcraft.run_command ids that destroy or close data: effectFor marks those calls
+// destructive.
 const DESTRUCTIVE = ['file.new', 'file.close', 'sheet.delete', 'edit.clear'];
 // tools.rs format_range: horizontalAlign -> command (tools.rs:539-546).
 const ALIGN = { left: 'home.alignLeft', center: 'home.alignCenter', right: 'home.alignRight', justify: 'home.justify' };
@@ -343,7 +343,7 @@ export const tools = [
   {
     name: 'gridcraft.run_command',
     purpose: 'Run any GridCraft menu command by id with parameters.',
-    when: `Use when a menu action is wanted by id; ${DESTRUCTIVE.join(', ')} are destructive, so ask first.`,
+    when: `Use when a menu action is wanted by id; ${DESTRUCTIVE.join(', ')} are destructive.`,
     params: {
       command: { type: 'string', required: true, description: 'Command id from gridcraft.list_commands, e.g. cell.set or home.bold' },
       params: { type: 'text', description: 'Parameters as key=value lines, one per line; omit for the defaults' },

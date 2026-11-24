@@ -72,14 +72,14 @@ test('an exec-pending within the grace keeps the run open until the real reply',
   assert.deepEqual(await p, { type: 'exec-result', exitCode: 0, output: 'ok', truncated: false });
 });
 
-test('other exec-error reasons (denied, timeout) settle immediately, before the grace', async () => {
+test('other exec-error reasons (cancelled, timeout) settle immediately, before the grace', async () => {
   const ch = new FakeChannel();
   const exec = createExecClient(ch, { graceMs: 200 });
   const p = exec.run('sh', 'rm', 5000);
-  ch.emit({ type: 'exec-error', id: ch.posts[0].id, reason: 'denied' });
+  ch.emit({ type: 'exec-error', id: ch.posts[0].id, reason: 'cancelled' });
   const result = await Promise.race([p, sleep(30).then(() => 'still-open')]);
   assert.equal(result.type, 'exec-error', 'not swallowed by the grace');
-  assert.equal(result.reason, 'denied');
+  assert.equal(result.reason, 'cancelled');
 });
 
 test('cancelAll posts an exec-cancel per open run and settles them cancelled', async () => {
@@ -119,13 +119,17 @@ test('a not-running reply from another tab after an exec-pending ack does not fa
   assert.equal((await p).output, 'hi\n');
 });
 
-test('after exec-started, a busy reply from that terminal settles at once', async () => {
+test('a busy reply from the snapshot tab after the owner\'s exec-pending ack does not fail the run', async () => {
   const ch = new FakeChannel();
   const exec = createExecClient(ch, { graceMs: 5000 });
   const p = exec.run('sh', 'echo hi', 5000);
   const id = ch.posts[0].id;
-  ch.emit({ type: 'exec-pending', id });
-  ch.emit({ type: 'exec-started', id }); // the user clicked Run
-  ch.emit({ type: 'exec-error', id, reason: 'busy' }); // the shell was not at its prompt
-  assert.equal((await p).reason, 'busy');
+  ch.emit({ type: 'exec-pending', id }); // the owner tab runs the request
+  ch.emit({ type: 'exec-error', id, reason: 'busy' }); // the snapshot tab replies
+  let settled = false;
+  p.then(() => { settled = true; });
+  await sleep(40);
+  assert.equal(settled, false, 'still waiting for the owner tab');
+  ch.emit({ type: 'exec-result', id, exitCode: 0, output: 'hi\n' });
+  assert.equal((await p).output, 'hi\n');
 });

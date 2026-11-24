@@ -70,7 +70,7 @@ const traceResult = (name, args, result) => {
 const CLOUD_MODELS = { 'cloud:anthropic': 'Claude · cloud (your key)', 'cloud:openai': 'OpenAI-compatible · cloud (your key)' };
 const isCloud = key => Boolean(CLOUD_MODELS[key]);
 const CHROME_MODEL = 'chrome:builtin'; const isChrome = key => key === CHROME_MODEL;
-const store = new ConversationStore(); let initialized = false, loading = false, loadVersion = 0, selected = DEFAULT_MODEL, pendingImage = null;
+const store = new ConversationStore(); let initialized = false, loading = false, loadVersion = 0, loadError = null, selected = DEFAULT_MODEL, pendingImage = null;
 let threads = null; // the thread store, built at startup from idb-keyval (see the startup section)
 try { const saved = localStorage.getItem(MODEL_KEY) ?? localStorage.getItem(LEGACY_MODEL_KEY); if (MODELS[saved]) selected = saved; } catch {}
 for (const [key, model] of Object.entries(MODELS)) $('model').add(new Option(`${model.label} · ${model.size}`, key));
@@ -86,7 +86,7 @@ function storageError(text) { $('storage-warning').hidden = false; $('storage-wa
 function controls() {
   $('load-model').disabled = !initialized || loading || Boolean(session.active) || client.ready || isCloud(selected) || (isChrome(selected) && chrome.ready);
   $('stop').disabled = !(loading || session.active || client.ready || cloud.ready || chrome.ready);
-  $('send').disabled = !initialized || !session.client.ready || Boolean(session.active) || loading;
+  $('send').disabled = !initialized || Boolean(session.active) || !$('message').value.trim();
   $('new-chat').disabled = !initialized; $('import').disabled = !initialized; $('previous').disabled = !initialized; $('chats').disabled = !initialized;
   $('model-state').textContent = loading ? 'Loading…' : cloud.ready ? `Cloud · ${cloud.host}` : isChrome(selected) && chrome.ready ? 'Chrome · on device' : client.ready ? session.active ? 'Working locally' : 'Ready · on device' : 'Not loaded';
   imageInputControls();
@@ -185,7 +185,7 @@ async function chromeDownloadTool(toolKey, api) {
 // Grants are per session: they live only in this page's memory and are cleared on reload (fresh
 // page) and when the app closes. They are never written to IndexedDB, localStorage or exports.
 const fileGrants = [];
-const fileHost = createFileHost({ grants: fileGrants, confirm: text => confirm(text), note: status });
+const fileHost = createFileHost({ grants: fileGrants, note: status });
 const fileTools = { grants: null };
 // The search index is per session too: memory only, cleared with the grants, offered while it has
 // chunks. Its embedding model (about 23 MB, Hugging Face, pinned revision) runs in its own worker
@@ -352,7 +352,6 @@ const removeBackground = async (source) => {
       try { await fileStore.list(parent); } catch { return { error: `The folder "${parent}" does not exist yet; cannot save "${base}".` }; }
       const kind = await fileStore.exists(parent, base);
       if (kind === 'folder') return { error: `"${base}" is a folder; cannot save the background-removed image there.` };
-      if (!confirm(`Save the background-removed image to "${target}" (transparent PNG, ${Math.round(png.size / 1024)} KB)${kind === 'file' ? ' — this OVERWRITES the existing file' : ''}?`)) return { error: 'Save cancelled by the user.' };
       await fileStore.write(parent, base, new Uint8Array(await png.arrayBuffer()));
       filesChangeChannel?.postMessage({ type: 'changed' });
       status(`Saved ${target}.`);
@@ -389,7 +388,7 @@ $('vision-engine').addEventListener('change', () => {
 });
 applyFileGates(); renderFileGrants();
 // AI-4: the run_code tool reaches the Linux terminal app's exec service over a same-origin
-// BroadcastChannel: the terminal page shows the approval prompt and runs the code in its guest.
+// BroadcastChannel: the terminal page runs the code in its guest at once (no approval prompt).
 // exec-client.js owns the pending map, the per-run wall timer, the 20 KB output cap and the
 // grace on not-running/busy (wait graceMs for the terminal page's exec-pending before failing).
 const execChannel = new BroadcastChannel('webpc-terminal');
@@ -463,59 +462,17 @@ const sessions = new Map(); // thread id -> AgentSession
 let visibleId = null;
 let session = makePlaceholderSession();
 const statusMap = new Map(); // thread id -> last known status
-const approvals = new Map(); // thread id -> { resolve, reason, preview }
 const ACTIVE_STATUSES = ['running', 'needs_you'];
 const CHIP_LABEL = { running: 'running', waiting: 'waiting', needs_you: 'needs you', done: 'done', failed: 'failed', interrupted: 'interrupted' };
 // Holds the controls live before the first thread opens: its store is a no-op (it never writes)
 // and its events go nowhere, so it is safe to cancel, export or persist.
 function makePlaceholderSession() {
-  return new AgentSession({ client: shared.forThread('placeholder'), store: { save: async () => {} }, webSearch, httpGet, runJavaScript, runCode, chrome: chromeTools, files: fileTools, vision: visionTools, agent, host: desktopHost, filesCtx, craft, approve: async () => false, proxyAllowed: () => false, emit: () => {} });
+  return new AgentSession({ client: shared.forThread('placeholder'), store: { save: async () => {} }, webSearch, httpGet, runJavaScript, runCode, chrome: chromeTools, files: fileTools, vision: visionTools, agent, host: desktopHost, filesCtx, craft, proxyAllowed: () => false, emit: () => {} });
 }
 function makeSession(id, record) {
-  const s = new AgentSession({ client: shared.forThread(id), store: { save: value => verifiedSave(id, value) }, webSearch, httpGet, runJavaScript, runCode, chrome: chromeTools, files: fileTools, vision: visionTools, agent, host: desktopHost, filesCtx, craft, approve: makeApprove(id), proxyAllowed: () => $('reader-proxy').checked, emit: (type, data) => onEvent(s, type, data) });
+  const s = new AgentSession({ client: shared.forThread(id), store: { save: value => verifiedSave(id, value) }, webSearch, httpGet, runJavaScript, runCode, chrome: chromeTools, files: fileTools, vision: visionTools, agent, host: desktopHost, filesCtx, craft, proxyAllowed: () => $('reader-proxy').checked, emit: (type, data) => onEvent(s, type, data) });
   s.threadId = id; s.history = record.history; s.summary = record.summary;
   return s;
-}
-// M3 approvals: approve() resolves when a button in the thread's in-chat card is clicked. A card
-// in a background thread waits until that thread is opened; Stop resolves it as Deny.
-function makeApprove(id) {
-  return ({ preview, reason }) => new Promise(resolve => {
-    approvals.set(id, { resolve, reason, preview });
-    setThreadStatus(id, 'needs_you');
-    if (visibleId === id) renderApprovalCard(id);
-    postBadge();
-  });
-}
-function renderApprovalCard(id) {
-  const entry = approvals.get(id);
-  if (!entry || visibleId !== id) return;
-  const root = document.createElement('div'); root.className = 'approval';
-  const text = document.createElement('p'); text.textContent = entry.reason ?? 'Buddy needs your approval.';
-  const pre = document.createElement('pre'); pre.textContent = entry.preview ?? '';
-  const actions = document.createElement('div'); actions.className = 'approval-actions';
-  const allow = document.createElement('button'); allow.className = 'primary approve-allow'; allow.textContent = 'Allow';
-  const deny = document.createElement('button'); deny.className = 'approve-deny'; deny.textContent = 'Deny';
-  allow.addEventListener('click', () => resolveApproval(id, true));
-  deny.addEventListener('click', () => resolveApproval(id, false));
-  actions.append(allow, deny);
-  root.append(text, pre, actions);
-  $('messages').append(root);
-  $('conversation').scrollTop = $('conversation').scrollHeight;
-}
-function resolveApproval(id, ok) {
-  const entry = approvals.get(id);
-  if (!entry) return;
-  approvals.delete(id);
-  entry.resolve(ok);
-  if (visibleId === id) $('messages').querySelector('.approval')?.remove();
-  setThreadStatus(id, 'running');
-}
-function denyApproval(id) {
-  const entry = approvals.get(id);
-  if (!entry) return;
-  approvals.delete(id);
-  entry.resolve(false);
-  if (visibleId === id) $('messages').querySelector('.approval')?.remove();
 }
 function onEvent(s, type, data) {
   const id = s.threadId;
@@ -665,7 +622,6 @@ async function deleteThread(id) {
   if (!confirm('Delete this chat? Its messages cannot be recovered.')) return;
   await threads.remove(id).catch(() => {});
   statusMap.delete(id);
-  denyApproval(id);
   sessions.delete(id);
   if (visibleId === id) {
     visibleId = null; session = null;
@@ -689,7 +645,7 @@ async function openThread(id) {
   document.body.dataset.thread = id;
   // Remember the open thread so a reload reopens it (falling back to the newest at startup).
   try { localStorage.setItem('buddy:openThread', id); } catch {}
-  render(s); controls(); renderApprovalCard(id);
+  render(s); controls();
 }
 async function newThread() {
   error('');
@@ -711,18 +667,14 @@ $('chats').addEventListener('click', () => {
 });
 $('chats-close').addEventListener('click', closeChats);
 $('chats-new').addEventListener('click', () => newThread());
-// Stop ends the visible thread's work: resolves its pending approval as Deny and marks it
-// interrupted when it had work. The other threads keep running: their jobs stay queued or in
-// flight and the shared worker survives, so the stop interrupts only this thread's in-flight
-// request. With killWorker the shared worker ends too, and every in-flight local request ends
-// with it: the Stop button does that only while a model is loading, because no chat has
-// started on that model yet; model change, load and page close kill it the same way.
+// Stop ends the visible thread's work and marks it interrupted when it had work. The other
+// threads keep running: their jobs stay queued or in flight and the shared worker survives,
+// so the stop interrupts only this thread's in-flight request. With killWorker the shared
+// worker ends too, and every in-flight local request ends with it: the Stop button does that
+// only while a model is loading, because no chat has started on that model yet; model change,
+// load and page close kill it the same way.
 function stopVisible(text = isCloud(selected) || isChrome(selected) ? 'Stopped. Send the message again to continue.' : 'Stopped. Load the model again to continue; cached downloads are kept.', killWorker = false) {
-  if (session) {
-    const hadWork = Boolean(session.active) || approvals.has(session.threadId);
-    denyApproval(session.threadId);
-    if (hadWork) setThreadStatus(session.threadId, 'interrupted');
-  }
+  if (session && session.active) setThreadStatus(session.threadId, 'interrupted');
   loadVersion++; loading = false; session?.cancel(); visionWorkerStop(); exec.cancelAll(); if (killWorker) clientRef.current.stop(); $('progress').hidden = true;
   document.querySelectorAll('.message-body:empty').forEach(el => { el.textContent = 'Stopped.'; });
   document.querySelectorAll('.tool summary').forEach(el => { if (el.textContent.endsWith('· running')) el.textContent = el.textContent.replace('· running', '· stopped'); });
@@ -731,9 +683,7 @@ function stopVisible(text = isCloud(selected) || isChrome(selected) ? 'Stopped. 
 // Closing the page ends every thread's work, visible or not, and the shared worker with them.
 function cancelAll(text) {
   for (const s of sessions.values()) {
-    const hadWork = Boolean(s.active) || approvals.has(s.threadId);
-    denyApproval(s.threadId);
-    if (hadWork) setThreadStatus(s.threadId, 'interrupted');
+    if (s.active) setThreadStatus(s.threadId, 'interrupted');
     s.cancel();
   }
   loadVersion++; loading = false; visionWorkerStop(); exec.cancelAll(); clientRef.current.stop(); $('progress').hidden = true;
@@ -761,6 +711,7 @@ function modelInfo() {
   $('about-help').dataset.help = licenseNotice('local').help;
 }
 async function doLoad(vision) {
+  loadError = null;
   stopVisible(undefined, true); const version = ++loadVersion; loading = true; controls(); error(''); $('progress').hidden = false; $('progress').removeAttribute('value');
   if (isChrome(selected)) {
     // The click is the user gesture Chrome's create() needs; its monitor drives the status line.
@@ -768,7 +719,7 @@ async function doLoad(vision) {
     try {
       await chrome.load(status); if (version !== loadVersion) return;
       status('Chrome model ready. Everything runs on this device.'); $('message').focus();
-    } catch (err) { if (version === loadVersion && err.name !== 'AbortError') error(err.message); }
+    } catch (err) { if (version === loadVersion && err.name !== 'AbortError') { loadError = err; error(err.message); } }
     finally { if (version === loadVersion) { loading = false; $('progress').hidden = true; controls(); } }
     return;
   }
@@ -783,10 +734,20 @@ async function doLoad(vision) {
     status(vision && spec.vision ? `Loading ${spec.label} with image support · ${spec.size} + ${spec.vision.size} vision encoder…` : `Loading ${spec.label} · first download ${spec.size}…`);
     await client.load(selected, { vision }); if (version !== loadVersion) return;
     status('Model ready. Messages are processed on this device.'); $('message').focus();
-  } catch (err) { if (version === loadVersion && err.name !== 'AbortError') error(err.message); }
+  } catch (err) { if (version === loadVersion && err.name !== 'AbortError') { loadError = err; error(err.message); } }
   finally { if (version === loadVersion) { loading = false; $('progress').hidden = true; controls(); } }
 }
-$('load-model').addEventListener('click', () => doLoad($('image-input').checked));
+// A send while a load is running joins the in-flight load instead of restarting it: doLoad
+// would kill the worker it is downloading (stopVisible with killWorker), so a second start
+// would cancel the first. The Load model button is disabled while a load runs; only a send
+// reaches a second start.
+let loadInFlight = null;
+function startLoad(vision) {
+  if (loadInFlight) return loadInFlight;
+  loadInFlight = doLoad(vision).finally(() => { loadInFlight = null; });
+  return loadInFlight;
+}
+$('load-model').addEventListener('click', () => startLoad($('image-input').checked));
 $('stop').addEventListener('click', () => stopVisible(undefined, loading));
 $('model').addEventListener('change', () => {
   stopVisible('Model changed. Load it when you’re ready.', true);
@@ -807,6 +768,7 @@ $('composer').addEventListener('submit', async event => {
   event.preventDefault(); if ($('send').disabled) return;
   const text = $('message').value; if (!text.trim()) return;
   error('');
+  $('message').value = ''; // clear at once; restored below if the send fails before the message reaches the chat
   try {
     let image = null;
     if (pendingImage) {
@@ -814,18 +776,38 @@ $('composer').addEventListener('submit', async event => {
         if (!cloud.ready) { clearPendingImage(); throw new Error('Confirm the cloud model in Settings first (your key was cleared).'); }
         // The cloud turn sends the PNG bytes of the data URL, not the raw RGBA pixels of the original file.
         image = { name: pendingImage.name, width: pendingImage.width, height: pendingImage.height, data: dataUrlBytes(pendingImage.url), type: 'image/png' };
-      } else if (!MODELS[selected]?.vision) clearPendingImage();
-      else {
+      } else if (!MODELS[selected]?.vision) {
+        clearPendingImage(); // also unchecks the (unsupported) image input
+      } else if (client.ready) {
         // First image with a text-loaded model: fetch the vision encoder now, on demand.
-        if (client.ready && !client.vision) await doLoad(true);
-        if (!client.ready) throw new Error('The model did not finish loading. Send the message again.');
+        if (!client.vision) await startLoad(true);
+        if (!client.vision) throw loadError ?? new Error('The model did not finish loading. Send the message again.');
         image = { name: pendingImage.name, width: pendingImage.width, height: pendingImage.height, data: pendingImage.data, type: pendingImage.type };
       }
+      // Image pending but the local model is not loaded: the load below starts it with the
+      // vision encoder, and the image object is built once it is ready.
+    }
+    // Send loads the model: a local model that is not ready starts (or joins) the same load
+    // the Load model button starts, with the vision encoder when an image is pending, and
+    // the message goes out as soon as it is ready. Cloud and Chrome keep their
+    // "Load a model first." error from session.send below.
+    if (!isCloud(selected) && !isChrome(selected) && !client.ready) {
+      // The box is empty during the load, so its placeholder says the message is waiting.
+      const placeholder = $('message').placeholder;
+      $('message').placeholder = 'Your message sends when the model is ready…';
+      try { await startLoad(Boolean(pendingImage) || $('image-input').checked); }
+      finally { $('message').placeholder = placeholder; }
+      if (!client.ready) throw loadError ?? new Error('The model did not finish loading. Send the message again.');
+    }
+    if (pendingImage && !isCloud(selected) && !image) {
+      image = { name: pendingImage.name, width: pendingImage.width, height: pendingImage.height, data: pendingImage.data, type: pendingImage.type };
     }
     await session.send(text, image);
-    $('message').value = '';
     if (image) clearPendingImage();
-  } catch (err) { error(err.message); }
+  } catch (err) {
+    error(err.message);
+    $('message').value = text; // the message never reached the chat: put the text back
+  }
   controls();
 });
 // ---------- image input (Qwen models) ----------
@@ -871,7 +853,7 @@ $('image-input').addEventListener('change', async () => {
   // Enabling Image input with a loaded text-only model fetches the vision encoder now, on demand.
   if (client.ready && !client.vision) {
     status(`Downloading image support for ${spec.label} (${spec.vision.size})…`);
-    await doLoad(true);
+    await startLoad(true);
   }
 });
 // ---------- cloud model (BYOK, opt-in per session) ----------
@@ -901,6 +883,7 @@ $('cloud-use').addEventListener('click', () => {
     bindClient(); controls();
   } catch (err) { error(err.message); }
 });
+$('message').addEventListener('input', () => controls());
 $('message').addEventListener('keydown', event => {
   // Enter sends (Shift + Enter keeps the newline; Ctrl or ⌘ + Enter still sends);
   // an IME's Enter confirms the composition, it does not send.
@@ -909,7 +892,7 @@ $('message').addEventListener('keydown', event => {
   event.preventDefault();
   $('composer').requestSubmit();
 });
-for (const button of document.querySelectorAll('[data-prompt]')) button.addEventListener('click', () => { $('message').value = button.dataset.prompt; $('message').focus(); });
+for (const button of document.querySelectorAll('[data-prompt]')) button.addEventListener('click', () => { $('message').value = button.dataset.prompt; controls(); $('message').focus(); });
 function download(name, value) {
   const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' }));
   const link = document.createElement('a'); link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);

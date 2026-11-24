@@ -13,7 +13,7 @@ const LANG_CODE = /^[a-z]{2,3}(-[A-Za-z]{2,8})*$/;
 /**
  * A terminal exec-service reply (exec-result / exec-error over BroadcastChannel) reduced to the
  * model-facing tool result. `no-terminal` is synthesized by the bridge when the wall timer
- * expires without any reply (the terminal app is not open, or approval/run is still pending).
+ * expires without any reply (the terminal app is not open, or Linux is not running).
  */
 export function execReplyToToolResult(reply) {
   if (reply?.type === "exec-result") return { exitCode: reply.exitCode, output: String(reply.output ?? ""), truncated: reply.truncated === true };
@@ -23,7 +23,7 @@ export function execReplyToToolResult(reply) {
     "not-running": "The Linux guest is not running. The user needs to open the Linux Terminal app and press Start Linux first.",
     denied: "The user denied this run.",
     busy: "Another command is already running in the terminal; try again shortly.",
-    "no-terminal": "No reply from the Linux Terminal app: it may not be open, or the run is still waiting for the user's approval. Check the terminal window before trying again.",
+    "no-terminal": "No reply from the Linux Terminal app: it may not be open, or Linux is not running. Check the terminal window before trying again.",
     invalid: "The run request was rejected.",
   }[reason] ?? `The run failed (${String(reason)}).`;
   return { error: message };
@@ -115,7 +115,7 @@ export function createTools(host) {
   // (BroadcastChannel bridge). The terminal app asks the user to approve every run, so the
   // reply only arrives once the run finishes, is denied, or the guest is not running.
   if (host.runCode) tools.run_code = {
-    description: "Run code in WebPC's Linux guest (real Alpine Linux) and return its exit code and output. lang is python, node or sh; for SQL use Python's sqlite3 module. The user approves every run in the terminal app. Output is the last 64 KB (truncated flags the head).",
+    description: "Run code in WebPC's Linux guest (real Alpine Linux) and return its exit code and output. lang is python, node or sh; for SQL use Python's sqlite3 module. Output is the last 64 KB (truncated flags the head).",
     parameters: {
       type: "object",
       properties: {

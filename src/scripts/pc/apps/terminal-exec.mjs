@@ -67,26 +67,25 @@ export function execReply(result) {
   return { exitCode, output, truncated };
 }
 
-// The approval prompt shows exactly what will run: C0 controls, DEL and
-// bidi/zero-width characters render as escapes (\x0d, <U+202E>) instead of being
-// invisible, so crafted code cannot masquerade. Newlines stay newlines.
-const CONTROL_RE = /[\u0000-\u0008\u0009\u000B-\u001F\u007F]/g;
-const INVISIBLE_RE = /[\u200B\u200C\u200D\u200E\u200F\u202A\u202B\u202C\u202D\u202E\u2060\u2066\u2067\u2068\u2069\uFEFF]/g;
-export function visibleCode(code) {
-  return code
-    .replace(CONTROL_RE, ch => `\\x${ch.charCodeAt(0).toString(16).padStart(2, '0')}`)
-    .replace(INVISIBLE_RE, ch => `<U+${ch.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}>`);
+// Whether this tab may run the request: one run at a time (busy), the guest must be running,
+// and only the tab that holds the saved disk's Web Lock (owner, the boot's lock.held) runs -
+// a snapshot tab replies not-running so the owner tab wins (its exec-pending ack cancels the
+// client's grace) and, with only a snapshot tab up, the run settles not-running after the grace.
+export function execGate({ owner, running, inFlight }) {
+  if (inFlight) return 'busy';
+  if (!running || !owner) return 'not-running';
+  return 'run';
 }
 
-// Channel-message triage for the exec protocol: an 'exec-request' goes to the approval
-// flow; another Terminal's 'exec-started' or 'exec-cancel' for the id this Terminal is
-// still prompting for withdraws that prompt silently (no reply). Everything else, including
-// the replies this Terminal posts itself and other apps' traffic, must be ignored: answering
-// a non-request message is what made two Terminals bounce exec-error replies forever.
+// Channel-message triage for the exec protocol: an 'exec-request' runs at once (no approval
+// prompt, M3); an 'exec-cancel' for the id this Terminal is running - Buddy's Stop, New chat
+// or its wall timer - aborts that run. Everything else, including the replies this Terminal
+// posts itself and other apps' traffic, must be ignored: answering a non-request message is
+// what made two Terminals bounce exec-error replies forever.
 export function handleExecChannelMessage(data, slot) {
   if (data?.type === 'exec-request') return { action: 'request' };
-  if ((data?.type === 'exec-started' || data?.type === 'exec-cancel') && typeof data.id === 'string' && slot && slot.phase === 'prompt' && slot.req?.id === data.id) {
-    return { action: 'withdraw' };
+  if (data?.type === 'exec-cancel' && typeof data.id === 'string' && slot && slot.req?.id === data.id) {
+    return { action: 'cancel' };
   }
   return { action: 'ignore' };
 }

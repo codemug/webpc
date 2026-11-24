@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateExecRequest, planExec, execReply, base64Encode, visibleCode, handleExecChannelMessage, MAX_OUTPUT, MAX_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, EXEC_ARG_LIMIT } from '../src/scripts/pc/apps/terminal-exec.mjs';
+import { validateExecRequest, planExec, execReply, base64Encode, handleExecChannelMessage, execGate, MAX_OUTPUT, MAX_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, EXEC_ARG_LIMIT } from '../src/scripts/pc/apps/terminal-exec.mjs';
 
 const req = { type: 'exec-request', id: 'r1', from: 'Buddy', lang: 'sh', code: 'echo hi', timeoutMs: DEFAULT_TIMEOUT_MS };
 
@@ -72,18 +72,23 @@ test('execReply: the exit code a shell would report, merged streams, the 64 KB t
   assert.equal(atCap.truncated, false, 'exactly the cap is not truncated');
 });
 
-test('visibleCode renders invisible characters as escapes and leaves the rest alone', () => {
-  assert.equal(visibleCode('a\rb\nc\td'), 'a\\x0db\nc\\x09d', 'CR and TAB render as escapes; the newline stays a newline');
-  assert.equal(visibleCode('\x00\x07\x7f'), '\\x00\\x07\\x7f');
-  assert.equal(visibleCode('ok\u202E\u200B\uFEFFend'), 'ok<U+202E><U+200B><U+FEFF>end');
-  assert.equal(visibleCode('plain code\nwith a tab'), 'plain code\nwith a tab');
-  assert.equal(visibleCode('a\u2066b'), 'a<U+2066>b', 'isolated run controls are visible too');
+test('execGate: in flight is busy; a stopped guest or a non-owner (snapshot) tab is not-running; the owner with a running guest runs', () => {
+  assert.equal(execGate({ owner: true, running: true, inFlight: true }), 'busy');
+  assert.equal(execGate({ owner: true, running: false, inFlight: false }), 'not-running', 'a stopped guest runs nothing');
+  assert.equal(execGate({ owner: false, running: true, inFlight: false }), 'not-running', 'a snapshot tab (no disk lock) runs nothing');
+  assert.equal(execGate({ owner: false, running: false, inFlight: false }), 'not-running');
+  assert.equal(execGate({ owner: true, running: true, inFlight: false }), 'run');
 });
 
-test('channel triage: only exec-request is handled; replies and foreign traffic are ignored', () => {
-  const promptSlot = { phase: 'prompt', req: { id: 'r1' } };
+test('channel triage: exec-request runs at once; exec-cancel matches only the running id; replies and foreign traffic are ignored', () => {
+  const runSlot = { req: { id: 'r1' } };
   assert.deepEqual(handleExecChannelMessage({ type: 'exec-request', id: 'r1' }, null), { action: 'request' });
+  assert.deepEqual(handleExecChannelMessage({ type: 'exec-request' }, runSlot), { action: 'request' }, 'a request is a request even while a run is in flight');
+  assert.deepEqual(handleExecChannelMessage({ type: 'exec-cancel', id: 'r1' }, runSlot), { action: 'cancel' });
+  assert.deepEqual(handleExecChannelMessage({ type: 'exec-cancel', id: 'other' }, runSlot), { action: 'ignore' }, 'a different id does not cancel the run');
+  assert.deepEqual(handleExecChannelMessage({ type: 'exec-cancel', id: 'r1' }, null), { action: 'ignore' }, 'nothing running, nothing to cancel');
   for (const foreign of [
+    { type: 'exec-started', id: 'r1' }, // no longer posted: the run starts with the exec-pending ack
     { type: 'exec-error', id: 'r1', reason: 'invalid' },
     { type: 'exec-error', id: 'r1', reason: 'busy' },
     { type: 'exec-result', id: 'r1', exitCode: 0, output: '' },
@@ -91,16 +96,5 @@ test('channel triage: only exec-request is handled; replies and foreign traffic 
     { type: 'pc:theme', theme: 'dark' },
     { type: 'something-else' },
     null, undefined, 'a string', 42,
-  ]) assert.deepEqual(handleExecChannelMessage(foreign, promptSlot), { action: 'ignore' }, `must ignore: ${JSON.stringify(foreign)}`);
-  assert.deepEqual(handleExecChannelMessage({ type: 'exec-request' }, promptSlot), { action: 'request' }, 'a request is a request even while prompting');
-});
-
-test('channel triage: exec-started/exec-cancel withdraw only a matching pending prompt', () => {
-  const prompt = { phase: 'prompt', req: { id: 'r1' } };
-  for (const type of ['exec-started', 'exec-cancel']) {
-    assert.deepEqual(handleExecChannelMessage({ type, id: 'r1' }, prompt), { action: 'withdraw' });
-    assert.deepEqual(handleExecChannelMessage({ type, id: 'other' }, prompt), { action: 'ignore' }, `${type}: a different id does not withdraw`);
-    assert.deepEqual(handleExecChannelMessage({ type, id: 'r1' }, { phase: 'run', req: { id: 'r1' } }), { action: 'ignore' }, `${type}: a running command is left to its own timeout`);
-    assert.deepEqual(handleExecChannelMessage({ type, id: 'r1' }, null), { action: 'ignore' }, `${type}: nothing pending, nothing to withdraw`);
-  }
+  ]) assert.deepEqual(handleExecChannelMessage(foreign, runSlot), { action: 'ignore' }, `must ignore: ${JSON.stringify(foreign)}`);
 });

@@ -112,7 +112,7 @@ test('terminal.run opens the window first, then delegates to the run_code bridge
   const term = fakeTerminal();
   const got = await term.runTool('terminal.run', { lang: 'sh', code: 'echo hello' });
   assert.deepEqual(got, { exitCode: 0, output: 'ok\n', truncated: false });
-  assert.equal(term.state.opened, 1, 'the approval prompt must be visible to the user');
+  assert.equal(term.state.opened, 1, 'the window must be open so the user sees the run');
   assert.equal(term.state.runs.length, 1);
   assert.equal(term.state.runs[0].lang, 'sh');
   assert.equal(term.state.runs[0].code, 'echo hello');
@@ -127,9 +127,9 @@ test('terminal.run passes timeout_ms through to the bridge', async () => {
 
 test('terminal.run passes the bridge reply through unchanged', async () => {
   const term = fakeTerminal();
-  term.state.runResult = { error: 'The user denied this run.' };
+  term.state.runResult = { error: 'The Linux guest is not running. Start Linux first.' };
   const got = await term.runTool('terminal.run', { lang: 'node', code: 'x' });
-  assert.deepEqual(got, { error: 'The user denied this run.' });
+  assert.deepEqual(got, { error: 'The Linux guest is not running. Start Linux first.' });
   term.state.runResult = { error: 'The run exceeded its time limit and was killed in the guest.', output: '', truncated: false };
   const timed = await term.runTool('terminal.run', { lang: 'sh', code: 'sleep 99' });
   assert.deepEqual(timed, { error: 'The run exceeded its time limit and was killed in the guest.', output: '', truncated: false });

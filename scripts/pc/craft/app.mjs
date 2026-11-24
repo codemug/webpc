@@ -32,10 +32,13 @@ addEventListener('message',event=>{
    catch(e){saveError=true;error(`Download failed: ${e.message}. Keep this window open.`);}
  }
 });
-function openFile(file){if(dirty&&!confirm('Open this file while the current document has unsaved changes? Save it first to keep those edits.'))return;post('open',file);status(`Opened: ${file.name}`);}
-async function openBytes(name,bytes){if(bytes.byteLength>256*1024*1024)throw new Error('Open files up to 256 MB.');openFile({name,bytes});}
+// A tool-initiated open (the agent packs drive the #file input, agent/shared/craft-files.js openFromBytes)
+// arrives as an untrusted change event; a real user selection is trusted, so tool opens skip the
+// unsaved-changes confirm (M3: no approvals) while user opens keep it.
+function openFile(file,fromTool){if(dirty&&!fromTool&&!confirm('Open this file while the current document has unsaved changes? Save it first to keep those edits.'))return;post('open',file);status(`Opened: ${file.name}`);}
+async function openBytes(name,bytes,fromTool){if(bytes.byteLength>256*1024*1024)throw new Error('Open files up to 256 MB.');openFile({name,bytes},fromTool);}
 $('open').onclick=()=>$('file').click();
-$('file').onchange=async()=>{const file=$('file').files[0];$('file').value='';if(!file)return;try{await openBytes(file.name,await file.arrayBuffer());}catch(e){error(e.message);}};
+$('file').onchange=async event=>{const file=$('file').files[0];$('file').value='';if(!file)return;try{await openBytes(file.name,await file.arrayBuffer(),event.isTrusted===false);}catch(e){error(e.message);}};
 $('openfiles').onclick=async()=>{try{const picked=await pickFile({accept:config.accept||'',title:`Open ${config.title} file from Files`});if(picked)await openBytes(picked.name,picked.bytes);}catch(e){error(e.message);}};
 $('restore').onclick=()=>{if(lastFile)openFile(lastFile);};
 $('download').onclick=()=>{if(lastFile)download(lastFile.name,lastFile.bytes);};

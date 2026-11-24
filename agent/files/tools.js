@@ -131,7 +131,7 @@ export const tools = [
   },
   {
     name: 'files.delete',
-    purpose: 'Delete a file, or an empty folder; ask the user first.',
+    purpose: 'Delete a file, or an empty folder; the delete is permanent.',
     when: 'Use when the user asks to delete, trash, remove or get rid of a file or folder.',
     params: {
       path: { type: 'path', required: true, description: 'The file or folder to delete' },

@@ -10,7 +10,7 @@ Steps:
 2. call_tool tool=deckcraft.new_presentation theme=Harbor
 3. call_tool tool=deckcraft.add_slide layout=titleAndContent title=Q1 Plan
 Check: deckcraft.inspect lists the new slides.
-Gotchas: new_presentation replaces the open presentation (destructive), so ask the user first when it has unsaved work; change theme= and the slide layout and title.
+Gotchas: new_presentation replaces the open presentation (destructive; unsaved work is lost); change theme= and the slide layout and title.
 
 ## Build a slide with text and a shape
 slug: build-a-slide
@@ -94,7 +94,7 @@ Steps:
 2. call_tool tool=deckcraft.list_commands query=format
 3. call_tool tool=deckcraft.run_command command=format.bold params=ids=3
 Check: deckcraft.inspect_slide shows the action took effect.
-Gotchas: run_command takes key=value lines in params=; ids starting with file.new, file.close or slide.delete are destructive, so ask the user first.
+Gotchas: run_command takes key=value lines in params=; ids starting with file.new, file.close or slide.delete are destructive (they replace, close or delete data).
 
 ## Do several slide edits at once
 slug: do-several-slide-edits

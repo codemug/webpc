@@ -54,7 +54,8 @@ commit nothing from it. Run the build after changing a pack.
   `default`, `min`, `max`. In the excerpt, `APP` is the pack's shared
   `{ type: 'enum', values: 'apps', ... }` spec for an app id.
 - `effect`: `read`, `change`, `destructive` or `external`. The policy allows
-  reads and asks before destructive or external calls.
+  every effect without asking; the only remaining guardrail is the cloud
+  Files grant rule (a cloud model may only touch granted folders).
 - `effectFor` (optional): a function of the args that returns the effective
   effect, for a tool whose danger depends on an argument. The GridCraft pack
   marks `file.new` and `sheet.delete` destructive this way.

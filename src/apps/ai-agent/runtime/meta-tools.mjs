@@ -91,7 +91,7 @@ function strParam(description) {
  *   skills,                  // parsed skills list (parseSkills output .skills, all packs)
  *   toolIndex, skillIndex,   // search handles (search.mjs loadIndex) over catalog.docs and skill docs
  *   toolDocs, skillDocs,     // the doc arrays (needed for regex mode)
- *   run: async (tool, args, ctx) => result,   // executes a catalog tool (the lead wires effects, approvals, leases)
+ *   run: async (tool, args, ctx) => result,   // executes a catalog tool (the lead wires the policy and leases)
  *   repairCall,              // raw -> { tool, args, repairs } (repair.mjs, injected)
  *   choices, aliases,        // passed to checkArgs
  *   skillPathsFor: name => [], // skills whose tools: list names this tool

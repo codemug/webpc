@@ -2,7 +2,7 @@
 // (webpc-files/ only) and the Files app's refresh channel. Pure path/text logic and
 // validation live in file-tools.js and agent.js; grants are read live from `grants`.
 import * as fileStore from "./store.mjs";
-import { resolveInGrants, readText, writePreview, MAX_LIST_ENTRIES, MAX_WRITE_CHARS } from "./file-tools.js";
+import { resolveInGrants, readText, MAX_LIST_ENTRIES, MAX_WRITE_CHARS } from "./file-tools.js";
 import { MAX_MESSAGE_CHARS } from "./storage.js";
 
 const split = (path) => {
@@ -11,9 +11,9 @@ const split = (path) => {
 };
 
 /**
- * @param {{ grants: Array<{root: string, kind: 'folder'|'file'}>, confirm: (text: string) => boolean, note?: (text: string) => void }} host
+ * @param {{ grants: Array<{root: string, kind: 'folder'|'file'}>, note?: (text: string) => void }} host
  */
-export function createFileHost({ grants, confirm, note = () => {} }) {
+export function createFileHost({ grants, note = () => {} }) {
   // Same channel the Files app listens on, so an open Files page refreshes after a write.
   const channel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("webpc-files") : null;
   const list = async (raw) => {
@@ -59,7 +59,6 @@ export function createFileHost({ grants, confirm, note = () => {} }) {
       try { await fileStore.list(parent); } catch { return { error: `The folder "${parent}" does not exist yet; write_file cannot create folders.` }; }
     }
     const exists = kind === "file";
-    if (!confirm(writePreview(resolved.path, content, exists))) return { error: "Write cancelled by the user." };
     const bytes = new TextEncoder().encode(content);
     await fileStore.write(parent, base, bytes);
     channel?.postMessage({ type: "changed" });

@@ -82,7 +82,7 @@ Steps:
 2. call_tool tool=vectorcraft.inspect
 3. call_tool tool=vectorcraft.pathfinder operation=unite ids=3, 4
 Check: vectorcraft.inspect lists one combined object instead of the two.
-Gotchas: pathfinder combines destructively (back to front), so ask the user first and keep vectorcraft.undo ready; operation= is unite, minusFront, intersect, exclude, divide, trim, merge, crop, outline or minusBack.
+Gotchas: pathfinder combines destructively (back to front), so keep vectorcraft.undo ready; operation= is unite, minusFront, intersect, exclude, divide, trim, merge, crop, outline or minusBack.
 
 ## Apply an effect
 slug: apply-an-effect
@@ -112,7 +112,7 @@ Steps:
 3. call_tool tool=vectorcraft.list_commands query=align
 4. call_tool tool=vectorcraft.run_command command=object.align params=horizontal=left
 Check: vectorcraft.inspect shows the action took effect.
-Gotchas: run_command takes key=value lines in params= (a [ ... ] or { ... } value is JSON); object.delete, layer.delete, file.close and the pathfinder ids are destructive, so ask the user first.
+Gotchas: run_command takes key=value lines in params= (a [ ... ] or { ... } value is JSON); object.delete, layer.delete, file.close and the pathfinder ids are destructive (they delete objects or layers, or close the file).
 ## Open a document from Files
 slug: open-a-document-from-files
 summary: Open a VectorCraft document or import vector art that is stored in Files.

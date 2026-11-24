@@ -65,7 +65,7 @@ Steps:
 2. call_tool tool=lightcraft.delete ids=3
 3. call_tool tool=lightcraft.restore ids=3
 Check: the photo is gone after the delete and back after the restore.
-Gotchas: delete moves photos to Recently Deleted (not permanent), so ask the user first and keep the ids for lightcraft.restore; ids= names the photos, the selection when omitted.
+Gotchas: delete moves photos to Recently Deleted (not permanent), so keep the ids for lightcraft.restore; ids= names the photos, the selection when omitted.
 
 ## Reset a photo's edits
 slug: reset-photo-edits
@@ -105,7 +105,7 @@ Steps:
 1. call_tool tool=desktop.open_app app=lightcraft
 2. call_tool tool=lightcraft.run_command command=album.setCover params="id=2 photo=9"
 Check: lightcraft.library_info or the app UI shows the action took effect.
-Gotchas: params= takes key=value lines or a JSON object; the page has no command list, so the id must come from the app's menus (e.g. preset.apply, mask.invert, version.create); photo.delete, preset.delete and develop.reset are destructive, so ask the user first.
+Gotchas: params= takes key=value lines or a JSON object; the page has no command list, so the id must come from the app's menus (e.g. preset.apply, mask.invert, version.create); photo.delete, preset.delete and develop.reset are destructive (the data is deleted or reset).
 ## Import a photo from Files
 slug: import-a-photo-from-files
 summary: Add a photo that is stored in Files to the LightCraft library.

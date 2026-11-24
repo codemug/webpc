@@ -318,11 +318,12 @@ async function main() {
   await buddy.goto(buddy.url(), { waitUntil: 'domcontentloaded' });
   if (!new URL(buddy.url()).searchParams.get('eval')) { const u = new URL(buddy.url()); u.searchParams.set('eval', '1'); if (prefetch === 'on') u.searchParams.set('prefetch', '1'); await buddy.goto(u.toString(), { waitUntil: 'domcontentloaded' }); }
 
-  // Select and load the model once; wait until Send is enabled (model ready).
+  // Select and load the model once; wait until the model state says it is ready (Send stays
+  // disabled while the box is empty, so it is no longer the ready signal).
   await buddy.waitForFunction(() => { const s = document.querySelector('#load-model'); return s && !s.disabled; }, null, { timeout: 60_000, polling: 250 });
   await buddy.locator('#model').selectOption(model);
   await buddy.locator('#load-model').click();
-  await buddy.waitForFunction(() => { const s = document.querySelector('#send'); return s && !s.disabled; }, null, { timeout: 300_000, polling: 500 });
+  await buddy.waitForFunction(() => /^(Ready|Cloud|Chrome)/.test(document.querySelector('#model-state')?.textContent ?? ''), null, { timeout: 300_000, polling: 500 });
   console.log(`model ${model} loaded and ready`);
   // The ?eval=1 hook must be live, or every task's tool trace would be empty and the run meaningless.
   const hookOn = await buddy.evaluate(() => Array.isArray(window.__buddyTrace));
@@ -332,8 +333,6 @@ async function main() {
     process.exit(1);
   }
 
-  // The eval measures tool choice, not the user's consent: allow every approval card Buddy shows.
-  await buddy.evaluate(() => { window.__evalApprovals = 0; setInterval(() => { const b = document.querySelector('#messages .approval .approve-allow'); if (b) { b.click(); window.__evalApprovals++; } }, 300); });
   const results = [];
   for (const task of tasks) {
     const started = Date.now();
@@ -355,9 +354,9 @@ async function main() {
       await buddy.evaluate(() => { if (window.__buddyTrace) window.__buddyTrace.length = 0; });
       await buddy.locator('#message').fill(task.prompt);
       await buddy.locator('#send').click();
-      // Wait for the run to finish (Send re-enables when the active run ends), 120 s cap.
-      try { await buddy.waitForFunction(() => { const s = document.querySelector('#send'); return s && s.disabled; }, null, { timeout: 8_000, polling: 100 }); } catch { /* finished before we sampled */ }
-      await buddy.waitForFunction(() => { const s = document.querySelector('#send'); return s && !s.disabled; }, null, { timeout: DONE_TIMEOUT, polling: 250 });
+      // Wait for the run to finish (the model state leaves "Working" when the active run ends), 120 s cap.
+      try { await buddy.waitForFunction(() => /^Working/.test(document.querySelector('#model-state')?.textContent ?? ''), null, { timeout: 8_000, polling: 100 }); } catch { /* finished before we sampled */ }
+      await buddy.waitForFunction(() => !/^Working/.test(document.querySelector('#model-state')?.textContent ?? ''), null, { timeout: DONE_TIMEOUT, polling: 250 });
       await page.waitForTimeout(400); // let the final trace entry land
 
       const trace = await buddy.evaluate(() => (window.__buddyTrace ?? []).map((e) => ({ name: e.name, arguments: e.arguments, ok: e.ok, errorType: e.errorType, result: e.result })));

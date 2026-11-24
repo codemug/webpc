@@ -2,6 +2,8 @@ import { test, expect } from '@playwright/test';
 import { skipUnlessEnabled } from './catalog.mjs';
 // The guest's pty prompt is busybox sh's "~ $": an idle shell ends the
 // screen there. The exec runs themselves never touch this pty (they are vm.exec() sessions).
+// M3: a request runs at once - no approval prompt, no clicks; the status line names the run
+// and its result, and Buddy's exec-cancel stops a run in flight.
 const screen = page => page.locator('.xterm-rows');
 const shellReady = page => expect.poll(async () => {
   const t = await screen(page).textContent();
@@ -10,10 +12,10 @@ const shellReady = page => expect.poll(async () => {
 const ready = async page => { await page.getByRole('button', { name: 'Start Linux', exact: true }).click(); await shellReady(page); };
 const execRequest = (id, code, lang = 'sh', timeoutMs = 30000) => ({ type: 'exec-request', id, from: 'Terminal Exec Spec', lang, code, timeoutMs });
 
-test('the terminal exec service runs approved commands via vm.exec and reports results over BroadcastChannel', async ({ page, baseURL }) => {
+test('the terminal exec service runs requests at once via vm.exec and reports results over BroadcastChannel', async ({ page, baseURL }) => {
   skipUnlessEnabled(test, 'terminal');
   skipUnlessEnabled(test, 'files'); // the spec uses the Files page as its BroadcastChannel requester
-  test.setTimeout(300000); page.on('dialog', dialog => dialog.accept());
+  test.setTimeout(600000); page.on('dialog', dialog => dialog.accept());
   const external = [];
   const trackExternal = request => { if (/^https?:/.test(request.url()) && new URL(request.url()).origin !== new URL(baseURL).origin) external.push(request.url()); };
   page.on('request', trackExternal);
@@ -29,43 +31,24 @@ test('the terminal exec service runs approved commands via vm.exec and reports r
     window.__exec = request => new Promise((resolve, reject) => { pending.set(request.id, resolve); channel.postMessage(request); setTimeout(() => { if (pending.has(request.id)) { pending.delete(request.id); reject(new Error(`no exec response within 120 s for ${request.id}`)); } }, 120000); });
   });
   const post = request => requester.evaluate(r => window.__exec(r), request);
-  const run = async (id, code, lang, timeoutMs) => {
-    const response = post(execRequest(id, code, lang, timeoutMs));
-    await page.locator('#exec-prompt').waitFor({ state: 'visible', timeout: 20000 });
-    await page.locator('#exec-run').click();
-    return response;
-  };
+  // No approval click any more: the request runs at once.
+  const run = (id, code, lang, timeoutMs) => post(execRequest(id, code, lang, timeoutMs));
   // A request before boot gets not-running, and the guest is never auto-started.
   expect(await post(execRequest('pre-boot', 'echo early'))).toEqual({ type: 'exec-error', id: 'pre-boot', reason: 'not-running' });
   await ready(page);
-  // Every run needs an approval click; the prompt is keyboard accessible (Deny focused first).
-  const denied = post(execRequest('denied', 'echo never'));
-  await page.locator('#exec-prompt').waitFor({ state: 'visible', timeout: 20000 });
-  expect(await page.locator('#exec-code').textContent()).toBe('echo never');
-  expect(await page.locator('#exec-meta').textContent()).toContain('Terminal Exec Spec');
-  expect(await page.evaluate(() => document.activeElement.id)).toBe('exec-deny');
-  // Protocol: the Terminal announces the pending approval.
-  expect(await requester.evaluate(() => window.__execTraffic)).toEqual(expect.arrayContaining([{ type: 'exec-pending', id: 'denied' }]));
-  await page.locator('#exec-deny').click();
-  expect(await denied).toEqual({ type: 'exec-error', id: 'denied', reason: 'denied' });
-  expect(await page.locator('#exec-prompt').isVisible()).toBe(false);
-  // Code with a NUL is refused before any prompt: the guest's exec channel cannot carry it.
+  // M3: the approval prompt is gone from the page.
+  expect(await page.locator('#exec-prompt').count()).toBe(0);
+  // A request runs without a prompt: the status line names it while it runs, and the reply
+  // carries the guest's output.
+  const onceP = run('at-once', 'sleep 2; echo at-once-ok');
+  await expect(page.locator('#terminal-status')).toContainText('Running sh command from Terminal Exec Spec', { timeout: 20000 });
+  const once = await onceP;
+  expect(once).toMatchObject({ type: 'exec-result', id: 'at-once', exitCode: 0, truncated: false });
+  expect(once.output).toBe('at-once-ok\n');
+  // Protocol: the terminal acks the request with exec-pending before the real reply.
+  expect(await requester.evaluate(() => window.__execTraffic)).toEqual(expect.arrayContaining([{ type: 'exec-pending', id: 'at-once' }]));
+  // Code with a NUL is refused before the run: the guest's exec channel cannot carry it.
   expect(await post(execRequest('nul', 'echo a\x00b'))).toEqual({ type: 'exec-error', id: 'nul', reason: 'invalid' });
-  expect(await page.locator('#exec-prompt').isVisible()).toBe(false);
-  // The prompt renders what will run: C0 controls and invisible characters are visible.
-  const crafted = post(execRequest('crafted', 'echo a\rb\x1bc'));
-  await page.locator('#exec-prompt').waitFor({ state: 'visible', timeout: 20000 });
-  expect(await page.locator('#exec-code').textContent()).toBe('echo a\\x0db\\x1bc');
-  await page.locator('#exec-deny').click();
-  expect(await crafted).toEqual({ type: 'exec-error', id: 'crafted', reason: 'denied' });
-  // A programmatic (untrusted) Run click is not an approval: the prompt stays.
-  const untrusted = post(execRequest('untrusted', 'echo never'));
-  await page.locator('#exec-prompt').waitFor({ state: 'visible', timeout: 20000 });
-  await page.locator('#exec-run').evaluate(el => el.click());
-  await page.waitForTimeout(500);
-  expect(await page.locator('#exec-prompt').isVisible()).toBe(true, 'an untrusted click must not run or clear the prompt');
-  await page.locator('#exec-deny').click();
-  expect(await untrusted).toEqual({ type: 'exec-error', id: 'untrusted', reason: 'denied' });
   // Two-Terminal loop guard: a reply-shaped message on the channel gets no answer. The
   // requester's own listener also sees the posted reply (another channel instance on the
   // page), so only an `invalid` answer would count.
@@ -114,12 +97,38 @@ test('the terminal exec service runs approved commands via vm.exec and reports r
   expect(capped.output.startsWith('B')).toBe(true);
   expect(capped.output).not.toContain('A');
   // Only one run at a time: a second request while one is running gets busy.
-  const first = post(execRequest('busy-first', 'sleep 5'));
-  await page.locator('#exec-prompt').waitFor({ state: 'visible', timeout: 20000 });
-  await page.locator('#exec-run').click();
-  // Protocol: the approved run announces itself over the channel.
-  expect(await requester.evaluate(() => window.__execTraffic)).toEqual(expect.arrayContaining([{ type: 'exec-started', id: 'busy-first' }]));
+  const first = run('busy-first', 'sleep 5');
   expect(await post(execRequest('busy-second', 'echo busy'))).toEqual({ type: 'exec-error', id: 'busy-second', reason: 'busy' });
   expect(await first).toMatchObject({ type: 'exec-result', exitCode: 0 });
+  // Buddy's exec-cancel (Stop, New chat, the wall timer) stops a run in flight; the guest
+  // stays usable afterwards.
+  const stopP = run('cancelled', 'sleep 30');
+  await expect(page.locator('#terminal-status')).toContainText('Running sh command from Terminal Exec Spec', { timeout: 20000 });
+  await requester.evaluate(id => { const c = new BroadcastChannel('webpc-terminal'); c.postMessage({ type: 'exec-cancel', id, from: 'Buddy' }); }, 'cancelled');
+  const stopped = await stopP;
+  expect(stopped).toMatchObject({ type: 'exec-error', id: 'cancelled', reason: 'cancelled' });
+  expect(stopped.durationMs).toBeLessThan(15000, 'the run ended on the cancel, not on its 30 s limit');
+  const afterCancel = await run('after-cancel', 'echo ok');
+  expect(afterCancel.output).toBe('ok\n');
+  // Two tabs: only the tab that holds the saved disk runs the request. This tab (page) booted
+  // first, so it holds the lock and is the owner; the second tab boots the SDK's snapshot (the
+  // not-saved chip shows) and must reply not-running. The owner runs the request and its
+  // result is what the client settles on.
+  const second = await page.context().newPage();
+  second.on('dialog', dialog => dialog.accept());
+  second.on('request', trackExternal);
+  await second.goto('/pc/apps/terminal/');
+  await ready(second);
+  await expect(second.locator('.linux-chip', { hasText: 'Not saved: open in another tab' })).toBeVisible();
+  await requester.evaluate(() => { const c = new BroadcastChannel('webpc-terminal'); c.postMessage({ type: 'exec-request', id: 'two-tab', from: 'Terminal Exec Spec', lang: 'sh', code: 'echo two-tab-ok' }); });
+  // Wait for the owner's result itself: the requester's listener also sees its own
+  // exec-request (a BroadcastChannel delivers to every other object of that name, in this
+  // page too), so a message count is reached before the result under load.
+  await expect.poll(async () => requester.evaluate(() => window.__execTraffic.some(m => m && m.id === 'two-tab' && (m.type === 'exec-result' || (m.type === 'exec-error' && m.reason !== 'not-running')))), { timeout: 30000 }).toBe(true);
+  const twoTab = await requester.evaluate(() => window.__execTraffic.filter(m => m && m.id === 'two-tab'));
+  const snapshotReply = twoTab.find(m => m.type === 'exec-error');
+  expect(snapshotReply?.reason, 'the snapshot tab runs nothing').toBe('not-running');
+  expect(twoTab.find(m => m.type === 'exec-pending'), 'the owner tab acked the request').toBeTruthy();
+  expect(twoTab.find(m => m.type === 'exec-result'), `the owner ran it; traffic: ${JSON.stringify(twoTab)}`).toMatchObject({ id: 'two-tab', exitCode: 0, output: 'two-tab-ok\n' });
   expect(external).toEqual([]);
 });

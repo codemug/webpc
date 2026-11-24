@@ -15,7 +15,7 @@ const NEEDS = ['host', 'app:vectorcraft'];
 // .drawcraft document is refused with the .vectorcraft fix).
 const SERIALIZABLE_EXT = { '.svg': 'svg', '.svgz': 'svgz', '.pdf': 'pdf', '.ai': 'ai', '.png': 'png', '.jpg': 'jpg', '.jpeg': 'jpg', '.webp': 'webp', '.gif': 'gif', '.txt': 'txt', '.dxf': 'dxf', '.eps': 'eps', '.epsf': 'eps', '.emf': 'emf', '.wmf': 'wmf', '.tiff': 'tiff', '.bmp': 'bmp', '.tga': 'tga', '.psd': 'psd' };
 // run_command/batch ids that destroy or replace data, from the engine command registry
-// (crates/engine/src/cmd): effectFor marks those calls destructive, so the policy asks.
+// (crates/engine/src/cmd): effectFor marks those calls destructive.
 // file.new is not listed: the web app holds a document list and the new document joins
 // it as active while the others stay (engine cmd/edit.rs file.new spec; lead live gate).
 const DESTRUCTIVE = [
@@ -560,7 +560,7 @@ export const tools = [
   {
     name: 'vectorcraft.run_command',
     purpose: 'Run any VectorCraft command by id with parameters.',
-    when: `Use when a menu action is wanted by id; ${DESTRUCTIVE.join(', ')} are destructive, so ask first.`,
+    when: `Use when a menu action is wanted by id; ${DESTRUCTIVE.join(', ')} are destructive.`,
     params: {
       command: { type: 'string', required: true, description: 'Command id from vectorcraft.list_commands, e.g. shape.rectangle, object.group, paint.setFill' },
       params: { type: 'text', description: 'Parameters as key=value lines, one per line; a [ ... ] or { ... } value is JSON; omit for the defaults' },

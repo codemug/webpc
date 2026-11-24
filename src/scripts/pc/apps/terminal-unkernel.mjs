@@ -13,7 +13,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { setupApp } from './common.mjs';
-import { validateExecRequest, planExec, execReply, visibleCode, handleExecChannelMessage } from './terminal-exec.mjs';
+import { validateExecRequest, planExec, execReply, handleExecChannelMessage, execGate } from './terminal-exec.mjs';
 
 const $ = selector => document.querySelector(selector);
 const base = new URL('/pc/vendor/unkernel/', location.href).href;
@@ -29,7 +29,8 @@ let vm = null, pty = null, meta = null, template = null, distroUrl = null, suppo
 let promptSeen = false, heldInput = ''; // see attachShell() and pump()
 let diskLockRelease = null; // resolves the Web Lock's hold promise: the lock ends here or when the page closes
 let notSavedChip = null; // the header chip shown while this tab runs a snapshot that is not saved
-let exec = null; // one slot at a time: { phase: 'prompt' | 'run', req }
+let exec = null; // one run at a time: { req, controller, cancelled }
+let diskOwner = false; // set from the boot's lock.held: only the tab that holds the saved disk runs exec requests
 const report = (text, error = false) => { $('#terminal-status').textContent = text; $('#terminal-status').dataset.error = String(error); };
 function controls() {
   $('#linux-start').disabled = busy || !!vm;
@@ -124,6 +125,7 @@ async function boot() {
   const diskVersion = m.disk?.version ?? 'v1';
   setNotSavedChip(false);
   const lock = await acquireDiskLock(diskName, diskVersion);
+  diskOwner = lock.held;
   if (!distroUrl) {
     // Fetch the 4 MB image whole and hand the worker a blob: URL it reads by range. GitHub Pages
     // gzips byte-range responses for binary files (the range then applies to the compressed bytes),
@@ -280,65 +282,46 @@ $('#linux-help').onclick = () => {
 };
 // Exec service: other same-origin pages post {type:'exec-request', id, from, lang, code,
 // timeoutMs} on BroadcastChannel('webpc-terminal'). Any same-origin page (including
-// third-party bundles) can post, so every run needs a visible approval click; one run at a
-// time. The run is a vm.exec() session on the guest (separate from the pty shell), so the
-// shell stays usable while a command runs. Replies: exec-pending (prompt shown),
-// exec-started (Run clicked), exec-cancel (withdraw a waiting prompt); another Terminal's
-// exec-started for the same id withdraws this prompt silently. Replies are never answered.
+// third-party bundles) can post, so a request is validated (terminal-exec.mjs) and a valid
+// one runs at once on the guest: no approval prompt (M3), the status line says what runs
+// and how it ended. Only the tab that holds the saved disk's lock (diskOwner) runs: a
+// snapshot tab replies not-running, so with two tabs the owner wins - the client ignores a
+// not-running after the owner's exec-pending ack (exec-client.js grace), and with only a
+// snapshot tab up the run settles not-running after the grace. One run at a time. The run
+// is a vm.exec() session (separate from the pty shell), so the shell stays usable while a
+// command runs. Replies: exec-pending (the
+// request was accepted and is running), exec-result, and exec-error with reason invalid,
+// busy, not-running or timeout ('cancelled' when Buddy's exec-cancel stops the run first).
+// Replies are never answered.
 const execChannel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('webpc-terminal');
 const execRespond = message => execChannel?.postMessage(message);
 execChannel?.addEventListener('message', event => {
   const decision = handleExecChannelMessage(event.data, exec);
-  if (decision.action === 'withdraw') {
-    // Another Terminal started (or cancelled) the command this one is prompting for:
-    // withdraw silently, no reply, no run.
-    exec = null; $('#exec-prompt').hidden = true; controls();
-    report('Another Terminal is running this command first.');
+  if (decision.action === 'cancel') {
+    // Buddy asked the run to stop (Stop, New chat, its wall timer): the guest gets SIGKILL
+    // through the run's own abort signal.
+    exec.cancelled = true;
+    exec.controller?.abort();
     return;
   }
   if (decision.action !== 'request') return;
   handleExecRequest(event.data);
 });
 function handleExecRequest(data) {
-  if (data?.type !== 'exec-request') return; // non-requests (replies, other apps) get no answer: answering them loops between two Terminals
   const check = validateExecRequest(data);
   if (!check.ok) { if (typeof data?.id === 'string' && data.id.length <= 200) execRespond({ type: 'exec-error', id: data.id, reason: 'invalid' }); return; }
-  if (exec !== null) { execRespond({ type: 'exec-error', id: check.id, reason: 'busy' }); return; }
-  if (!vm) { execRespond({ type: 'exec-error', id: check.id, reason: 'not-running' }); return; }
-  exec = { phase: 'prompt', req: check };
+  const gate = execGate({ owner: diskOwner, running: !!vm, inFlight: exec !== null });
+  if (gate !== 'run') { execRespond({ type: 'exec-error', id: check.id, reason: gate }); return; }
+  exec = { req: check, controller: null, cancelled: false };
   execRespond({ type: 'exec-pending', id: check.id });
-  $('#exec-meta').textContent = `From: ${check.from} · Language: ${check.lang}`;
-  $('#exec-code').textContent = visibleCode(check.code);
-  $('#exec-prompt').hidden = false;
-  $('#exec-deny').focus();
-  report(`A command from ${check.from} is waiting for your approval.`);
-  controls();
+  void runExec(check);
 }
-$('#exec-deny').onclick = () => {
-  const slot = exec; if (!slot || slot.phase !== 'prompt') return;
-  exec = null; $('#exec-prompt').hidden = true; controls();
-  execRespond({ type: 'exec-error', id: slot.req.id, reason: 'denied' });
-  report('Command denied. Nothing was run.');
-};
-$('#exec-run').onclick = event => {
-  if (!event.isTrusted) return; // a programmatic click is not an approval
-  const slot = exec; if (!slot || slot.phase !== 'prompt') return;
-  exec = { phase: 'run', req: slot.req };
-  $('#exec-prompt').hidden = true;
-  execRespond({ type: 'exec-started', id: slot.req.id });
-  void runExec(slot.req);
-};
 async function runExec(req) {
+  const slot = exec;
   const startedAt = Date.now();
-  const release = () => { if (exec?.req === req && exec.phase === 'run') exec = null; };
-  if (!vm) {
-    execRespond({ type: 'exec-error', id: req.id, reason: 'not-running' });
-    report('Linux is not running, so the command was not run. Start Linux first.', true);
-    release(); controls();
-    return;
-  }
   const plan = planExec(req.id, req.lang, req.code);
   const controller = new AbortController();
+  slot.controller = controller;
   const timer = setTimeout(() => controller.abort(), req.timeoutMs);
   report(`Running ${req.lang} command from ${req.from}…`);
   try {
@@ -349,17 +332,17 @@ async function runExec(req) {
     execRespond({ type: 'exec-result', id: req.id, exitCode: reply.exitCode, output: reply.output, truncated: reply.truncated, durationMs });
   } catch (error) {
     if (controller.signal.aborted) {
-      // The run's limit passed: the guest got SIGKILL, and vm.exec() carries no partial output.
-      execRespond({ type: 'exec-error', id: req.id, reason: 'timeout', output: '', truncated: false, durationMs: Date.now() - startedAt });
-      report(`Command from ${req.from} timed out and was interrupted.`, true);
+      // The run's limit passed, or Buddy cancelled it: the guest got SIGKILL, and
+      // vm.exec() carries no partial output.
+      execRespond({ type: 'exec-error', id: req.id, reason: slot.cancelled ? 'cancelled' : 'timeout', output: '', truncated: false, durationMs: Date.now() - startedAt });
+      report(slot.cancelled ? `Command from ${req.from} was cancelled.` : `Command from ${req.from} timed out and was interrupted.`, true);
     } else {
       execRespond({ type: 'exec-error', id: req.id, reason: error?.code ?? 'error', durationMs: Date.now() - startedAt });
       report(`The command did not finish: ${error?.message ?? error}`, true);
     }
   } finally {
     clearTimeout(timer);
-    release();
-    controls();
+    if (exec === slot) exec = null;
   }
 }
 async function action(callback) {

@@ -21,7 +21,7 @@ test('the unkernel Terminal boots, runs tools, interrupts a command, edits a fil
   });
   await page.goto('/pc/apps/terminal/');
   await page.waitForTimeout(250);
-  expect(lazy).toEqual([], 'the kernel, distro and template load only when Linux starts');
+  expect(lazy, 'the kernel, distro and template load only when Linux starts').toEqual([]);
   await ready(page); // first boot: the template is downloaded and the data disk seeded
   // Every marker below is built by the program's output; the full marker never appears in
   // the echoed command line.

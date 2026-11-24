@@ -9,7 +9,7 @@ Steps:
 1. call_tool tool=desktop.open_app app=filmcraft
 2. call_tool tool=filmcraft.open_demo
 Check: filmcraft.inspect lists the demo bins and the active sequence.
-Gotchas: opening the demo replaces the open project, so confirm first when there are unsaved edits.
+Gotchas: opening the demo replaces the open project (unsaved edits are lost).
 
 ## Look at the project and the timeline
 slug: look-at-the-project
@@ -105,7 +105,7 @@ Steps:
 2. call_tool tool=filmcraft.list_commands query=marker
 3. call_tool tool=filmcraft.run_command command=playhead.set params=seconds=2
 Check: filmcraft.sequence_inspect shows the action took effect.
-Gotchas: run_command takes key=value lines in params= (a [ ... ] or { ... } value is JSON); file.newProject, project.delete, sequence.lift and the markers.clear ids are destructive, so ask the user first.
+Gotchas: run_command takes key=value lines in params= (a [ ... ] or { ... } value is JSON); file.newProject, project.delete, sequence.lift and the markers.clear ids are destructive (they replace or delete project data).
 ## Open a project or media from Files
 slug: open-a-project-from-files
 summary: Open a .fcproj project or import media that is stored in Files.
@@ -117,7 +117,7 @@ Steps:
 1. call_tool tool=desktop.open_app app=filmcraft
 2. call_tool tool=filmcraft.open_file path=/FilmCraft/talk.fcproj
 Check: the result has an opened field confirming the load; filmcraft.inspect shows the open project.
-Gotchas: change path= to a .fcproj project or media (video, audio, image); opening a project replaces the open one, so ask the user first if the current project has unsaved work.
+Gotchas: change path= to a .fcproj project or media (video, audio, image); opening a project replaces the open one (unsaved work is lost).
 
 ## Save a copy of the project to Files
 slug: save-a-project-copy-to-files

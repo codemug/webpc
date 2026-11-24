@@ -129,7 +129,7 @@ Steps:
 2. call_tool tool=gridcraft.list_commands query=border
 3. call_tool tool=gridcraft.run_command command=home.borders params=range=A1:C1
 Check: gridcraft.read_range or gridcraft.inspect shows the action took effect.
-Gotchas: run_command takes key=value lines in params=; ids starting with file.new, file.close, sheet.delete or edit.clear are destructive, so ask the user first.
+Gotchas: run_command takes key=value lines in params=; ids starting with file.new, file.close, sheet.delete or edit.clear are destructive (they replace, clear or close data).
 
 ## Open a workbook from Files
 slug: open-a-workbook-from-files

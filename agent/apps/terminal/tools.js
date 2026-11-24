@@ -6,8 +6,8 @@
 // the last status line on #terminal-status (report()). There is no pause and no save: the
 // guest's files live on a persistent IndexedDB data disk and are kept automatically. Code
 // runs over the exec bridge (BroadcastChannel webpc-terminal, src/apps/ai-agent/exec-client.js):
-// the page shows an approval prompt and #exec-run rejects programmatic clicks (event.isTrusted,
-// terminal-unkernel.mjs:221), so every run needs the user's own Run click in the visible window.
+// a valid request runs at once on the guest (no approval prompt), and the page's status line
+// says what runs and how it ended.
 import { ToolError } from '../../../src/apps/ai-agent/runtime/args.mjs';
 
 const APP = 'terminal';
@@ -35,7 +35,7 @@ export const tools = [
   {
     name: 'terminal.open',
     purpose: 'Open the Linux Terminal app window.',
-    when: 'Use when the user wants the terminal, or before running code so the approval prompt is visible.',
+    when: 'Use when the user wants the terminal, or before running code so the run is visible in the window.',
     params: {},
     effect: 'change',
     needs: NEEDS,
@@ -73,7 +73,7 @@ export const tools = [
   },
   {
     name: 'terminal.run',
-    purpose: 'Run Python, Node or shell code in the Linux guest; the user approves it.',
+    purpose: 'Run Python, Node or shell code in the Linux guest; it runs at once.',
     when: 'Use when the user wants code executed inside the WebPC Linux guest.',
     params: {
       lang: { type: 'enum', required: true, values: ['python', 'node', 'sh'], description: 'Language of the code' },
@@ -83,11 +83,11 @@ export const tools = [
     effect: 'external',
     needs: NEEDS,
     examples: [{ args: { lang: 'sh', code: 'echo hello' }, says: 'Run echo hello in Linux' }],
-    // Open the window first so the user sees the approval prompt (#exec-run needs their real
-    // click, terminal-unkernel.mjs:221). Then delegate to the run_code bridge (ctx.legacy.run_code, wired
+    // Open the window first so the user sees the run (the status line says what runs and its
+    // result). Then delegate to the run_code bridge (ctx.legacy.run_code, wired
     // by src/apps/ai-agent/app.js over the webpc-terminal BroadcastChannel); its reply is
-    // already model-facing (execReplyToToolResult): { exitCode, output, truncated } or
-    // { error } for denied / not-running / busy / no-terminal / timeout.
+    // already model-facing: { exitCode, output, truncated } or
+    // { error } for not-running / busy / no-terminal / timeout / cancelled.
     run: async (args, ctx) => call(ctx, async host => {
       await page(host);
       const bridge = ctx.legacy?.run_code;
