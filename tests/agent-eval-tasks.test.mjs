@@ -17,7 +17,7 @@ const toolNames = new Set(catalog.tools.map((t) => t.name));
 const appIds = new Set(catalog.apps.map((a) => a.id));
 
 const SETS = new Set(['A', 'B', 'C', 'D']);
-const EXPECTED_COUNTS = { A: 20, B: 20, C: 16, D: 5 };
+const EXPECTED_COUNTS = { A: 20, B: 20, C: 17, D: 5 };
 // The check kinds the runner (scripts/agent/eval.mjs) implements.
 const CHECK_KINDS = new Set([
   'window_open', 'theme', 'file_exists', 'file_contains', 'cell',
@@ -88,5 +88,5 @@ test('set counts match A20 B20 C16 D5', () => {
   const counts = {};
   for (const task of tasks) counts[task.set] = (counts[task.set] ?? 0) + 1;
   for (const [set, want] of Object.entries(EXPECTED_COUNTS)) assert.equal(counts[set] ?? 0, want, `set ${set}: got ${counts[set] ?? 0}, want ${want}`);
-  assert.equal(tasks.length, 61, `total tasks: got ${tasks.length}, want 61`);
+  assert.equal(tasks.length, 62, `total tasks: got ${tasks.length}, want 62`);
 });

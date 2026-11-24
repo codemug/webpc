@@ -289,3 +289,8 @@ test('repairArgs leaves calls alone when no rule applies', () => {
   const numeric = { name: 'n', params: { count: { type: 'integer', required: true, description: 'c' } } };
   assert.equal(checkArgs(numeric, { x: '3' }).error.type, 'unknown_argument', 'only string or text params are filled');
 });
+
+test('a copied placeholder on a parameter with a default takes the default; without one it is an error', () => {
+  assert.deepEqual(checkArgs(RUN, { lang: '<lang>', code: 'ls' }), { ok: true, args: { code: 'ls', lang: 'sh' } });
+  assert.equal(checkArgs(RUN, { code: '<code>' }).error.type, 'placeholder');
+});

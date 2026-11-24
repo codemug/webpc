@@ -290,6 +290,9 @@ export function checkArgs(tool, raw, { choices = () => [], aliases = {} } = {}) 
     const spec = params[key];
     if (!spec) return { ok: false, error: { type: 'unknown_argument', message: `${tool.name} has no parameter ${key}; it takes: ${Object.keys(params).join(', ')}`, fix: fixLine(tool) } };
     if (absent(key)) continue; // an empty or null slot counts as absent: required params error, optional params get their default
+    // A copied <key> placeholder on a parameter with a default means the default (lfm3-1.7b sent
+    // lang=<lang> to terminal.run on eval task C17); without a default it is an error.
+    if (typeof value === 'string' && unquote(value) === `<${key}>` && spec.default !== undefined) { args[key] = spec.default; continue; }
     if (typeof value === 'string' && unquote(value) === `<${key}>`) return { ok: false, error: { type: 'placeholder', message: `${key}=<${key}> is a placeholder: put the user's own ${key} there (${spec.description ?? spec.type}).`, fix: '' } };
     const values = spec.type === 'enum' ? enumValues(spec, choices) : [];
     const out = coerce(spec, value, values, aliases);

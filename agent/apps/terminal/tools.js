@@ -139,6 +139,7 @@ export const tools = [
     examples: [
       { args: { lang: 'sh', code: 'uname -a' }, says: 'Run uname -a in the Linux terminal' },
       { args: { lang: 'sh', code: 'ls -la' }, says: 'Run a shell command in the terminal' },
+      { args: { lang: 'sh', code: 'ls /bin /sbin /usr/bin /usr/sbin' }, says: 'Which commands, CLI tools or network inspection tools does the Linux terminal have' },
       { args: { lang: 'python', code: 'print(6 * 7)' }, says: 'Run this Python code' },
     ],
     // Open the window first so the user sees the run (the status line says what runs and its

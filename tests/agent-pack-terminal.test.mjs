@@ -270,9 +270,9 @@ test('the exec errors tell the model to start Linux and poll, instead of asking 
 
 const { skills, errors: skillErrors } = parseSkills(SKILLS_MD, 'terminal');
 
-test('skills.md parses with the runtime parser without errors and has 6 skills', () => {
+test('skills.md parses with the runtime parser without errors and has 7 skills', () => {
   assert.deepEqual(skillErrors, []);
-  assert.equal(skills.length, 6);
+  assert.equal(skills.length, 7);
   for (const skill of skills) {
     assert.ok(skill.slug && skill.summary, `skill ${skill.slug} slug/summary`);
     assert.ok(skill.summary.length <= 160, `skill ${skill.slug} summary is ${skill.summary.length} chars`);
@@ -282,12 +282,20 @@ test('skills.md parses with the runtime parser without errors and has 6 skills',
   }
 });
 
-test('the run-code skill starts Linux, sleeps, polls the status and only then runs', () => {
+test('the run-code skill is one terminal.run step (terminal.run starts a stopped guest itself)', () => {
   const run = skills.find(skill => skill.slug === 'run-code-in-the-linux-guest');
-  assert.deepEqual(run.steps.map(step => step.tool), [
-    'terminal.start', 'system.sleep', 'terminal.status', 'terminal.run',
-  ]);
-  assert.deepEqual(run.steps[1].args, { seconds: '3' });
+  assert.deepEqual(run.steps.map(step => step.tool), ['terminal.run']);
+  assert.match(run.gotchas, /starts Linux itself/);
+});
+
+test('questions about what Linux has are answered by running a listing command in the guest', () => {
+  const list = skills.find(skill => skill.slug === 'list-what-is-installed-in-linux');
+  assert.ok(list, 'the list-what-is-installed skill exists');
+  assert.deepEqual(list.steps.map(step => step.tool), ['terminal.run']);
+  assert.equal(list.steps[0].args.lang, 'sh');
+  assert.match(list.steps[0].args.code, /^ls \/bin \/sbin \/usr\/bin \/usr\/sbin$/);
+  assert.match(list.gotchas, /not WebPC tools/);
+  for (const word of ['installed', 'commands', 'cli', 'network tools']) assert.ok(list.keywords.includes(word), `keyword ${word}`);
 });
 
 test('every skill uses numbered steps from the desktop, terminal or system packs', () => {
