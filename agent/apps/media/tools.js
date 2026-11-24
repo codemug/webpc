@@ -14,7 +14,7 @@ import { mediaKind } from '../../../src/scripts/pc/media/playlist.mjs';
 
 const APP = 'media';
 const NEEDS = ['host', 'app:media'];
-const NOT_HERE = 'The Media Player is not available here (Buddy is not running inside WebPC).';
+const NOT_HERE = 'The Media Player is not available here (WebPC Agent is not running inside WebPC).';
 
 // Gate on ctx.host (needs: ['host', 'app:media']), then turn host rejections, which carry a
 // code (unknown_app, not_open, not_iframe, timeout, invalid_argument), and Files readBytes

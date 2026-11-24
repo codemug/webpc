@@ -21,7 +21,7 @@ test('run posts an exec-request and settles with the terminal reply', async () =
   const exec = createExecClient(ch);
   const p = exec.run('python', 'print(1)', 5000);
   assert.match(ch.posts[0].id, /^agent-\d+-\d+$/, 'agent-prefixed id');
-  assert.deepEqual(ch.posts[0], { type: 'exec-request', id: ch.posts[0].id, from: 'Buddy', lang: 'python', code: 'print(1)', timeoutMs: 5000 });
+  assert.deepEqual(ch.posts[0], { type: 'exec-request', id: ch.posts[0].id, from: 'WebPC Agent', lang: 'python', code: 'print(1)', timeoutMs: 5000 });
   ch.emit({ type: 'exec-result', id: ch.posts[0].id, exitCode: 0, output: '1' });
   assert.deepEqual(await p, { type: 'exec-result', exitCode: 0, output: '1', truncated: false });
 });

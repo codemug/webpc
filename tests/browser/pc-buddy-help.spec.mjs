@@ -12,7 +12,7 @@ const pop = page => frame(page).getByRole('tooltip');
 async function openBuddy(page) {
   await page.goto('/pc/');
   await button(page).click();
-  await expect(frame(page).locator('h1')).toHaveText('Buddy');
+  await expect(frame(page).locator('h1')).toHaveText('WebPC Agent');
   // The heading is static HTML; data-theme arrives only after app.js has run (pc:ready
   // -> pc:theme), so the help pop-ups are wired by the time the first interaction happens.
   await expect(frame(page).locator('html')).toHaveAttribute('data-theme', /light|dark/);
@@ -308,5 +308,5 @@ test('with no model loaded, Enter starts the load and the answer arrives', async
   await expect(msg).toHaveAttribute('placeholder', /sends when the model is ready/); // the empty box says the message waits
   await expect(buddy.locator('.message.assistant')).toContainText('A plain answer.', { timeout: 15000 });
   await expect(buddy.locator('#model-state')).toContainText('Ready');
-  await expect(msg).toHaveAttribute('placeholder', 'Ask Buddy anything…');
+  await expect(msg).toHaveAttribute('placeholder', 'Ask WebPC Agent anything…');
 });

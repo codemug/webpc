@@ -104,7 +104,7 @@ test('the terminal exec service runs requests at once via vm.exec and reports re
   // stays usable afterwards.
   const stopP = run('cancelled', 'sleep 30');
   await expect(page.locator('#terminal-status')).toContainText('Running sh command from Terminal Exec Spec', { timeout: 20000 });
-  await requester.evaluate(id => { const c = new BroadcastChannel('webpc-terminal'); c.postMessage({ type: 'exec-cancel', id, from: 'Buddy' }); }, 'cancelled');
+  await requester.evaluate(id => { const c = new BroadcastChannel('webpc-terminal'); c.postMessage({ type: 'exec-cancel', id, from: 'WebPC Agent' }); }, 'cancelled');
   const stopped = await stopP;
   expect(stopped).toMatchObject({ type: 'exec-error', id: 'cancelled', reason: 'cancelled' });
   expect(stopped.durationMs).toBeLessThan(15000, 'the run ended on the cancel, not on its 30 s limit');

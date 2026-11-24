@@ -40,7 +40,7 @@ async function ask(buddy, text, timeout = 15000) {
   return buddy.locator('.message.assistant').last().innerText();
 }
 
-test('Buddy opens an app through call_tool, with no skill note by default and only the six meta tools', async ({ page }) => {
+test('WebPC Agent opens an app through call_tool, with no skill note by default and only the six meta tools', async ({ page }) => {
   skipUnlessEnabled(test, 'ai-agent');
   await scriptedModel(page);
   const buddy = await openBuddy(page);
@@ -64,7 +64,7 @@ test('a tool name with signature text is repaired, and the theme really changes'
   expect(reply).toContain('repaired');
 });
 
-test('Buddy creates a folder in the real Files store', async ({ page }) => {
+test('WebPC Agent creates a folder in the real Files store', async ({ page }) => {
   skipUnlessEnabled(test, 'ai-agent');
   await scriptedModel(page);
   const buddy = await openBuddy(page);
@@ -77,7 +77,7 @@ test('Buddy creates a folder in the real Files store', async ({ page }) => {
   expect(exists).toBe(true);
 });
 
-test('Buddy writes a cell in the real GridCraft through its page API', async ({ page }) => {
+test('WebPC Agent writes a cell in the real GridCraft through its page API', async ({ page }) => {
   skipUnlessEnabled(test, 'ai-agent'); skipUnlessEnabled(test, 'gridcraft');
   test.setTimeout(120000);
   await scriptedModel(page);

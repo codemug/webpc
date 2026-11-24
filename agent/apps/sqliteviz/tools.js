@@ -35,7 +35,7 @@ import { innerApi } from '../../shared/inner-app.js';
 
 const APP = 'sqliteviz';
 const NEEDS = ['host', 'app:sqliteviz'];
-const NOT_HERE = 'SQLiteViz is not available here (Buddy is not running inside WebPC).';
+const NOT_HERE = 'SQLiteViz is not available here (WebPC Agent is not running inside WebPC).';
 
 // Gate on ctx.host (needs: ['host', 'app:sqliteviz']), then turn host rejections, which carry a
 // code (unknown_app, not_open, not_iframe, timeout), innerApi's not_available and Files

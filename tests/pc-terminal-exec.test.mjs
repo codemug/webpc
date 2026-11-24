@@ -2,10 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { validateExecRequest, planExec, execReply, base64Encode, handleExecChannelMessage, execGate, MAX_OUTPUT, MAX_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, EXEC_ARG_LIMIT } from '../src/scripts/pc/apps/terminal-exec.mjs';
 
-const req = { type: 'exec-request', id: 'r1', from: 'Buddy', lang: 'sh', code: 'echo hi', timeoutMs: DEFAULT_TIMEOUT_MS };
+const req = { type: 'exec-request', id: 'r1', from: 'WebPC Agent', lang: 'sh', code: 'echo hi', timeoutMs: DEFAULT_TIMEOUT_MS };
 
 test('request validation: shape, caps, the default timeout and a NUL in the code', () => {
-  assert.deepEqual(validateExecRequest({ ...req, timeoutMs: undefined }), { ok: true, id: 'r1', from: 'Buddy', lang: 'sh', code: 'echo hi', timeoutMs: DEFAULT_TIMEOUT_MS });
+  assert.deepEqual(validateExecRequest({ ...req, timeoutMs: undefined }), { ok: true, id: 'r1', from: 'WebPC Agent', lang: 'sh', code: 'echo hi', timeoutMs: DEFAULT_TIMEOUT_MS });
   assert.equal(validateExecRequest({ ...req }).ok, true);
   assert.equal(validateExecRequest({ ...req, timeoutMs: MAX_TIMEOUT_MS }).ok, true, 'the cap itself is allowed');
   for (const bad of [

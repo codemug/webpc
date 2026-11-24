@@ -25,10 +25,10 @@
 
 ## Why WebPC
 
-- **Real apps, not mock-ups.** The Storytold Craft editors are full Rust and WebAssembly applications. The Terminal runs Alpine Linux on a real Linux kernel compiled to WebAssembly. The Packet Viewer runs Wireshark's own dissectors. Buddy, the built-in assistant, runs language models on your GPU.
+- **Real apps, not mock-ups.** The Storytold Craft editors are full Rust and WebAssembly applications. The Terminal runs Alpine Linux on a real Linux kernel compiled to WebAssembly. The Packet Viewer runs Wireshark's own dissectors. WebPC Agent, the built-in assistant, runs language models on your GPU.
 - **Nothing leaves your machine.** Opening an app makes zero requests to any other host. The smoke checks and browser tests assert this for each app. Your files stay in your browser's storage, and network tools only reach out when you press their button.
 - **No server.** WebPC is a static site: drop the build into any host and serve it at `/pc/`.
-- **Buddy, one click away.** A friendly on-device assistant slides in from the taskbar over the right third of the screen. It can read the files you grant, search the web and run code in the Terminal, and it keeps your chat while hidden.
+- **WebPC Agent, one click away.** A friendly on-device assistant slides in from the taskbar over the right third of the screen. It can read the files you grant, search the web and run code in the Terminal, and it keeps your chat while hidden.
 - **A real desktop feel.** Drag icons anywhere on the desktop, move, resize and maximize windows, and right-click any app to pop it out into its own browser window.
 - **Pinned and verified.** Every upstream release is pinned to an exact version and SHA-256 checksum, and checked before it is unpacked.
 - **Keeps itself current.** Every Monday a workflow looks for new releases, upgrades each app, and runs the unit tests, a full build and a headless smoke check. Only then does it commit to `main`. Anything that needs a person lands in [one tidy issue](https://github.com/codemug/webpc/issues).
@@ -50,7 +50,7 @@
     <td><img src="docs/images/packets.png" alt="Packet Viewer dissecting DNS, TCP and HTTP packets with a protocol tree and hex dump"><br><b>Packet Viewer.</b> Open pcap and pcapng captures with Wireshark 4.6 dissectors, compiled to WebAssembly.</td>
   </tr>
   <tr>
-    <td><img src="docs/images/buddy.png" alt="Buddy's panel open over the right third of the WebPC desktop, greeting with Hi, I'm Buddy"><br><b>Buddy.</b> Your on-device sidekick, opened from the taskbar. Local models with tools for files, the web, OCR, background removal and running code in the Terminal. An optional cloud model uses your own key.</td>
+    <td><img src="docs/images/buddy.png" alt="WebPC Agent's panel open over the right third of the WebPC desktop, greeting with Hi, I'm WebPC Agent"><br><b>WebPC Agent.</b> Your on-device sidekick, opened from the taskbar. Local models with tools for files, the web, OCR, background removal and running code in the Terminal. An optional cloud model uses your own key.</td>
     <td><img src="docs/images/excalidraw.png" alt="Excalidraw diagram: catalog.yaml to weekly upgrader to latest-dist to your site"><br><b>Excalidraw.</b> Hand-drawn diagrams with its fonts served by WebPC, never fetched from a CDN. Pictured: how WebPC ships.</td>
   </tr>
 </table>
@@ -61,15 +61,15 @@
 |---|---|
 | **Office** | GridCraft (spreadsheets) · Docs · DeckCraft (presentations) · PDFCraft |
 | **Creative** | FilmCraft · EffectCraft · SoundCraft · BeepBox · PhotoCraft · LightCraft · VectorCraft · FigCraft · CADCraft · MaterialCraft · TextureCraft · Excalidraw |
-| **Built in** | Buddy, the assistant behind the taskbar's Buddy button (not a desktop app) |
+| **Built in** | WebPC Agent, the assistant behind the taskbar's WebPC Agent button (not a desktop app) |
 | **Developer** | Terminal (Alpine Linux) · Packet Viewer (Wireshark dissectors) · VS Code (opens vscode.dev) |
 | **Utilities** | Files · Media Player · SQLiteViz · CyberChef · Network Tools (DNS, RDAP, global ping, subnets, password strength, age encryption) · VERT (opens vert.sh) |
 
-## Buddy
+## WebPC Agent
 
-Buddy is the assistant behind the taskbar's Buddy button: a panel over the right third of the desktop, not a window. It runs a local model by default (Qwen3.5 0.8B or 2B, or LFM3 1.7B, the default; the weights download once after you load the model and are cached in this browser) and can use an optional cloud model with your own key, opt-in per session and never persisted.
+WebPC Agent is the assistant behind the taskbar's WebPC Agent button: a panel over the right third of the desktop, not a window. It runs a local model by default (Qwen3.5 0.8B or 2B, or LFM3 1.7B, the default; the weights download once after you load the model and are cached in this browser) and can use an optional cloud model with your own key, opt-in per session and never persisted.
 
-Buddy acts through a tool catalog of 257 tools in 25 packs, built by `npm run catalog` from the source packs in `agent/`: the desktop and its windows, the Files area, and every enabled app. It finds what to do with six meta tools:
+WebPC Agent acts through a tool catalog of 257 tools in 25 packs, built by `npm run catalog` from the source packs in `agent/`: the desktop and its windows, the Files area, and every enabled app. It finds what to do with six meta tools:
 
 - `lookup_skill_index`: search the skill wiki for how to do a task.
 - `read_skill`: read one skill by path, or one of its sections.
@@ -78,7 +78,7 @@ Buddy acts through a tool catalog of 257 tools in 25 packs, built by `npm run ca
 - `describe_tool`: show a tool's full parameter list, effect and call template.
 - `call_tool`: call a catalog tool with its own parameters.
 
-Buddy runs every tool call without asking, on every backend. `scripts/agent/eval.mjs` runs 60 tasks from `tests/agent-eval/tasks.yaml` against a running preview; the contributor guide for the packs is [agent/README.md](agent/README.md).
+WebPC Agent runs every tool call without asking, on every backend. `scripts/agent/eval.mjs` runs 60 tasks from `tests/agent-eval/tasks.yaml` against a running preview; the contributor guide for the packs is [agent/README.md](agent/README.md).
 
 ## How it ships
 
@@ -138,11 +138,11 @@ Each entry under `apps:` has a desktop entry (`title`, `category`, `keywords`, `
 | `npm` | exact version, matching `package.json` and the lockfile | xterm, Excalidraw, the Network Tools libraries |
 | `npm-tarball` | version and SRI integrity | wiregasm (Packet Viewer) |
 | `cdn-file` | package, version, file and SHA-256 | Transformers.js, Readability |
-| `huggingface` | model repo and commit | Buddy's models |
+| `huggingface` | model repo and commit | WebPC Agent's models |
 
 Icons come from upstream wherever the app ships one: the Storytold apps' own icon set (re-pinned by the upgrader whenever the tag moves), the icons inside the SQLiteViz, BeepBox and CyberChef releases, and pinned files for Excalidraw and VERT. WebPC's own apps keep its gradient tiles.
 
-**A packaged app builds to WebAssembly.** An app is *packaged* when WebPC downloads its pinned release, prepares it under `/pc/apps/<id>/` and ships its bytes with the site: every `kind: iframe` app. Each packaged entry carries a `wasm` block whose single key `build` is the command that builds the app's wasm module from its source repository at the pinned version (for example `cd apps/gridcraft-web && trunk build --release`). WebPC's build never runs that command; it ships the upstream artifact as-is. An app added after 2026-11-23 must provide a real `wasm.build`. The pre-existing apps that ship no wasm module built from their own source (JavaScript apps such as CyberChef and BeepBox, and WebPC's own Files and Media pages) are exempted by the `LEGACY_NON_WASM` list in `scripts/catalog/catalog.mjs`, which is closed: do not add ids to it. `external` apps (a link to a hosted service) and the one `panel` app (Buddy) are not packaged, so they need no `wasm` block.
+**A packaged app builds to WebAssembly.** An app is *packaged* when WebPC downloads its pinned release, prepares it under `/pc/apps/<id>/` and ships its bytes with the site: every `kind: iframe` app. Each packaged entry carries a `wasm` block whose single key `build` is the command that builds the app's wasm module from its source repository at the pinned version (for example `cd apps/gridcraft-web && trunk build --release`). WebPC's build never runs that command; it ships the upstream artifact as-is. An app added after 2026-11-23 must provide a real `wasm.build`. The pre-existing apps that ship no wasm module built from their own source (JavaScript apps such as CyberChef and BeepBox, and WebPC's own Files and Media pages) are exempted by the `LEGACY_NON_WASM` list in `scripts/catalog/catalog.mjs`, which is closed: do not add ids to it. `external` apps (a link to a hosted service) and the one `panel` app (WebPC Agent) are not packaged, so they need no `wasm` block.
 
 `npm run catalog` validates the file, naming the app and field of every defect, and generates the desktop registry. `npm test` and `npm run build` run it first.
 

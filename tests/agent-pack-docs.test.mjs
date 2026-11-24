@@ -255,7 +255,7 @@ test('docs.insert_text inserts, accepts the change, so get_text shows the new te
   const atCursor = await docs.runTool('docs.insert_text', { text: 'New para' });
   assert.deepEqual(atCursor, { insertedAfter: 'p2', text: 'New para' });
   assert.ok(docs.calls.some(c => c[0] === 'getSelection'), 'falls back to the cursor when para_id is omitted');
-  assert.deepEqual(docs.calls.find(c => c[0] === 'insertParagraphAfter'), ['insertParagraphAfter', { paraId: 'p2', text: 'New para', author: 'Buddy' }]);
+  assert.deepEqual(docs.calls.find(c => c[0] === 'insertParagraphAfter'), ['insertParagraphAfter', { paraId: 'p2', text: 'New para', author: 'WebPC Agent' }]);
   assert.equal(docs.viewDispatches.length, 1, 'the accept transaction is dispatched on the view');
   // insertParagraphAfter applies the insertion mark (a pending tracked suggestion); the tool
   // accepts it on getView().dispatch, so the paragraph becomes accepted text get_text reads back.
@@ -282,7 +282,7 @@ test('docs.insert_text inserts after a given paragraph id and accepts it too', a
   const docs = fakeDocs();
   const atPara = await docs.runTool('docs.insert_text', { text: 'After p1', para_id: 'p1' });
   assert.deepEqual(atPara, { insertedAfter: 'p1', text: 'After p1' });
-  assert.deepEqual(docs.calls[0], ['insertParagraphAfter', { paraId: 'p1', text: 'After p1', author: 'Buddy' }]);
+  assert.deepEqual(docs.calls[0], ['insertParagraphAfter', { paraId: 'p1', text: 'After p1', author: 'WebPC Agent' }]);
   const after = await docs.runTool('docs.get_text', {});
   assert.ok(after.text.includes('After p1'), `get_text should include the accepted insert, got: ${after.text}`);
 });

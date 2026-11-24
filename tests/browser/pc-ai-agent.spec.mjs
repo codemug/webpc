@@ -29,7 +29,7 @@ async function modelFixture(page) {
 async function load(page) { await page.locator('#load-model').click(); await expect(page.locator('#model-state')).toContainText('Ready'); }
 async function send(page, text) { await page.locator('#message').fill(text); await page.locator('#send').click(); }
 
-test('Buddy is lazy, migrates legacy records without deleting them, and handles missing WebGPU', async ({ page }) => {
+test('WebPC Agent is lazy, migrates legacy records without deleting them, and handles missing WebGPU', async ({ page }) => {
   skipUnlessEnabled(test,'ai-agent');
   const requests=[]; page.on('request',r=>requests.push(r.url()));
   await page.addInitScript(() => Object.defineProperty(navigator,'gpu',{configurable:true,value:undefined}));
@@ -50,7 +50,7 @@ test('Buddy is lazy, migrates legacy records without deleting them, and handles 
   const downloaded=page.waitForEvent('download');await page.locator('#export').click();expect((await downloaded).suggestedFilename()).toBe('ai-agent-conversation.json');
 });
 
-test('Buddy executes a real calculation, preserves Markdown, persists and isolates New chat', async ({ page }) => {
+test('WebPC Agent executes a real calculation, preserves Markdown, persists and isolates New chat', async ({ page }) => {
   skipUnlessEnabled(test,'ai-agent');
   await modelFixture(page);page.on('dialog',d=>d.accept());await page.goto(route);
   expect(await page.evaluate(()=>window.workers.length)).toBe(0);await load(page);await send(page,'calculate 6*7');
@@ -63,7 +63,7 @@ test('Buddy executes a real calculation, preserves Markdown, persists and isolat
   await page.reload();await expect(page.locator('#messages')).toBeEmpty();
 });
 
-test('Buddy stops download and prefill, and model switching terminates the old worker', async ({ page }) => {
+test('WebPC Agent stops download and prefill, and model switching terminates the old worker', async ({ page }) => {
   skipUnlessEnabled(test,'ai-agent');
   await modelFixture(page);await page.goto(route);await page.locator('#load-model').click();await page.locator('#stop').click();await page.waitForTimeout(200);
   await expect(page.locator('#send')).toBeDisabled();await load(page);await send(page,'HOLD prompt');await page.locator('#stop').click();await expect(page.locator('#model-state')).toContainText('Ready');expect(await page.evaluate(()=>window.workers.at(-1)?.wasTerminated)).not.toBe(true);
@@ -72,7 +72,7 @@ test('Buddy stops download and prefill, and model switching terminates the old w
   await expect(page.locator('#messages')).not.toContainText('STALE ANSWER');expect(await page.evaluate(()=>window.workers.every(w=>w.wasTerminated))).toBe(true);
 });
 
-test('Buddy sandbox executes JavaScript, blocks network and parent access, ignores forged messages and cancels loops', async ({ page }) => {
+test('WebPC Agent sandbox executes JavaScript, blocks network and parent access, ignores forged messages and cancels loops', async ({ page }) => {
   skipUnlessEnabled(test,'ai-agent');
   await page.goto(route);let external=0;await page.route('https://sandbox-test.invalid/**',r=>{external++;return r.abort()});
   const results=await page.evaluate(async()=>{
@@ -87,7 +87,7 @@ test('Buddy sandbox executes JavaScript, blocks network and parent access, ignor
   expect(results.calculated).toEqual({result:'42',logs:['real sandbox']});expect(results.network.error).toBeTruthy();expect(results.dom.error).toBeTruthy();expect(results.cancelled.error).toBe('Cancelled');expect(results.frames).toBe(0);expect(external).toBe(0);
 });
 
-test('Buddy direct page reading and Wikipedia work; Jina requires opt-in and cancellation never invokes it', async ({ page }) => {
+test('WebPC Agent direct page reading and Wikipedia work; Jina requires opt-in and cancellation never invokes it', async ({ page }) => {
   skipUnlessEnabled(test,'ai-agent');
   await page.goto(route);let proxy=0,unwanted=0;
   await page.route('https://example.org/**',r=>r.abort());
@@ -102,7 +102,7 @@ test('Buddy direct page reading and Wikipedia work; Jina requires opt-in and can
   await page.locator('#settings').click();await expect(page.locator('#reader-proxy')).not.toBeChecked();
 });
 
-test('Buddy quota errors keep saved data and let the current chat export; invalid imports are non-destructive', async ({ page }) => {
+test('WebPC Agent quota errors keep saved data and let the current chat export; invalid imports are non-destructive', async ({ page }) => {
   skipUnlessEnabled(test,'ai-agent');
   await modelFixture(page);await page.goto(route);await load(page);await send(page,'first saved');await expect(page.locator('#model-state')).toContainText('Ready');
   await page.evaluate(()=>{IDBObjectStore.prototype.put=function(){throw new DOMException('Test quota exhausted','QuotaExceededError')}});
@@ -113,7 +113,7 @@ test('Buddy quota errors keep saved data and let the current chat export; invali
   await expect(page.locator('#error')).toContainText('Backup was not opened');await expect(page.locator('#messages')).toContainText('second in memory');
 });
 
-test('Buddy mobile controls fit, theme messages are source-checked, and keyboard settings close restores focus', async ({ page }) => {
+test('WebPC Agent mobile controls fit, theme messages are source-checked, and keyboard settings close restores focus', async ({ page }) => {
   skipUnlessEnabled(test,'ai-agent');
   await page.setViewportSize({width:390,height:844});await page.goto(route);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
@@ -123,7 +123,7 @@ test('Buddy mobile controls fit, theme messages are source-checked, and keyboard
   await page.evaluate(()=>window.postMessage({type:'pc:theme',theme:'dark'},location.origin));await expect(page.locator('html')).toHaveAttribute('data-theme','dark');
 });
 
-test('Buddy close hooks stop cached inference and block unsaved close until retry or export', async ({ page }) => {
+test('WebPC Agent close hooks stop cached inference and block unsaved close until retry or export', async ({ page }) => {
   skipUnlessEnabled(test,'ai-agent');
   await modelFixture(page);await page.goto(route);await load(page);await send(page,'HOLD before close');
   await expect.poll(()=>page.evaluate(()=>window.pcBeforeClose())).toBe(true);expect(await page.evaluate(()=>window.workers.every(w=>w.wasTerminated))).toBe(true);
@@ -133,13 +133,13 @@ test('Buddy close hooks stop cached inference and block unsaved close until retr
   await expect(page.locator('#error')).toContainText('Export before closing');const downloading=page.waitForEvent('download');await page.locator('#export').click();await downloading;expect(await page.evaluate(()=>window.pcBeforeClose())).toBe(true);
 });
 
-test('WebPC opens Buddy in its panel, keeps it running while hidden and applies the theme', async ({ page }) => {
+test('WebPC opens WebPC Agent in its panel, keeps it running while hidden and applies the theme', async ({ page }) => {
   skipUnlessEnabled(test,'ai-agent');
   await modelFixture(page);await page.goto('/pc/');await page.locator('[data-buddy-toggle]').click();
-  const app=page.frameLocator('#pc-buddy iframe');await expect(app.getByRole('heading',{name:'Buddy',exact:true})).toBeVisible();
+  const app=page.frameLocator('#pc-buddy iframe');await expect(app.getByRole('heading',{name:'WebPC Agent',exact:true})).toBeVisible();
   await app.locator('#load-model').click();await expect(app.locator('#model-state')).toContainText('Ready');await app.locator('#message').fill('HOLD during desktop controls');await app.locator('#send').click();await expect(app.locator('.assistant .message-body')).toBeVisible();
   const frame=page.frames().find(frame=>frame.url().includes('/pc/apps/ai-agent/'));
-  await app.getByRole('button',{name:'Close Buddy',exact:true}).click();await expect(page.locator('#pc-buddy')).toBeHidden();expect(await frame.evaluate(()=>window.workers.every(w=>!w.wasTerminated))).toBe(true);
+  await app.getByRole('button',{name:'Close WebPC Agent',exact:true}).click();await expect(page.locator('#pc-buddy')).toBeHidden();expect(await frame.evaluate(()=>window.workers.every(w=>!w.wasTerminated))).toBe(true);
   await page.locator('[data-buddy-toggle]').click();await expect(app.locator('.assistant .message-body')).toBeVisible();
   const initialTheme=await app.locator('html').getAttribute('data-theme');await page.locator('[data-theme-toggle]').click();await expect(app.locator('html')).toHaveAttribute('data-theme',initialTheme==='light'?'dark':'light');
 });

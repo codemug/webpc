@@ -78,9 +78,9 @@ test('folders: an app may name a desktop folder; bad names are rejected and the 
   assert.equal('folder' in registryEntries(c).find(e => e.id === 'gridcraft'), false);
 });
 
-test('panel: Buddy is the one kind: panel app, with an iframe-style src', () => {
+test('panel: WebPC Agent is the one kind: panel app, with an iframe-style src', () => {
   assert.equal(byId(base(), 'ai-agent').kind, 'panel');
-  assert.equal(registryEntries(base()).find(e => e.id === 'ai-agent').title, 'Buddy');
+  assert.equal(registryEntries(base()).find(e => e.id === 'ai-agent').title, 'WebPC Agent');
   assert.match(errorsOf(c => { byId(c, 'ai-agent').src = '/pc/apps/other/'; }).join('\n'), /ai-agent: src must be \/pc\/apps\/ai-agent\//);
   assert.match(errorsOf(c => { byId(c, 'sqliteviz').kind = 'panel'; }).join('\n'), /only one app may be kind: panel .* found sqliteviz, ai-agent|only one app may be kind: panel .* found ai-agent, sqliteviz/);
 });

@@ -16,7 +16,7 @@ import { innerApi } from '../../shared/inner-app.js';
 
 const APP = 'nettools';
 const NEEDS = ['host', 'app:nettools'];
-const NOT_HERE = 'Network Tools is not available here (Buddy is not running inside WebPC).';
+const NOT_HERE = 'Network Tools is not available here (WebPC Agent is not running inside WebPC).';
 
 // Gate on ctx.host (needs: ['host', 'app:nettools']), then turn host rejections, which carry a
 // code (unknown_app, not_open, not_iframe, timeout), innerApi's not_available and Files

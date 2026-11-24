@@ -195,7 +195,7 @@ test('save rejects histories that validateConversation rejects', async () => {
   const { store } = setup();
   const row = await store.create();
   await store.save(row.id, { history: [msg('user', 'ok')], summary: '' });
-  await assert.rejects(store.save(row.id, { history: 'nope', summary: '' }), /not a valid Buddy conversation/);
+  await assert.rejects(store.save(row.id, { history: 'nope', summary: '' }), /not a valid WebPC Agent conversation/);
   await assert.rejects(store.save(row.id, { history: [msg('hacker', 'x')], summary: '' }), /invalid message/);
   const loaded = await store.load(row.id);
   assert.equal(loaded.revision, 1);

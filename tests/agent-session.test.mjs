@@ -26,7 +26,7 @@ test('the model sees only the six meta tools and an agent system prompt with the
   await session.send('Hi Buddy');
   assert.deepEqual(seen.schemas[0].map(s => s.function.name), META_TOOL_NAMES);
   const system = seen.prompts[0][0].content;
-  assert.match(system, /You are Buddy/);
+  assert.match(system, /You are WebPC Agent/);
   assert.match(system, /Apps: .*gridcraft \(GridCraft\)/);
   assert.doesNotMatch(system, /desktop\.open_app/);
 });

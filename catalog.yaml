@@ -258,7 +258,7 @@ apps:
         upgrade: auto
   - id: ai-agent
     enabled: true
-    title: Buddy
+    title: WebPC Agent
     category: Utilities
     keywords: [ buddy, ai, chat, assistant, local, model ]
     description: Your on-device sidekick, one click away in the taskbar.

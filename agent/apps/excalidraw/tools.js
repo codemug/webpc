@@ -9,7 +9,7 @@ import { innerApi } from '../../shared/inner-app.js';
 const APP = 'excalidraw';
 const FRAME = 'excalidraw-frame';
 const NEEDS = ['host', 'app:excalidraw'];
-const NOT_HERE = 'Excalidraw is not available here (Buddy is not running inside WebPC).';
+const NOT_HERE = 'Excalidraw is not available here (WebPC Agent is not running inside WebPC).';
 
 // Gate on ctx.host (needs: ['host', 'app:excalidraw']), then turn host rejections, which carry a
 // code (unknown_app, not_open, not_iframe, timeout, invalid_argument), into a ToolError.

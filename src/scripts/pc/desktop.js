@@ -213,12 +213,12 @@ if (shell) {
     badge.textContent = need ? String(need) : run ? String(run) : '';
     badge.dataset.kind = need ? 'needs-you' : 'running';
     const parts = [run && `${run} chat${run === 1 ? '' : 's'} running`, need && `${need} need${need === 1 ? 's' : ''} you`].filter(Boolean);
-    buddyButton.setAttribute('aria-label', parts.length ? `Buddy, ${parts.join(', ')}` : 'Buddy');
+    buddyButton.setAttribute('aria-label', parts.length ? `WebPC Agent, ${parts.join(', ')}` : 'WebPC Agent');
   };
   const ensureBuddyFrame = () => {
     if (buddyFrame?.isConnected) return buddyFrame;
     const frame = document.createElement('iframe');
-    frame.title = 'Buddy';
+    frame.title = 'WebPC Agent';
     frame.className = 'pc-app-frame';
     frame.src = buddy.src;
     buddyPanel.querySelector('.pc-buddy-body').append(frame);

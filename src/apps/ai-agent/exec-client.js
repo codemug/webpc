@@ -54,16 +54,16 @@ export function createExecClient(channel, { graceMs = 1500, wallExtraMs = 10_000
       const entry = { settle: resolve, grace: null, wall: null, gotPending: false };
       pending.set(id, entry);
       entry.wall = setTimeout(() => {
-        channel.postMessage({ type: 'exec-cancel', id, from: 'Buddy' });
+        channel.postMessage({ type: 'exec-cancel', id, from: 'WebPC Agent' });
         settle(id, { type: 'exec-error', id, reason: 'no-terminal' });
       }, timeoutMs + wallExtraMs);
-      channel.postMessage({ type: 'exec-request', id, from: 'Buddy', lang, code, timeoutMs });
+      channel.postMessage({ type: 'exec-request', id, from: 'WebPC Agent', lang, code, timeoutMs });
     });
   };
   /** Stop, New chat and a model change: tell the terminal app to cancel and settle every open run. */
   const cancelAll = () => {
     for (const id of [...pending.keys()]) {
-      channel.postMessage({ type: 'exec-cancel', id, from: 'Buddy' });
+      channel.postMessage({ type: 'exec-cancel', id, from: 'WebPC Agent' });
       settle(id, { type: 'exec-error', id, reason: 'cancelled' });
     }
   };

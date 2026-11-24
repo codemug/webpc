@@ -34,7 +34,7 @@ The kernel mounts the read-only `alpine.erofs` root image under a writable ext4 
 
 ## Exec service (BroadcastChannel)
 
-`/pc/apps/terminal/` listens on `BroadcastChannel('webpc-terminal')` for `{type:'exec-request', id, from, lang, code, timeoutMs}` from other same-origin pages (Buddy) and replies with `exec-result` (`{id, exitCode, output, truncated, durationMs}`) or `exec-error` (`{id, reason}`). The difference from the v86 design is how a run happens: instead of typing into the console and scraping the serial output, the Terminal side executes the code through the kernel's `vm.exec()` API, which returns the exit code and the output directly.
+`/pc/apps/terminal/` listens on `BroadcastChannel('webpc-terminal')` for `{type:'exec-request', id, from, lang, code, timeoutMs}` from other same-origin pages (WebPC Agent) and replies with `exec-result` (`{id, exitCode, output, truncated, durationMs}`) or `exec-error` (`{id, reason}`). The difference from the v86 design is how a run happens: instead of typing into the console and scraping the serial output, the Terminal side executes the code through the kernel's `vm.exec()` API, which returns the exit code and the output directly.
 
 Every run still needs a visible approval click: the prompt shows the source app, the language and the full code with **Run** and **Deny** buttons (Deny focused by default, keyboard accessible, no auto-approve timeout, because any same-origin page can post on the channel). Languages: `sh`, `python`, `node`. The pure protocol helpers live in `src/scripts/pc/apps/terminal-exec.mjs`; unit tests are in `tests/pc-terminal-exec.test.mjs`.
 

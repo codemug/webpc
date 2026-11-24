@@ -108,7 +108,7 @@ function follow(wasNear) { if (wasNear) $('conversation').scrollTop = $('convers
 function message(role, content = '') {
   const near = nearBottom(); $('welcome').hidden = true;
   const root = document.createElement('article'); root.className = `message ${role}`;
-  const label = document.createElement('div'); label.className = 'message-label'; label.textContent = role === 'user' ? 'You' : 'Buddy';
+  const label = document.createElement('div'); label.className = 'message-label'; label.textContent = role === 'user' ? 'You' : 'WebPC Agent';
   const body = document.createElement('div'); body.className = 'message-body';
   if (role === 'assistant') body.replaceChildren(renderMarkdown(content)); else body.textContent = content;
   root.append(label, body); $('messages').append(root); follow(near); return body;
@@ -234,12 +234,12 @@ function renderFileGrants() {
 }
 $('files-grant').addEventListener('click', async () => {
   error('');
-  const picked = await pickFile({ select: 'any', title: 'Give Buddy access to…' });
+  const picked = await pickFile({ select: 'any', title: 'Give WebPC Agent access to…' });
   if (!picked) return;
   const grant = picked.name != null ? { root: picked.path, kind: 'file' } : { root: picked.path, kind: 'folder' };
   if (fileGrants.some((g) => g.root === grant.root && g.kind === grant.kind)) { status('Already granted.'); return; }
   fileGrants.push(grant); applyFileGates(); renderFileGrants();
-  status(`Granted ${grant.kind} "${grant.root || '(Files root)'}". ${isCloud(selected) ? 'Note: with a cloud model, file contents Buddy reads are sent to that provider.' : ''}`);
+  status(`Granted ${grant.kind} "${grant.root || '(Files root)'}". ${isCloud(selected) ? 'Note: with a cloud model, file contents WebPC Agent reads are sent to that provider.' : ''}`);
 });
 $('files-build').addEventListener('click', async () => {
   error('');
@@ -409,7 +409,7 @@ if (!(EVAL_TRACE && new URLSearchParams(location.search).get('prefetch') === '1'
   for (const app of shown) {
     const li = document.createElement('li');
     const item = document.createElement('button'); item.type = 'button';
-    item.dataset.help = `${app.title}: Buddy can open it and work in it.`;
+    item.dataset.help = `${app.title}: WebPC Agent can open it and work in it.`;
     item.setAttribute('aria-label', app.title);
     item.append(appIcon(app.id, app.title));
     li.append(item); strip.append(li);
@@ -509,7 +509,7 @@ function onEvent(s, type, data) {
       const chip = document.createElement('span');
       chip.className = 'chip cut';
       chip.textContent = 'Cut short';
-      chip.dataset.help = 'The answer hit the length limit. Ask Buddy to continue.';
+      chip.dataset.help = 'The answer hit the length limit. Ask WebPC Agent to continue.';
       data.bubble.element.parentElement.append(chip);
       break;
     }
@@ -862,7 +862,7 @@ function cloudNotice() {
   const host = provider === 'anthropic' ? 'api.anthropic.com' : 'the host in your base URL';
   // The visible text is a short chip; the full sentence lives on the chip and the
   // opt-in button as data-help (same text, both open the pop-up).
-  const notice = `Your prompts, tool results and any attached image are sent to ${host}. The key is kept in memory only and cleared on reload, when Buddy closes and when you switch models.`;
+  const notice = `Your prompts, tool results and any attached image are sent to ${host}. The key is kept in memory only and cleared on reload, when WebPC Agent closes and when you switch models.`;
   $('cloud-notice').textContent = host ? `Sends to ${host}` : '';
   $('cloud-notice').hidden = !host;
   $('cloud-notice').dataset.help = notice;

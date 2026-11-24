@@ -3,7 +3,7 @@
 // No module-level side effects: the build imports this file in Node.
 import { ToolError } from '../../src/apps/ai-agent/runtime/args.mjs';
 
-const NOT_HERE = 'The desktop is not available here (Buddy is not running inside WebPC).';
+const NOT_HERE = 'The desktop is not available here (WebPC Agent is not running inside WebPC).';
 
 // Gate on ctx.host (needs: ['host']), then turn host rejections, which carry a code
 // (unknown_app, not_open, not_iframe, timeout, invalid_argument), into a ToolError.
