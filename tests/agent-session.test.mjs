@@ -3,7 +3,7 @@
 // desktop and Files hosts that record what Buddy asked them to do.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { AgentSession, nextStepFor } from '../src/apps/ai-agent/session.js';
+import { AgentSession, repeatNote } from '../src/apps/ai-agent/session.js';
 import { createAgent, META_TOOL_NAMES } from '../src/apps/ai-agent/runtime/index.mjs';
 
 const call = (name, args) => `<tool_call><function=${name}>${Object.entries(args).map(([k, v]) => `<parameter=${k}>${v}</parameter>`).join('')}</function></tool_call>`;
@@ -106,22 +106,25 @@ test('lookup_skill_index: "open LightCraft" never ranks another app\'s skill abo
   assert.ok(['lightcraft', 'desktop'].includes(packs[0]), JSON.stringify(hits.map(h => h.path)));
 });
 
-test('a repeated lookup_skill_index call gets a teaching repeated error with the read_skill fix on the second call', async () => {
+test('a repeated lookup_skill_index call runs again: same hits plus a note, never a refusal', async () => {
   const { session } = setup([
+    call('lookup_skill_index', { query: 'list all apps on my PC' }),
     call('lookup_skill_index', { query: 'list all apps on my PC' }),
     call('lookup_skill_index', { query: 'list all apps on my PC' }),
     'Done.',
   ]);
   await session.send('What apps are on my PC?');
-  const [first, second] = toolMessages(session);
+  const [first, second, third] = toolMessages(session);
   assert.ok(first.hits.length > 0, 'the first lookup ran and found hits');
-  assert.equal(second.ok, false);
-  assert.equal(second.error.type, 'repeated');
-  assert.match(second.error.message, /You already searched for this/);
-  assert.equal(second.error.fix, `read_skill path=${first.hits[0].path}`);
+  assert.equal(first.note, undefined);
+  for (const again of [second, third]) {
+    assert.deepEqual(again.hits, first.hits, 'the repeat ran and returned the same hits');
+    assert.equal(again.error, undefined, 'no refusal');
+    assert.match(again.note, /Same results as your earlier search/);
+  }
 });
 
-test('a repeated find_tool call repeats the first hit call line as the fix', async () => {
+test('a repeated find_tool call runs again with its hits and a note', async () => {
   const { session } = setup([
     call('find_tool', { query: 'list apps' }),
     call('find_tool', { query: 'list apps' }),
@@ -130,9 +133,8 @@ test('a repeated find_tool call repeats the first hit call line as the fix', asy
   await session.send('What apps are on my PC?');
   const [first, second] = toolMessages(session);
   assert.ok(first.hits.length > 0, 'the first find_tool ran and found hits');
-  assert.equal(second.error.type, 'repeated');
-  assert.match(second.error.message, /You already found these tools/);
-  assert.equal(second.error.fix, first.hits[0].call);
+  assert.deepEqual(second.hits, first.hits);
+  assert.match(second.note, /Same tools as your earlier search/);
 });
 
 test('a repeated non-meta call still runs twice and stops at the third, as before', async () => {
@@ -149,30 +151,16 @@ test('a repeated non-meta call still runs twice and stops at the third, as befor
   assert.equal(three.error, 'Repeated tool call stopped. Answer from the available information.');
 });
 
-test('nextStepFor points each repeated meta tool at its next step, or the plain message, and is null for other tools', () => {
-  assert.deepEqual(nextStepFor('lookup_skill_index', { hits: [{ path: 'desktop/find-the-right-app', title: 't', summary: 's' }] }),
-    { message: 'You already searched for this. Read the best match next.', fix: 'read_skill path=desktop/find-the-right-app' });
-  assert.deepEqual(nextStepFor('find_tool', { hits: [{ tool: 'desktop.list_apps', does: 'd', call: 'call_tool tool=desktop.list_apps' }] }),
-    { message: 'You already found these tools. Call the best one next.', fix: 'call_tool tool=desktop.list_apps' });
-  assert.deepEqual(nextStepFor('describe_tool', { tool: 'desktop.list_apps', text: 'desktop.list_apps - List apps\nParams:\nEffect: read\nCall: call_tool tool=desktop.list_apps\nSkills: desktop/see-what-is-open' }),
-    { message: "You already have this tool's call. Make the call next.", fix: 'call_tool tool=desktop.list_apps' });
-  assert.deepEqual(nextStepFor('read_skill', { path: 'desktop/open-an-app', text: 'Open an app\nSteps:\n1. call_tool tool=desktop.open_app app=<app>\nCheck: desktop.list_windows shows it.' }),
-    { message: 'You already read this skill. Do its first step next.', fix: 'call_tool tool=desktop.open_app app=<app>' });
-  assert.deepEqual(nextStepFor('find_in_skill', { hits: [{ section: 'Steps', line: '1. call_tool tool=desktop.focus app=docs', excerpt: 'e' }] }),
-    { message: 'You already read this skill. Do its first step next.', fix: 'call_tool tool=desktop.focus app=docs' });
-  for (const [name, earlier] of [
-    ['lookup_skill_index', { hits: [] }],
-    ['find_tool', { hits: [], note: 'No tool matches. Try lookup_skill_index.' }],
-    ['describe_tool', { ok: false, error: { type: 'unknown_tool', message: 'unknown tool' } }],
-    ['read_skill', { ok: false, error: { type: 'unknown_skill', message: 'unknown skill path' } }],
-    ['find_in_skill', { hits: [] }],
-  ]) {
-    const step = nextStepFor(name, earlier);
-    assert.equal(step.fix, undefined, name);
-    assert.match(step.message, /You already did this/);
-  }
-  assert.equal(nextStepFor('call_tool', { hits: [{ path: 'a/b' }] }), null);
-  assert.equal(nextStepFor('desktop.list_apps', { hits: [{ path: 'a/b' }] }), null);
+test('repeatNote gives each repeatable meta tool a note that picks no hit, and is null for other tools', () => {
+  assert.match(repeatNote('lookup_skill_index', { hits: [{ path: 'sqliteviz/inspect-the-schema' }] }), /Same results as your earlier search/);
+  assert.doesNotMatch(repeatNote('lookup_skill_index', { hits: [{ path: 'sqliteviz/inspect-the-schema' }] }), /sqliteviz/, 'no hit is pushed');
+  assert.match(repeatNote('find_tool', { hits: [] }), /Same tools as your earlier search/);
+  assert.match(repeatNote('find_in_skill', { hits: [] }), /Same lines as your earlier search/);
+  assert.equal(repeatNote('read_skill', { text: 'Open an app\nSteps:\n1. call_tool tool=desktop.open_app app=<app>' }), 'You already read this; its first step: call_tool tool=desktop.open_app app=<app>');
+  assert.equal(repeatNote('describe_tool', { text: 'x\nCall: call_tool tool=desktop.list_apps' }), 'You already read this; its first step: call_tool tool=desktop.list_apps');
+  assert.match(repeatNote('read_skill', { ok: false }), /You already read this/);
+  assert.equal(repeatNote('call_tool', {}), null);
+  assert.equal(repeatNote('desktop.list_apps', {}), null);
 });
 
 test('a truncated final answer emits reply-cut once; an untruncated answer emits nothing', async () => {
