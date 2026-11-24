@@ -208,7 +208,7 @@ export function createTools(host) {
     run: ({ path }) => host.readFile(String(path ?? "")),
   };
   if (host.writeFile) tools.write_file = {
-    description: "Create or update a text file inside a granted FOLDER; the user confirms every write and overwrites are announced. path is relative to the Files app root, inside the granted folder. The parent folder must already exist.",
+    description: "Create or update a text file inside a granted FOLDER; overwrites are announced. path is relative to the Files app root, inside the granted folder. The parent folder must already exist.",
     parameters: {
       type: "object",
       properties: {

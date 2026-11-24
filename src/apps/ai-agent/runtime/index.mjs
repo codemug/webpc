@@ -15,14 +15,8 @@ import { templateKeys } from './catalog.mjs';
 
 export { META_TOOL_NAMES };
 // Re-exported so app.js can reach it: the served runtime/ folder holds only the bundles.
-export { createPolicy } from './policy.mjs';
 export { createScheduler } from './scheduler.mjs';
 export { craftApi } from '../../../../agent/shared/craft.js';
-
-/** The simple default policy: allow every call. createPolicy (policy.mjs) adds the cloud Files grant rule. */
-export function defaultPolicy() {
-  return { decide: () => ({ action: 'allow' }) };
-}
 
 const NEED_CHECKS = {
   host: ctx => Boolean(ctx.host), files: ctx => Boolean(ctx.files),
@@ -37,8 +31,8 @@ function sharesWord(query, text) {
   return meaningful(query).some(q => words.some(w => w.startsWith(q) || q.startsWith(w)));
 }
 
-/** policy: { decide(tool, args) -> { action: 'allow' | 'deny', reason } } (defaultPolicy when omitted). */
-export function createAgent({ policy = defaultPolicy(), data = { catalogJson, skillsJson, toolIndexJson, skillIndexJson, packs } } = {}) {
+/** Every catalog call runs without a policy gate (the user's ruling, 2026-11-24: no approvals, no grant rule). */
+export function createAgent({ data = { catalogJson, skillsJson, toolIndexJson, skillIndexJson, packs } } = {}) {
   const tools = new Map(data.catalogJson.tools.map(t => [t.name, t]));
   const catalog = { tools, docs: data.catalogJson.docs };
   const apps = data.catalogJson.apps ?? [];
@@ -62,15 +56,13 @@ export function createAgent({ policy = defaultPolicy(), data = { catalogJson, sk
       const ok = kind === 'legacy' ? Boolean(ctx.legacy?.[value]) : kind === 'app' ? appIds.includes(value) && Boolean(ctx.host) : NEED_CHECKS[kind] ? NEED_CHECKS[kind](ctx) : true;
       if (!ok) throw new ToolError('not_available', `${name} is not available here (it needs ${need}).`, '');
     }
-    const decision = policy.decide(meta, args);
-    if (decision.action === 'deny') throw new ToolError('not_allowed', decision.reason, '');
     return await impl.run(args, ctx);
   }
   const skillPathsFor = name => skills.filter(s => s.tools.includes(name)).map(s => s.path);
   const metaTools = createMetaTools({ catalog, skills, toolIndex, skillIndex, toolDocs: catalog.docs, skillDocs, run, repairCall: repair, choices, aliases, skillPathsFor, apps });
 
   return {
-    metaTools, catalog, apps, policy,
+    metaTools, catalog, apps,
     /** A function name the model called directly: the catalog tool it means, or null. */
     resolveDirect(name) {
       if (META_TOOL_NAMES.includes(name)) return null;

@@ -52,7 +52,7 @@ try {
   await build({ entryPoints: [join(source, 'markdown.js')], bundle: true, format: 'esm', minify: true, platform: 'browser', target: 'es2022', outfile: join(stage, 'markdown.js'), logLevel: 'silent', legalComments: 'inline' });
   // Shared Files app modules (AI-2 grants), copied verbatim from src so the same-origin vendor page can import them.
   for (const name of ['store.mjs','picker.mjs']) await copyFile(join(root, 'src/scripts/pc/files', name), join(stage, name));
-  // Agent runtime: meta tools, catalog, skills, search indexes, policy and every enabled pack, bundled to the
+  // Agent runtime: meta tools, catalog, skills, search indexes and every enabled pack, bundled to the
   // same relative path session.js and app.js import (runtime/index.mjs), so source and served layouts match.
   for (const entry of ['index.mjs', 'files-ctx.mjs', 'scheduler.mjs']) await build({ entryPoints: [join(source, 'runtime', entry)], bundle: true, format: 'esm', platform: 'browser', target: 'es2022', outfile: join(stage, 'runtime', entry), logLevel: 'silent', legalComments: 'inline' });
   let sdkBundleSha256;

@@ -15,7 +15,7 @@ import * as fileStore from './store.mjs';
 import { resolveInGrants } from './file-tools.js';
 import { BGBM_ENGINES, ocrTextResult, nobgName, nobgTarget, downscalePlan, OCR_MAX_DIM, MAX_IMAGE_BYTES, validateImageFile, visionToolsEnabled } from './vision-tools.js';
 import { createExecClient } from './exec-client.js';
-import { createAgent, createPolicy, craftApi } from './runtime/index.mjs';
+import { createAgent, craftApi } from './runtime/index.mjs';
 import { initHelp, licenseNotice, modelKindLine, stripApps } from './help.js';
 import { renderMarkdown } from './markdown.js';
 import { createFilesCtx } from './runtime/files-ctx.mjs';
@@ -396,10 +396,9 @@ const exec = createExecClient(execChannel);
 const runCode = (lang, code, timeoutMs) => exec.run(lang, code, timeoutMs);
 // Agent mode: Buddy reaches the desktop, Files and every app pack through the six meta tools.
 // The desktop API exists only when Buddy runs inside WebPC (same-origin parent with pcHost).
-// The safety policy follows the live backend (cloud models need Files grants) on every call.
+// Every catalog call runs without a policy gate, on every backend.
 const backendNow = () => (isChrome(selected) ? 'chrome' : isCloud(selected) ? 'cloud' : 'local');
-const livePolicy = () => createPolicy({ backend: backendNow(), grants: fileGrants.map(g => g.root) });
-const agent = createAgent({ policy: { newTurn: text => livePolicy().newTurn(text), decide: (...a) => livePolicy().decide(...a), noteResult: (...a) => livePolicy().noteResult(...a) } });
+const agent = createAgent();
 // The per-turn skill note is off: on the clean 60-task eval (one chat per task) lfm3-1.7b scored
 // 29/60 without it and 24/60 with it. ?eval=1&prefetch=1 turns it back on, for eval comparisons only.
 if (!(EVAL_TRACE && new URLSearchParams(location.search).get('prefetch') === '1')) agent.prefetch = () => '';

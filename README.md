@@ -78,7 +78,7 @@ Buddy acts through a tool catalog of 257 tools in 25 packs, built by `npm run ca
 - `describe_tool`: show a tool's full parameter list, effect and call template.
 - `call_tool`: call a catalog tool with its own parameters.
 
-The action policy allows reads and asks before destructive or external actions, and asks before a change in a turn that took in untrusted content, such as a file read whose name was not in the user's message; an approval already given this turn for the same call is not asked again (`src/apps/ai-agent/runtime/policy.mjs`). `scripts/agent/eval.mjs` runs 60 tasks from `tests/agent-eval/tasks.yaml` against a running preview; the contributor guide for the packs is [agent/README.md](agent/README.md).
+Buddy runs every tool call without asking, on every backend. `scripts/agent/eval.mjs` runs 60 tasks from `tests/agent-eval/tasks.yaml` against a running preview; the contributor guide for the packs is [agent/README.md](agent/README.md).
 
 ## How it ships
 

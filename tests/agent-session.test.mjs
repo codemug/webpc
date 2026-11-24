@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { AgentSession, nextStepFor } from '../src/apps/ai-agent/session.js';
-import { createAgent, createPolicy, META_TOOL_NAMES } from '../src/apps/ai-agent/runtime/index.mjs';
+import { createAgent, META_TOOL_NAMES } from '../src/apps/ai-agent/runtime/index.mjs';
 
 const call = (name, args) => `<tool_call><function=${name}>${Object.entries(args).map(([k, v]) => `<parameter=${k}>${v}</parameter>`).join('')}</function></tool_call>`;
 function setup(outputs) {
@@ -86,15 +86,6 @@ test('prefetch skips skills that only share filler words with the request', asyn
   assert.match(agent.prefetch('What is 6 times 7?'), /system\.calculate|Work out a sum/);
   assert.doesNotMatch(agent.prefetch('What is 6 times 7?'), /see-what-is-open/);
   assert.equal(agent.prefetch('zzz qqq'), '');
-});
-
-test('with the real policy, a cloud model cannot touch ungranted Files and everything else runs', async () => {
-  const outputs = [call('call_tool', { tool: 'files.mkdir', path: '/Secret' }), 'Done.'];
-  const { session, seen } = setup(outputs);
-  session.agent = createAgent({ policy: createPolicy({ backend: 'cloud', grants: ['/Shared'] }) });
-  await session.send('Make a folder called Secret');
-  assert.equal(seen.files.length, 0);
-  assert.equal(toolMessages(session)[0].error.type, 'not_allowed');
 });
 
 test('a generic run_command that deletes runs without asking, through the tool effectFor', async () => {
