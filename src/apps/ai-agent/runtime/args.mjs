@@ -237,6 +237,45 @@ function expected(spec, values) {
   return `one of ${shown}`;
 }
 
+// Schema-aware fixes for the argument mistakes small models make (lfm3-1.7b on eval task C16,
+// 2026-11-24: `query=uname -a`, then `arg=lang=sh code=uname -a`, for terminal.run). Pure; the
+// raw object comes back unchanged when no rule applies.
+// 1. An unknown key whose string value spells the tool's own key=value pairs is split into them
+//    (the last value runs to the end, so `code=uname -a` keeps its spaces).
+// 2. Then, if exactly one unknown key is left and exactly one required string or text parameter
+//    is missing, the value moves to that parameter.
+const escapeRe = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function ownPairs(text, names) {
+  if (!names.length) return null;
+  const marks = [...text.matchAll(new RegExp(`(?:^|\\s)(${names.map(escapeRe).join('|')})=`, 'g'))];
+  if (!marks.length || text.slice(0, marks[0].index).trim()) return null;
+  const out = {};
+  marks.forEach((mark, i) => {
+    const end = i + 1 < marks.length ? marks[i + 1].index : text.length;
+    out[mark[1]] = unquote(text.slice(mark.index + mark[0].length, end).trim());
+  });
+  return out;
+}
+export function repairArgs(tool, raw) {
+  const params = tool?.params ?? {};
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+  const names = Object.keys(params);
+  let args = { ...raw };
+  for (const key of Object.keys(args).filter(k => !params[k])) {
+    const pairs = typeof args[key] === 'string' ? ownPairs(args[key], names) : null;
+    if (!pairs) continue;
+    const { [key]: _spent, ...rest } = args;
+    args = { ...pairs, ...rest };
+  }
+  const unknown = Object.keys(args).filter(k => !params[k]);
+  const missing = names.filter(k => params[k].required && (args[k] == null || args[k] === ''));
+  if (unknown.length === 1 && missing.length === 1 && ['string', 'text'].includes(params[missing[0]].type) && typeof args[unknown[0]] === 'string') {
+    const { [unknown[0]]: value, ...rest } = args;
+    args = { ...rest, [missing[0]]: value };
+  }
+  return args;
+}
+
 /**
  * Raw args (strings from local models, or JSON values from cloud) -> { ok: true, args } | { ok: false, error }
  * tool: { name, params }. choices: (name) => string[] for live enums ('apps', 'windows').
@@ -244,7 +283,7 @@ function expected(spec, values) {
  */
 export function checkArgs(tool, raw, { choices = () => [], aliases = {} } = {}) {
   const params = tool?.params ?? {};
-  const given = raw != null && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const given = raw != null && typeof raw === 'object' && !Array.isArray(raw) ? repairArgs(tool, raw) : {};
   const args = {};
   const absent = key => given[key] == null || (typeof given[key] === 'string' && unquote(given[key]) === '');
   for (const [key, value] of Object.entries(given)) {

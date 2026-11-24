@@ -613,7 +613,7 @@ tasks:
     setup:
       - close_all: true
     expect:
-      tools: [terminal.start, terminal.run]
+      tools: [terminal.run]
     check:
       terminal_output: Linux
 

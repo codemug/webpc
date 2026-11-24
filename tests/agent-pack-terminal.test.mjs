@@ -29,13 +29,17 @@ const choices = name => (name === 'apps' || name === 'windows' ? APP_IDS : []);
 const byName = name => tools.find(tool => tool.name === name) ?? desktopTools.find(tool => tool.name === name) ?? systemTools.find(tool => tool.name === name);
 const NEXT = 'call system.sleep seconds=3, then terminal.status, until state is running';
 
-const fakeTerminal = () => {
+const fakeTerminal = ({ boots = true } = {}) => {
   const state = { opened: 0, starts: 0, runs: [], runResult: { exitCode: 0, output: 'ok\n', truncated: false } };
   const statusEl = { textContent: '', dataset: {} };
   const start = {
     disabled: false,
-    // action() sets busy and re-runs controls() synchronously on click.
-    click: () => { state.starts += 1; start.disabled = true; },
+    // action() sets busy and re-runs controls() synchronously on click; boot() then reports
+    // "Booting Alpine Linux…", and once the guest runs controls() enables #linux-restart.
+    click: () => {
+      state.starts += 1; start.disabled = true; statusEl.textContent = 'Booting Alpine Linux…';
+      if (boots) setTimeout(() => { restart.disabled = false; statusEl.textContent = 'Linux is running'; }, 5);
+    },
   };
   const restart = { disabled: true };
   const buttons = { 'linux-start': start, 'linux-restart': restart, 'terminal-status': statusEl };
@@ -167,6 +171,46 @@ test('terminal.run opens the window first, then delegates to the run_code bridge
   assert.equal(term.state.runs[0].lang, 'sh');
   assert.equal(term.state.runs[0].code, 'echo hello');
   assert.ok(!('timeout_ms' in term.state.runs[0]) || term.state.runs[0].timeout_ms === undefined, 'no timeout means the bridge default (30000)');
+});
+
+test('terminal.run on a stopped guest starts it once, waits until it runs, then runs the code', async () => {
+  const term = fakeTerminal();
+  const got = await term.runTool('terminal.run', { lang: 'sh', code: 'uname -a' });
+  assert.equal(term.state.starts, 1, 'Start Linux is pressed once');
+  assert.equal(term.state.runs.length, 1, 'the code runs after the guest is up');
+  assert.deepEqual(got, { exitCode: 0, output: 'ok\n', truncated: false });
+});
+
+test('terminal.run on a running guest does not press Start Linux', async () => {
+  const term = fakeTerminal();
+  term.start.disabled = true;
+  term.restart.disabled = false;
+  await term.runTool('terminal.run', { lang: 'sh', code: 'echo hi' });
+  assert.equal(term.state.starts, 0);
+  assert.equal(term.state.runs.length, 1);
+});
+
+test('terminal.run rejects with not_running when the Terminal controls are missing', async () => {
+  const win = { document: { getElementById: () => null } };
+  const legacy = { run_code: { run: () => assert.fail('nothing may run') } };
+  await assert.rejects(byName('terminal.run').run({ lang: 'sh', code: 'x' }, { host: { appWindow: async () => win }, legacy }), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'not_running');
+    return true;
+  });
+});
+
+test('terminal.run stops waiting for the boot when the turn is stopped', async () => {
+  const term = fakeTerminal({ boots: false });
+  const controller = new AbortController();
+  const pending = term.runTool('terminal.run', { lang: 'sh', code: 'x' }, { signal: controller.signal });
+  setTimeout(() => controller.abort(), 20);
+  await assert.rejects(pending, error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'aborted');
+    return true;
+  });
+  assert.equal(term.state.runs.length, 0, 'nothing ran');
 });
 
 test('terminal.run passes timeout_ms through to the bridge', async () => {

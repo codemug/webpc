@@ -49,6 +49,26 @@ function readState(win) {
   return { state: /booting/i.test(line) ? 'starting' : 'busy', line };
 }
 
+// terminal.run starts a stopped guest itself and waits for it: small models do not follow the
+// not-running hint to call terminal.start (lfm3-1.7b on eval task C16 called terminal.run 14
+// times in a row, 2026-11-24). The explicit start, status and sleep tools stay for the model
+// and the user to use directly.
+const BOOT_WAIT_MS = 90000;
+const BOOT_POLL_MS = 250;
+async function ensureRunning(win, signal) {
+  let { state, line } = readState(win);
+  if (state === 'running') return;
+  if (state === 'stopped') { win.document.getElementById('linux-start').click(); state = 'starting'; }
+  const deadline = Date.now() + BOOT_WAIT_MS;
+  while (state !== 'running') {
+    if (signal?.aborted) throw new ToolError('aborted', 'The run was stopped before Linux finished starting.', '');
+    if (state === 'unavailable' || Date.now() > deadline) throw new ToolError('not_running', `Linux did not start (state ${state}): ${line}`, 'call terminal.status to see why');
+    await new Promise(resolve => setTimeout(resolve, BOOT_POLL_MS));
+    ({ state, line } = readState(win));
+    if (state === 'stopped') throw new ToolError('not_running', `Linux stopped while starting: ${line}`, 'call terminal.start, then terminal.status');
+  }
+}
+
 export const pack = { id: APP, title: 'Terminal' };
 
 export const tools = [
@@ -107,23 +127,27 @@ export const tools = [
   },
   {
     name: 'terminal.run',
-    purpose: 'Run Python, Node or shell code in the Linux guest; it runs at once.',
-    when: 'Use when the user wants code executed inside the WebPC Linux guest.',
+    purpose: 'Run a shell command (uname, ls, pip) or Python/Node code in the Linux terminal.',
+    when: 'Use when the user wants any command, script or code run in Linux or the terminal.',
     params: {
-      lang: { type: 'enum', required: true, values: ['python', 'node', 'sh'], description: 'Language of the code' },
+      lang: { type: 'enum', values: ['python', 'node', 'sh'], default: 'sh', description: 'Language of the code (default sh)' },
       code: { type: 'text', required: true, description: 'Code to run in the guest' },
       timeout_ms: { type: 'integer', min: 1, max: 120000, description: 'Optional run limit in milliseconds (default 30000); the run is killed at the limit' },
     },
     effect: 'external',
     needs: NEEDS,
-    examples: [{ args: { lang: 'sh', code: 'echo hello' }, says: 'Run echo hello in Linux' }],
+    examples: [
+      { args: { lang: 'sh', code: 'uname -a' }, says: 'Run uname -a in the Linux terminal' },
+      { args: { lang: 'sh', code: 'ls -la' }, says: 'Run a shell command in the terminal' },
+      { args: { lang: 'python', code: 'print(6 * 7)' }, says: 'Run this Python code' },
+    ],
     // Open the window first so the user sees the run (the status line says what runs and its
     // result). Then delegate to the run_code bridge (ctx.legacy.run_code, wired
     // by src/apps/ai-agent/app.js over the webpc-terminal BroadcastChannel); its reply is
     // already model-facing: { exitCode, output, truncated } or
     // { error } for not-running / busy / no-terminal / timeout / cancelled.
     run: async (args, ctx) => call(ctx, async host => {
-      await page(host);
+      await ensureRunning(await page(host), ctx.signal);
       const bridge = ctx.legacy?.run_code;
       if (!bridge) throw new ToolError('not_available', 'the run_code bridge is not wired here (the Linux guest tools are unavailable)', '');
       return bridge.run({ code: args.code, lang: args.lang, timeout_ms: args.timeout_ms });
