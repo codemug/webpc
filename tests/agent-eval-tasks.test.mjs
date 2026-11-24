@@ -1,7 +1,7 @@
 // Unit test for the M6 eval task suite (tests/agent-eval/tasks.yaml).
 // Validates: the YAML parses and every task carries the required fields; every expect.tools
 // name exists in the generated catalog; every check kind is in the supported set (and is
-// well-formed); and the set counts are A20 / B20 / C15 / D5. No browser, no network.
+// well-formed); and the set counts are A20 / B20 / C16 / D5. No browser, no network.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parse } from 'yaml';
@@ -17,11 +17,11 @@ const toolNames = new Set(catalog.tools.map((t) => t.name));
 const appIds = new Set(catalog.apps.map((a) => a.id));
 
 const SETS = new Set(['A', 'B', 'C', 'D']);
-const EXPECTED_COUNTS = { A: 20, B: 20, C: 15, D: 5 };
+const EXPECTED_COUNTS = { A: 20, B: 20, C: 16, D: 5 };
 // The check kinds the runner (scripts/agent/eval.mjs) implements.
 const CHECK_KINDS = new Set([
   'window_open', 'theme', 'file_exists', 'file_contains', 'cell',
-  'docs_text_contains', 'excalidraw_count_at_least', 'cyberchef_output',
+  'docs_text_contains', 'excalidraw_count_at_least', 'cyberchef_output', 'terminal_output',
 ]);
 
 /** Every task has the required fields and sane types. */
@@ -66,7 +66,7 @@ test('every check kind is in the supported set and well-formed', () => {
       case 'file_exists': if (typeof value !== 'string' || !value.startsWith('/')) problems.push(`${task.id}: file_exists needs a /path`); break;
       case 'file_contains': if (typeof value?.path !== 'string' || typeof value?.text !== 'string') problems.push(`${task.id}: file_contains needs {path, text}`); break;
       case 'cell': if (!appIds.has(value?.app) || typeof value?.cell !== 'string' || value?.input == null) problems.push(`${task.id}: cell needs {app, cell, input}`); break;
-      case 'docs_text_contains': case 'cyberchef_output': if (typeof value !== 'string' || value === '') problems.push(`${task.id}: ${kind} needs a non-empty text`); break;
+      case 'docs_text_contains': case 'cyberchef_output': case 'terminal_output': if (typeof value !== 'string' || value === '') problems.push(`${task.id}: ${kind} needs a non-empty text`); break;
       case 'excalidraw_count_at_least': if (!Number.isInteger(value) || value < 1) problems.push(`${task.id}: excalidraw_count_at_least needs an integer >= 1`); break;
     }
   }
@@ -83,10 +83,10 @@ test('open_app and window_open targets are real apps', () => {
   assert.deepEqual(problems, [], problems.join('; '));
 });
 
-/** The set spread is exactly A20 / B20 / C15 / D5. */
-test('set counts match A20 B20 C15 D5', () => {
+/** The set spread is exactly A20 / B20 / C16 / D5. */
+test('set counts match A20 B20 C16 D5', () => {
   const counts = {};
   for (const task of tasks) counts[task.set] = (counts[task.set] ?? 0) + 1;
   for (const [set, want] of Object.entries(EXPECTED_COUNTS)) assert.equal(counts[set] ?? 0, want, `set ${set}: got ${counts[set] ?? 0}, want ${want}`);
-  assert.equal(tasks.length, 60, `total tasks: got ${tasks.length}, want 60`);
+  assert.equal(tasks.length, 61, `total tasks: got ${tasks.length}, want 61`);
 });

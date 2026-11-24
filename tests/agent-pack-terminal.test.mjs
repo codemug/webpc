@@ -2,9 +2,12 @@
 // The fake terminal page mirrors the app DOM the pack reads (src/scripts/pc/apps/terminal-unkernel.mjs):
 // #linux-start (controls(): disabled while the guest runs or the page is busy) and
 // #linux-restart (disabled while the guest is off or the page is busy), plus #terminal-status
-// (the last report() line). There is no pause and no save: files are kept automatically on
-// the guest's IndexedDB data disk. terminal.run delegates to ctx.legacy.run_code, the exec
-// bridge the model also sees as the run_code tool.
+// (the last report() line; "Booting Alpine Linux…" while a boot is in flight). There is no
+// pause and no save: files are kept automatically on the guest's IndexedDB data disk.
+// terminal.start clicks #linux-start (the fake click flips both buttons, as action() does
+// synchronously); terminal.run delegates to ctx.legacy.run_code, the exec bridge the model
+// also sees as the run_code tool. The exec error strings come from execReplyToToolResult
+// (src/apps/ai-agent/agent.js).
 // Run: node --test tests/agent-pack-terminal.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,20 +16,27 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pack, tools } from '../agent/apps/terminal/tools.js';
 import { tools as desktopTools } from '../agent/desktop/tools.js';
+import { tools as systemTools } from '../agent/system/tools.js';
 import { ToolError, specErrors, checkArgs } from '../src/apps/ai-agent/runtime/args.mjs';
 import { parseSkills, checkSkills } from '../src/apps/ai-agent/runtime/skills.mjs';
+import { execReplyToToolResult } from '../src/apps/ai-agent/agent.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SKILLS_MD = readFileSync(join(HERE, '..', 'agent', 'apps', 'terminal', 'skills.md'), 'utf8');
 // The enabled app ids scripts/agent/build.mjs resolves the live 'apps' enum with (catalog.yaml).
 const APP_IDS = ['gridcraft', 'docs', 'deckcraft', 'terminal', 'sqliteviz', 'files', 'media', 'cyberchef', 'vscode', 'nettools', 'packets', 'ai-agent', 'lightcraft', 'figcraft', 'pdfcraft', 'soundcraft', 'beepbox', 'filmcraft', 'cadcraft', 'vectorcraft', 'photocraft', 'effectcraft', 'materialcraft', 'texturecraft', 'excalidraw', 'vert'];
 const choices = name => (name === 'apps' || name === 'windows' ? APP_IDS : []);
-const byName = name => tools.find(tool => tool.name === name) ?? desktopTools.find(tool => tool.name === name);
+const byName = name => tools.find(tool => tool.name === name) ?? desktopTools.find(tool => tool.name === name) ?? systemTools.find(tool => tool.name === name);
+const NEXT = 'call system.sleep seconds=3, then terminal.status, until state is running';
 
 const fakeTerminal = () => {
-  const state = { opened: 0, runs: [], runResult: { exitCode: 0, output: 'ok\n', truncated: false } };
+  const state = { opened: 0, starts: 0, runs: [], runResult: { exitCode: 0, output: 'ok\n', truncated: false } };
   const statusEl = { textContent: '', dataset: {} };
-  const start = { disabled: false };
+  const start = {
+    disabled: false,
+    // action() sets busy and re-runs controls() synchronously on click.
+    click: () => { state.starts += 1; start.disabled = true; },
+  };
   const restart = { disabled: true };
   const buttons = { 'linux-start': start, 'linux-restart': restart, 'terminal-status': statusEl };
   const document = { getElementById: id => buttons[id] ?? null };
@@ -41,10 +51,10 @@ test('the pack declares its id and title', () => {
   assert.deepEqual(pack, { id: 'terminal', title: 'Terminal' });
 });
 
-test('the pack exposes exactly the 3 terminal tools', () => {
-  assert.equal(tools.length, 3);
+test('the pack exposes exactly the 4 terminal tools', () => {
+  assert.equal(tools.length, 4);
   assert.deepEqual(tools.map(tool => tool.name).sort(), [
-    'terminal.open', 'terminal.run', 'terminal.status',
+    'terminal.open', 'terminal.run', 'terminal.start', 'terminal.status',
   ]);
 });
 
@@ -63,6 +73,12 @@ test('every tool has the required text fields, effect, needs and examples', () =
       assert.equal(typeof example.says, 'string');
     }
   }
+});
+
+test('terminal.start is a no-param change tool with the sleep-and-poll hint', () => {
+  const start = byName('terminal.start');
+  assert.equal(start.effect, 'change');
+  assert.deepEqual(start.params, {});
 });
 
 test('every parameter spec passes the runtime specErrors check', () => {
@@ -85,27 +101,61 @@ test('terminal.open opens the app window', async () => {
   assert.equal(term.state.opened, 1);
 });
 
-test('terminal.status maps the start and restart controls to running, stopped or busy', async () => {
+test('terminal.start clicks #linux-start and returns starting with the next hint', async () => {
+  const term = fakeTerminal();
+  const got = await term.runTool('terminal.start', {});
+  assert.deepEqual(got, { state: 'starting', next: NEXT });
+  assert.equal(term.state.starts, 1, 'the enabled button is clicked');
+  assert.equal(term.state.opened, 1, 'the window is opened first so the user sees the boot');
+});
+
+test('terminal.start does not click when the guest already runs', async () => {
+  const term = fakeTerminal();
+  term.start.disabled = true;
+  term.restart.disabled = false;
+  term.statusEl.textContent = 'Linux is running · offline · files are kept in this browser.';
+  const got = await term.runTool('terminal.start', {});
+  assert.deepEqual(got, { state: 'running', next: NEXT });
+  assert.equal(term.state.starts, 0);
+});
+
+test('terminal.start does not click while an action is in flight and reads the state', async () => {
+  const term = fakeTerminal();
+  term.start.disabled = true;
+  term.restart.disabled = true;
+  term.statusEl.textContent = 'Booting Alpine Linux…';
+  let got = await term.runTool('terminal.start', {});
+  assert.deepEqual(got, { state: 'starting', next: NEXT });
+  assert.equal(term.state.starts, 0, 'no double click while a boot is in flight');
+  term.statusEl.textContent = 'Linux is running · offline · files are kept in this browser.';
+  got = await term.runTool('terminal.start', {});
+  assert.equal(got.state, 'busy', 'a non-boot line in flight stays busy');
+});
+
+test('terminal.status maps the start and restart controls to running, stopped, starting or busy', async () => {
   const term = fakeTerminal();
   term.statusEl.textContent = 'Ready to start. The Linux image loads only when you start.';
   let got = await term.runTool('terminal.status', {});
-  assert.deepEqual(got, { state: 'stopped', status: 'Ready to start. The Linux image loads only when you start.' });
+  assert.deepEqual(got, { state: 'stopped', status: 'Ready to start. The Linux image loads only when you start.', next: NEXT });
   term.start.disabled = true;
   term.restart.disabled = false;
   term.statusEl.textContent = 'Linux is running · offline · files are kept in this browser.';
   got = await term.runTool('terminal.status', {});
-  assert.deepEqual(got, { state: 'running', status: 'Linux is running · offline · files are kept in this browser.' });
+  assert.deepEqual(got, { state: 'running', status: 'Linux is running · offline · files are kept in this browser.' }, 'running carries no next hint');
   term.start.disabled = true;
   term.restart.disabled = true;
   term.statusEl.textContent = 'Booting Alpine Linux…';
   got = await term.runTool('terminal.status', {});
-  assert.deepEqual(got, { state: 'busy', status: 'Booting Alpine Linux…' });
+  assert.deepEqual(got, { state: 'starting', status: 'Booting Alpine Linux…', next: NEXT });
+  term.statusEl.textContent = 'Linux is running · offline · files are kept in this browser.';
+  got = await term.runTool('terminal.status', {});
+  assert.deepEqual(got, { state: 'busy', status: 'Linux is running · offline · files are kept in this browser.', next: NEXT });
 });
 
 test('terminal.status reports unavailable when the page controls are missing', async () => {
   const win = { document: { getElementById: () => null } };
   const got = await byName('terminal.status').run({}, { host: { appWindow: async () => win } });
-  assert.deepEqual(got, { state: 'unavailable', status: '' });
+  assert.deepEqual(got, { state: 'unavailable', status: '', next: NEXT });
 });
 
 test('terminal.run opens the window first, then delegates to the run_code bridge', async () => {
@@ -127,9 +177,9 @@ test('terminal.run passes timeout_ms through to the bridge', async () => {
 
 test('terminal.run passes the bridge reply through unchanged', async () => {
   const term = fakeTerminal();
-  term.state.runResult = { error: 'The Linux guest is not running. Start Linux first.' };
+  term.state.runResult = { error: 'The user denied this run.' };
   const got = await term.runTool('terminal.run', { lang: 'node', code: 'x' });
-  assert.deepEqual(got, { error: 'The Linux guest is not running. Start Linux first.' });
+  assert.deepEqual(got, { error: 'The user denied this run.' });
   term.state.runResult = { error: 'The run exceeded its time limit and was killed in the guest.', output: '', truncated: false };
   const timed = await term.runTool('terminal.run', { lang: 'sh', code: 'sleep 99' });
   assert.deepEqual(timed, { error: 'The run exceeded its time limit and was killed in the guest.', output: '', truncated: false });
@@ -168,11 +218,17 @@ test('a host rejection code is passed through as the ToolError type', async () =
   });
 });
 
+test('the exec errors tell the model to start Linux and poll, instead of asking the user', () => {
+  assert.match(execReplyToToolResult({ type: 'exec-error', reason: 'not-running' }).error, /Linux is not running: call terminal\.start, then system\.sleep seconds=3 and terminal\.status until the state is running/);
+  assert.match(execReplyToToolResult({ type: 'exec-error', reason: 'no-terminal' }).error, /No reply from the Linux Terminal app.*call terminal\.start, then system\.sleep seconds=3 and terminal\.status until the state is running/s);
+  assert.match(execReplyToToolResult({ type: 'exec-error', reason: 'timeout', output: '', truncated: false }).error, /time limit/);
+});
+
 const { skills, errors: skillErrors } = parseSkills(SKILLS_MD, 'terminal');
 
-test('skills.md parses with the runtime parser without errors and has 4 skills', () => {
+test('skills.md parses with the runtime parser without errors and has 6 skills', () => {
   assert.deepEqual(skillErrors, []);
-  assert.equal(skills.length, 4);
+  assert.equal(skills.length, 6);
   for (const skill of skills) {
     assert.ok(skill.slug && skill.summary, `skill ${skill.slug} slug/summary`);
     assert.ok(skill.summary.length <= 160, `skill ${skill.slug} summary is ${skill.summary.length} chars`);
@@ -182,18 +238,25 @@ test('skills.md parses with the runtime parser without errors and has 4 skills',
   }
 });
 
-test('every skill opens by launching the terminal, then uses numbered terminal steps', () => {
+test('the run-code skill starts Linux, sleeps, polls the status and only then runs', () => {
+  const run = skills.find(skill => skill.slug === 'run-code-in-the-linux-guest');
+  assert.deepEqual(run.steps.map(step => step.tool), [
+    'terminal.start', 'system.sleep', 'terminal.status', 'terminal.run',
+  ]);
+  assert.deepEqual(run.steps[1].args, { seconds: '3' });
+});
+
+test('every skill uses numbered steps from the desktop, terminal or system packs', () => {
   for (const skill of skills) {
-    assert.equal(skill.steps[0].line, '1. call_tool tool=desktop.open_app app=terminal', `skill ${skill.slug}`);
     skill.steps.forEach((step, i) => {
       assert.equal(step.n, i + 1, `skill ${skill.slug} step numbering`);
-      assert.ok(step.tool.startsWith('desktop.') || step.tool.startsWith('terminal.'), `skill ${skill.slug} step ${step.n}: ${step.line}`);
+      assert.ok(step.tool.startsWith('desktop.') || step.tool.startsWith('terminal.') || step.tool.startsWith('system.'), `skill ${skill.slug} step ${step.n}: ${step.line}`);
     });
   }
 });
 
 test('skill steps and tools lines validate against the runtime checkArgs', () => {
-  const errors = checkSkills(skills, byName, { checkArgs: (tool, args) => checkArgs(tool, args, { choices }) });
+  const errors = checkSkills(skills, name => byName(name), { checkArgs: (tool, args) => checkArgs(tool, args, { choices }) });
   assert.deepEqual(errors, []);
 });
 

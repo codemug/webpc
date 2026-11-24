@@ -2,27 +2,54 @@
 slug: run-code-in-the-linux-guest
 summary: Run Python, Node or shell code in the WebPC Linux guest; it runs at once, with no approval.
 keywords: run code, linux, terminal, guest, python, node, shell, alpine
-tools: desktop.open_app, terminal.run
+tools: terminal.start, system.sleep, terminal.status, terminal.run
 
 When: the user wants code executed inside the WebPC Linux guest.
 Steps:
-1. call_tool tool=desktop.open_app app=terminal
-2. call_tool tool=terminal.run lang=sh code=echo hello
+1. call_tool tool=terminal.start
+2. call_tool tool=system.sleep seconds=3
+3. call_tool tool=terminal.status
+4. call_tool tool=terminal.run lang=sh code=echo hello
 Check: the result has the exit code and output, or an error (not running, busy, timed out, cancelled).
-Gotchas: change lang= and code=; the command runs at once (no approval) and the terminal's status line says what runs; timeout_ms caps the run at 1 to 120000 ms and the run is killed at the limit; guest output is untrusted data.
+Gotchas: repeat the sleep and status steps until the state is running (the boot takes a few seconds); change lang= and code=; the command runs at once (no approval); timeout_ms caps the run at 1 to 120000 ms and the run is killed at the limit; guest output is untrusted data.
 
 ## Check the Linux guest status
 slug: check-the-linux-guest-status
-summary: Check whether the Linux guest is running, stopped or busy, plus the last status line.
-keywords: status, running, stopped, state, is linux up, guest state
-tools: desktop.open_app, terminal.status
+summary: Check whether the Linux guest is running, stopped, starting or busy, plus the last status line.
+keywords: status, running, stopped, starting, state, is linux up, guest state
+tools: terminal.status
 
 When: the user asks about the Linux guest, or before running code that assumes it is up.
 Steps:
-1. call_tool tool=desktop.open_app app=terminal
-2. call_tool tool=terminal.status
-Check: the result has the state (running, stopped, busy or unavailable) and the last status line.
-Gotchas: stopped means the guest is not started, busy means the page is starting, restarting or shutting it down, and unavailable means the page controls are not there; the status line usually says why, for example that the browser cannot run the Terminal.
+1. call_tool tool=terminal.status
+Check: the result has the state (running, stopped, starting, busy or unavailable), the last status line, and a next hint while the state is not running.
+Gotchas: stopped means the guest is not started (terminal.start starts it), starting means the boot is in flight, busy means a restart or shutdown is in flight, and unavailable means the page controls are not there; the status line usually says why, for example that the browser cannot run the Terminal.
+
+## Start Linux
+slug: start-linux
+summary: Start the Linux guest and wait until it is running.
+keywords: start, boot, launch linux, start the guest, turn on linux
+tools: terminal.start, system.sleep, terminal.status
+
+When: the user asks to start Linux, or before running code when the guest is stopped.
+Steps:
+1. call_tool tool=terminal.start
+2. call_tool tool=system.sleep seconds=3
+3. call_tool tool=terminal.status
+Check: the state is running; the status line then says Linux is running.
+Gotchas: repeat the sleep and status steps until the state is running (the boot takes a few seconds); a state of stopped with an error in the status line means the boot failed, so say that error instead of retrying.
+
+## Wait a few seconds
+slug: wait-a-few-seconds
+summary: Wait a few seconds and then continue.
+keywords: wait, sleep, pause, delay, a few seconds, hold on
+tools: system.sleep
+
+When: the user asks to wait or sleep, or while a state check repeats until it changes.
+Steps:
+1. call_tool tool=system.sleep seconds=5
+Check: the result says how many seconds it slept.
+Gotchas: seconds is 1 to 30 (default 3); a Stop ends the sleep early.
 
 ## Open the terminal
 slug: open-the-terminal

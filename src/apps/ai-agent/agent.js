@@ -20,10 +20,10 @@ export function execReplyToToolResult(reply) {
   if (reply?.type === "exec-error" && reply.reason === "timeout") return { error: "The run exceeded its time limit and was killed in the guest.", output: String(reply.output ?? ""), truncated: reply.truncated === true };
   const reason = reply?.type === "exec-error" ? reply.reason : "invalid";
   const message = {
-    "not-running": "The Linux guest is not running. The user needs to open the Linux Terminal app and press Start Linux first.",
+    "not-running": "Linux is not running: call terminal.start, then system.sleep seconds=3 and terminal.status until the state is running, then run the code again.",
     denied: "The user denied this run.",
     busy: "Another command is already running in the terminal; try again shortly.",
-    "no-terminal": "No reply from the Linux Terminal app: it may not be open, or Linux is not running. Check the terminal window before trying again.",
+    "no-terminal": "No reply from the Linux Terminal app: it may not be open, or Linux is not running: call terminal.start, then system.sleep seconds=3 and terminal.status until the state is running, then run the code again.",
     invalid: "The run request was rejected.",
   }[reason] ?? `The run failed (${String(reason)}).`;
   return { error: message };

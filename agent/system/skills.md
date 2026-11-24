@@ -45,7 +45,7 @@ When: the user wants code run, or a job that needs Python or the shell.
 Steps:
 1. call_tool tool=system.run_code lang=python code="print(sum(range(1, 101)))"
 Check: exitCode is 0; report the output.
-Gotchas: each run starts at once in the Terminal; if the Terminal is closed, open it with desktop.open_app app=terminal and start Linux.
+Gotchas: each run starts at once in the Terminal; if it is not open or Linux is not running, call terminal.start, then system.sleep seconds=3 and terminal.status until the state is running.
 
 ## Translate some text
 slug: translate-text

@@ -260,6 +260,15 @@ export function checkCyberchefOutput(trace, expected) {
   return { ok, detail: ok ? 'bake output matches' : `no matching bake output (got ${JSON.stringify(output ?? null)})` };
 }
 
+/** The guest's real output, read from the ?eval=1 trace: the last terminal.run call's result
+ *  (call_tool wraps it as { ok, tool, result: { exitCode, output } }). */
+export function checkTerminalOutput(trace, expected) {
+  const entry = [...trace].reverse().find((e) => e.name === 'terminal.run' || (e.name === 'call_tool' && e.arguments?.tool === 'terminal.run'));
+  const output = entry?.result?.result?.output;
+  const ok = typeof output === 'string' && output.includes(String(expected));
+  return { ok, detail: ok ? `terminal output contains ${JSON.stringify(expected)}` : `no terminal output containing ${JSON.stringify(expected)} (got ${JSON.stringify(output ?? null)})` };
+}
+
 /** Dispatch a task's single end-state check. */
 async function runCheck(page, trace, check) {
   if (check == null || typeof check !== 'object') return { ok: false, detail: 'no check defined' };
@@ -273,6 +282,7 @@ async function runCheck(page, trace, check) {
     case 'docs_text_contains': return checkDocsContains(page, value);
     case 'excalidraw_count_at_least': return checkExcalidrawCount(page, value);
     case 'cyberchef_output': return checkCyberchefOutput(trace, value);
+    case 'terminal_output': return checkTerminalOutput(trace, value);
     default: return { ok: false, detail: `unsupported check kind ${kind}` };
   }
 }
