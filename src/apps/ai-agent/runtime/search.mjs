@@ -38,7 +38,7 @@ const LIMIT_MAX = 20;
  *  Bare numbers are values, not search words: with prefix search "6 times 7" matched every
  *  coordinate, size and step number ("60", "72", "6.") and ranked a FigCraft skill above the sum
  *  skill. They are dropped unless the query has nothing else. */
-function cleanQuery(query) {
+export function cleanQuery(query) {
   const words = String(query).toLowerCase().split(SPLIT).filter(word => word && !STOP_WORDS.has(word));
   const named = words.filter(word => !/^\d+$/.test(word));
   return (named.length ? named : words).join(' ');
@@ -227,6 +227,11 @@ export function namedApps(text, apps = []) {
   const hay = words(text);
   return apps.filter(app => [app.id, app.title].some(name => name && hay.includes(words(name)))).map(app => app.id);
 }
+
+// A22: the tie-break epsilon for the app active on screen. A modest relative bump (applied to
+// the top score of the fetched rows): it lets the active app's row win a near-tie for an
+// unnamed query, but a clearly better cross-app match (terminal-05: ~3x) is never overridden.
+export const TIE_EPSILON = 0.15;
 
 /**
  * Hit ids ("<pack>/<slug>" or "<pack>.<tool>") reordered for a request that names apps: other

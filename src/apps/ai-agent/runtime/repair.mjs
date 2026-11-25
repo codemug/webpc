@@ -5,13 +5,17 @@ export const WINDOW_VERBS = ['open', 'close', 'minimize', 'maximize', 'focus', '
 const TOOL_KEYS = ['tool', 'Tool', 'tool_name', 'name'];
 
 // k=v pairs from the tail of a tool value; a value may be double-quoted to hold spaces.
+// An unquoted value runs to the next <whitespace><key>= (same key pattern) or the end (A19:
+// "name=Outro Marks" used to be cut at the first space into "Outro"), so shell commands and
+// multi-word text keep their spaces.
 function inlinePairs(text) {
   const pairs = {};
-  const re = /(^|\s)([A-Za-z_][A-Za-z0-9_-]*)=("(?:[^"]*)"|\S+)/g;
+  const re = /(^|\s)([A-Za-z_][A-Za-z0-9_-]*)=((?:"(?:[^"]*)"|\S+(?:\s+(?![A-Za-z_][A-Za-z0-9_-]*=)\S+)*))/g;
   let match;
   while ((match = re.exec(text)) !== null) {
     let value = match[3];
     if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) value = value.slice(1, -1);
+    else value = value.trim();
     pairs[match[2]] = value;
   }
   return Object.keys(pairs).length ? pairs : null;

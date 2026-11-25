@@ -7,7 +7,7 @@ import skillsJson from '../generated/skills.json' with { type: 'json' };
 import toolIndexJson from '../generated/search-tools.json' with { type: 'json' };
 import skillIndexJson from '../generated/search-skills.json' with { type: 'json' };
 import { packs } from '../generated/packs.mjs';
-import { loadIndex, search } from './search.mjs';
+import { loadIndex, search, namedApps, TIE_EPSILON } from './search.mjs';
 import { createMetaTools, META_TOOL_NAMES } from './meta-tools.mjs';
 import { repairCall } from './repair.mjs';
 import { ToolError, templateLine, templateStep } from './args.mjs';
@@ -70,9 +70,24 @@ export function createAgent({ data = { catalogJson, skillsJson, toolIndexJson, s
       if (known(fixed)) return fixed;
       return known(`system.${name}`) ? `system.${name}` : null;
     },
-    /** The runtime note for a turn: the best skill's steps, or the top tool examples. */
-    prefetch(text) {
-      const skill = search(skillIndex, text, { limit: 3, docs: skillDocs }).hits.map(h => skills.find(s => s.path === h.id))
+    /** The runtime note for a turn: the best skill's steps, or the top tool examples.
+     *  activeApp: the app active on screen (A22): an unnamed query - or one that names the
+     *  active app - gets a TIE_EPSILON boost on the active app's skills; a query naming a
+     *  rival app suppresses the boost, so the boost is a tie-breaker, never an override. */
+    prefetch(text, activeApp = null) {
+      const named = namedApps(text, apps);
+      const boostApp = activeApp && (!named.length || named.includes(activeApp)) ? activeApp : null;
+      const found = search(skillIndex, text, { limit: 8, docs: skillDocs }).hits;
+      const top = found[0]?.score ?? 0;
+      // B17 (excalidraw-08): with an app on screen the note suggests that app's skill - the
+      // tie-break boost alone cannot outrank a rival app's higher raw score (cyberchef's
+      // "pipeline" skill won an excalidraw "pipeline diagram" prompt and handed the model a
+      // cyberchef.bake step list). No match in the on-screen app falls back to every app; a
+      // query naming a rival app already suppresses the scope (boostApp null).
+      const scoped = boostApp ? found.filter(h => h.id.split('/')[0] === boostApp) : [];
+      const rows = (scoped.length ? scoped : found).map(h => ({ ...h, score: h.id.split('/')[0] === boostApp ? h.score + top * TIE_EPSILON : h.score }))
+        .sort((a, b) => b.score - a.score);
+      const skill = rows.slice(0, 3).map(h => skills.find(s => s.path === h.id))
         .find(s => s && sharesWord(text, `${s.title} ${s.keywords.join(' ')} ${s.summary}`)) ?? null;
       if (skill) return `Note: matching skill "${skill.title}" (${skill.path}). Steps (fill each <placeholder> with the user's own values):\n${skill.steps.map(st => templateStep(st.line)).join('\n')}`;
       const toolsHit = search(toolIndex, text, { limit: 3, docs: catalog.docs }).hits.map(h => tools.get(h.id)).filter(t => t && sharesWord(text, `${t.name.replace(/[._]/g, ' ')} ${t.purpose} ${t.when}`));

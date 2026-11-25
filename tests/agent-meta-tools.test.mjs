@@ -8,7 +8,7 @@ import { buildCatalog } from '../src/apps/ai-agent/runtime/catalog.mjs';
 import { parseSkills } from '../src/apps/ai-agent/runtime/skills.mjs';
 import { buildIndex, loadIndex } from '../src/apps/ai-agent/runtime/search.mjs';
 import { ToolError } from '../src/apps/ai-agent/runtime/args.mjs';
-import { createMetaTools, META_TOOL_NAMES } from '../src/apps/ai-agent/runtime/meta-tools.mjs';
+import { createMetaTools, META_TOOL_NAMES, bareApp } from '../src/apps/ai-agent/runtime/meta-tools.mjs';
 
 const appChoices = (kind) => (kind === 'apps' ? ['gridcraft', 'docs', 'files'] : []);
 const desktopPack = {
@@ -133,6 +133,72 @@ test('lookup_skill_index: nothing found gives the note', async () => {
   assert.deepEqual(await tools.lookup_skill_index.run({ query: 'zebraquantum' }), { hits: [], note: 'No skill matches. Try find_tool.' });
 });
 
+test('bareApp: only the app id or title plus filler words is bare (A15)', () => {
+  const apps = [{ id: 'gridcraft', title: 'GridCraft' }];
+  for (const q of ['gridcraft', 'GridCraft', 'gridcraft skills', 'gridcraft help', 'gridcraft tool']) assert.equal(bareApp(q, apps)?.id, 'gridcraft', q);
+  for (const q of ['budget', 'gridcraft budget', 'gridcrafts', '', 'skills']) assert.equal(bareApp(q, apps), null, q);
+});
+
+// A16: call_tool snaps a near-miss text argument to the user's own span and says so.
+const notePadTool = {
+  name: 'notepad.write', purpose: 'Write text into the note.', when: 'Use to save text.',
+  params: { input: { type: 'text', required: true, description: 'The text to write' }, code: { type: 'string', description: 'A command' } },
+  effect: 'change', examples: []
+};
+
+test('call_tool snaps a near-miss input to the user span and notes it (A16)', async () => {
+  const ran = [];
+  const t = createMetaTools(makeDeps({
+    catalog: { tools: new Map([['notepad.write', notePadTool]]), docs: [] },
+    run: async (tool, args) => { ran.push({ tool, args }); return { wrote: args.input }; }
+  }));
+  const user = 'The log line is Guvf jnf; decode it.';
+  const out = await t.call_tool.run({ tool: 'notepad.write', input: 'Gvf jnf', code: 'echo hi' }, { userText: user });
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.equal(out.note, "used your exact text 'Guvf jnf'");
+  assert.deepEqual(ran[0].args, { input: 'Guvf jnf', code: 'echo hi' }, 'the snapped span ran; the code arg is untouched');
+  const verbatim = await t.call_tool.run({ tool: 'notepad.write', input: 'Guvf jnf' }, { userText: user });
+  assert.ok(!verbatim.note, 'verbatim needs no note');
+  const noCtx = await t.call_tool.run({ tool: 'notepad.write', input: 'Gvf jnf' }, {});
+  assert.equal(noCtx.ok, true);
+  assert.ok(!noCtx.note, 'without the user message nothing snaps');
+});
+
+test('skill read paths show step values as placeholders only (M6: small models copy verbatim)', async () => {
+  // The fill-totals steps carry literal values (start=A11, range=A1:A10) in the pack text; every
+  // path that shows a skill line to the model must template them (off arm 2026-11-25: cyberchef-01
+  // saw templated steps through read_skill - the runtime guarantee this pins).
+  const read = await tools.read_skill.run({ path: 'gridcraft/fill-totals' });
+  assert.ok(!/A11|A1:A10/.test(read.text), read.text);
+  assert.ok(read.text.includes('start=<start>'), read.text);
+  assert.ok(read.text.includes('range=<range>'), read.text);
+  const found = await tools.find_in_skill.run({ path: 'gridcraft/fill-totals', query: 'A11' });
+  assert.ok(found.hits.length > 0, JSON.stringify(found));
+  assert.ok(!found.hits.some(hit => /A11/.test(hit.line)), JSON.stringify(found.hits));
+});
+
+test('a bare app-name query lists the app skills and tools instead of searching (A15)', async () => {
+  // lfm3-1.7b searched "gridcraft" and the search never surfaced the budget skill: the app id
+  // matches no skill field, so the listing is the task-shaped picks.
+  const budget = parseSkills(['## Build a budget with formula columns', 'slug: build-a-budget-with-formula-columns', 'summary: Build a budget sheet whose totals are formula columns.', 'keywords: budget, formula, columns, plan', 'tools: gridcraft.set_cells, gridcraft.inspect', '', 'When: the user wants a budget sheet with live totals.', 'Steps:', '1. call_tool tool=gridcraft.set_cells start=A1 values=Income\\n100', 'Check: the total column is a formula, not a number.'].join('\n'), 'gridcraft').skills[0];
+  const all = [...skills, budget];
+  const docs = all.map(s => ({ id: s.path, title: s.title, keywords: s.keywords, summary: s.summary, body: s.body }));
+  const t = createMetaTools(makeDeps({
+    skills: all, skillDocs: docs,
+    skillIndex: loadIndex(buildIndex(docs, { store: ['title', 'summary'] }), { store: ['title', 'summary'] }),
+    apps: [{ id: 'gridcraft', title: 'GridCraft' }, { id: 'files', title: 'Files' }]
+  }));
+  const list = await t.lookup_skill_index.run({ query: 'gridcraft' });
+  assert.deepEqual(list.hits.map(h => h.path), ['gridcraft/chart-from-range', 'gridcraft/fill-totals', 'gridcraft/export-sheet', 'gridcraft/build-a-budget-with-formula-columns']);
+  for (const hit of list.hits) assert.deepEqual(Object.keys(hit).sort(), ['path', 'title'], 'compact rows, no summary');
+  assert.match(list.note, /read_skill/);
+  const normal = await t.lookup_skill_index.run({ query: 'budget' });
+  assert.equal(normal.hits[0].path, 'gridcraft/build-a-budget-with-formula-columns', 'a task query still ranks by search');
+  const toolList = await t.find_tool.run({ query: 'gridcraft' });
+  assert.deepEqual(toolList.hits.map(h => h.tool), ['gridcraft.set_cells', 'gridcraft.select', 'gridcraft.insert_chart', 'gridcraft.inspect', 'gridcraft.export']);
+  assert.ok(toolList.hits.every(h => h.does), 'each tool carries its purpose');
+});
+
 test('read_skill: the full render carries every section', async () => {
   const result = await tools.read_skill.run({ path: 'gridcraft/chart-from-range' });
   assert.equal(result.path, 'gridcraft/chart-from-range');
@@ -195,6 +261,45 @@ test('find_in_skill: an unknown path errors like read_skill', async () => {
   const result = await tools.find_in_skill.run({ path: 'gridcraft/nope', query: 'chart' });
   assert.equal(result.ok, false);
   assert.equal(result.error.type, 'unknown_skill');
+});
+
+// B17 (cyberchef-09): the model searched tool names (files.read, desktop.open_app) inside the
+// skill index ten times and found nothing. A dotted query redirects to the tool index instead.
+test('find_in_skill: a dotted tool-name query redirects to the tool index, with the purpose when the tool is known', async () => {
+  const known = await tools.find_in_skill.run({ path: 'gridcraft', query: 'desktop.open_app' });
+  assert.deepEqual(known.hits, []);
+  assert.match(known.note, /"desktop.open_app" is a tool, not skill text: Open an app window\./);
+  assert.match(known.note, /describe_tool tool=desktop\.open_app/);
+  assert.match(known.note, /call_tool tool=desktop\.open_app to run it/);
+  const unknown = await tools.find_in_skill.run({ path: 'gridcraft', query: 'files.read' });
+  assert.deepEqual(unknown.hits, []);
+  assert.match(unknown.note, /"files.read" looks like a tool name, not skill text - find_tool query=files\.read/);
+  // A non-dotted query is unaffected: skill text matching still runs.
+  const plain = await tools.find_in_skill.run({ path: 'gridcraft/chart-from-range', query: 'header row' });
+  assert.ok(plain.hits.length > 0, 'plain queries still search the skill');
+});
+
+// lfm3-1.7b loops on the bare app name as the skill path (J2 effectcraft 0/12, figcraft 3/6):
+// the app is not a skill, but its skills are what the model wants.
+test('find_in_skill: a bare app name ranks that app skills by the query instead of erroring', async () => {
+  const result = await tools.find_in_skill.run({ path: 'gridcraft', query: 'chart' });
+  assert.ok(Array.isArray(result.hits) && result.hits.length > 0, JSON.stringify(result));
+  assert.ok(result.hits.every(hit => hit.path.startsWith('gridcraft/')));
+  assert.equal(result.hits[0].path, 'gridcraft/chart-from-range');
+  assert.match(result.note, /app, not a skill/);
+});
+
+test('find_in_skill: a bare app name with a query matching nothing still lists the app skills', async () => {
+  const result = await tools.find_in_skill.run({ path: 'desktop', query: 'zzz' });
+  assert.deepEqual(result.hits.map(hit => hit.path), ['desktop/close-app', 'desktop/open-app']);
+});
+
+test('read_skill: a bare app name lists the app skills in the error', async () => {
+  const result = await tools.read_skill.run({ path: 'gridcraft' });
+  assert.equal(result.ok, false);
+  assert.equal(result.error.type, 'unknown_skill');
+  assert.match(result.error.message, /chart-from-range/);
+  assert.match(result.error.fix, /^read_skill path=gridcraft\//);
 });
 
 test('find_in_skill: at most five lines are returned', async () => {

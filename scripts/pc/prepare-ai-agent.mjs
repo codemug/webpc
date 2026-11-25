@@ -54,7 +54,7 @@ try {
   for (const name of ['store.mjs','picker.mjs']) await copyFile(join(root, 'src/scripts/pc/files', name), join(stage, name));
   // Agent runtime: meta tools, catalog, skills, search indexes and every enabled pack, bundled to the
   // same relative path session.js and app.js import (runtime/index.mjs), so source and served layouts match.
-  for (const entry of ['index.mjs', 'files-ctx.mjs', 'scheduler.mjs']) await build({ entryPoints: [join(source, 'runtime', entry)], bundle: true, format: 'esm', platform: 'browser', target: 'es2022', outfile: join(stage, 'runtime', entry), logLevel: 'silent', legalComments: 'inline' });
+  for (const entry of ['index.mjs', 'args.mjs', 'files-ctx.mjs', 'scheduler.mjs']) await build({ entryPoints: [join(source, 'runtime', entry)], bundle: true, format: 'esm', platform: 'browser', target: 'es2022', outfile: join(stage, 'runtime', entry), logLevel: 'silent', legalComments: 'inline' });
   let sdkBundleSha256;
   { // Anthropic SDK browser bundle from the pinned npm package (deterministic: pinned esbuild + pinned package).
     const sdk = JSON.parse(await readFile(join(root, 'node_modules/@anthropic-ai/sdk/package.json'), 'utf8'));

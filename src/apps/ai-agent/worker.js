@@ -23,8 +23,11 @@ async function loadWasm() {
   for (const part of parts) { joined.set(part, offset); offset += part.length; }
   env.backends.onnx.wasm.wasmBinary = joined.buffer;
 }
-// 1024: a full 26-app list needs about 500 tokens; tool-call rounds stay far shorter.
-const MAX_NEW_TOKENS = 1024;
+// 2048: a full 26-app list needs about 500 tokens; most tool-call rounds stay far shorter, but a
+// big single call (gridcraft set_cells with a whole table, sweep b17 gridcraft-01: the round cut
+// at 1024 mid-call and the whole reply was unreadable tool syntax - "no visible answer") needs
+// the extra room. Capped rounds still bound on the 240 s run timer and the 28-round limit.
+const MAX_NEW_TOKENS = 2048;
 // Long prompts are prefilled in chunks: one pass over the whole prompt makes an attention buffer of about
 // prompt² × 32 bytes, and ONNX Runtime WebGPU overflows ("SafeIntOnOverflow") once that passes 4 GiB
 // (~11.6k tokens on LFM3). A chunk's buffer is only chunk × context × 32 bytes, so the chunk shrinks as the
@@ -179,6 +182,18 @@ async function generate({ id, messages, tools }) {
   stopper.reset();
   const inputs = renderPrompt(messages, tools);
   const ids = Array.from(inputs.input_ids.data);
+  // T16 (sweep b17, ~2/130 runs): a turn's first round can hang before the first token - a
+  // WebGPU prefill that never returns. The 240 s turn timer then expires with an empty answer
+  // and an empty trace. The watchdog turns the stall into a visible error 60 s in; the first
+  // token clears it. A late done or tokens for the already-errored id are dropped by the
+  // client (pending map); if the GPU stays wedged the worker's queue stalls behind it, which
+  // a page reload (or the eval runner's next page) clears.
+  const stall = setTimeout(() => postMessage({ type: 'error', id, message: 'the model stalled before its first token (no token in 60 s; the GPU may be wedged - reload the page)' }), 60000);
+  const streamer = new TextStreamer(tokenizer, {
+    skip_prompt: true,
+    skip_special_tokens: true,
+    callback_function: (text) => { clearTimeout(stall); postMessage({ type: 'token', id, text }); },
+  });
   let pkv;
   try {
     pkv = await prefill(ids);
@@ -186,11 +201,6 @@ async function generate({ id, messages, tools }) {
     await dropCache();
     throw err;
   }
-  const streamer = new TextStreamer(tokenizer, {
-    skip_prompt: true,
-    skip_special_tokens: true,
-    callback_function: (text) => postMessage({ type: "token", id, text }),
-  });
   // Rides along in model_inputs on every decoding step; 1 = logits for the last token only.
   const extra = needsLogitsToKeep() ? { logits_to_keep: new Tensor("int64", [1n], [1]) } : {};
   let output;
@@ -213,6 +223,7 @@ async function generate({ id, messages, tools }) {
   cached = { ids: Array.from(sequences.data).slice(0, past_key_values.get_seq_length()), pkv: past_key_values };
   const [text] = tokenizer.batch_decode(sequences.slice(null, [ids.length, null]), { skip_special_tokens: true });
   // Stop also ends a generation early; only reaching the token cap marks a cut-off answer.
+  clearTimeout(stall);
   postMessage({ type: "done", id, text, ...(sequences.dims[1] - ids.length >= MAX_NEW_TOKENS && { truncated: true }) });
 }
 

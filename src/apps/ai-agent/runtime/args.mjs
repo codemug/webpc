@@ -3,7 +3,7 @@
 // to the declared types, and every error carries a corrected callLine to copy.
 
 const TYPES = ['string', 'text', 'integer', 'number', 'boolean', 'enum', 'list', 'table', 'path'];
-const SPEC_FIELDS = ['type', 'required', 'description', 'values', 'default', 'min', 'max'];
+const SPEC_FIELDS = ['type', 'required', 'description', 'values', 'default', 'min', 'max', 'flat'];
 // Control characters (including newlines) and bidi-embedding characters that
 // a Files path must not contain.
 const BAD_CHARS = /[\u0000-\u001F\u007F\u00AD\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/;
@@ -78,6 +78,54 @@ export function templateStep(line) {
   return text.slice(0, call.index) + templateLine(call[1], keys);
 }
 
+// A16 (2026-11-25): small models paraphrase user content ("Guvf jnf" -> "Gvf jnf"). A text
+// argument that carries the user's own content (input, text - never code, path, id) and is a
+// near miss of a span of the user's message snaps back to that exact span. Case-sensitive on
+// purpose: an uppercased or encoded form is far, not near, and never snaps.
+const SNAP_PARAMS = new Set(['input', 'text']);
+const SNAP_MIN = 5, SNAP_MAX = 80, SNAP_EDIT_MAX = 2;
+
+/** Levenshtein distance with an early exit: never reports more than max + 1. */
+function edWithin(a, b, max) {
+  if (a === b) return 0;
+  const n = a.length, m = b.length;
+  if (Math.abs(n - m) > max) return max + 1;
+  let prev = Array.from({ length: m + 1 }, (_, j) => j);
+  for (let i = 1; i <= n; i++) {
+    const cur = [i];
+    let rowMin = i;
+    for (let j = 1; j <= m; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (cur[j] < rowMin) rowMin = cur[j];
+    }
+    if (rowMin > max) return max + 1;
+    prev = cur;
+  }
+  return prev[m];
+}
+
+/** The user-message span a near-miss argument snaps to, or null: null when the param is not
+ *  user content, the value already is the user's text (verbatim), or no span is within
+ *  min(2, 15% of the span length) edits. */
+export function snapToUserText(userText, name, value) {
+  if (!SNAP_PARAMS.has(name)) return null;
+  const v = typeof value === 'string' ? value : '';
+  const u = typeof userText === 'string' ? userText : '';
+  if (v.length < SNAP_MIN || v.length > SNAP_MAX || u.length < v.length) return null;
+  if (u.includes(v)) return null; // verbatim: it already is the user's own text
+  let best = null;
+  for (let len = Math.max(SNAP_MIN, v.length - SNAP_EDIT_MAX); len <= Math.min(u.length, v.length + SNAP_EDIT_MAX); len++) {
+    const allowed = Math.min(SNAP_EDIT_MAX, 0.15 * len);
+    for (let i = 0; i + len <= u.length; i++) {
+      const span = u.slice(i, i + len);
+      const d = edWithin(span, v, SNAP_EDIT_MAX);
+      // Tie on distance: the longer span quotes more of the user's own text ('Guvf jnf' beats 'uvf jnf').
+      if (d <= allowed && (!best || d < best.d || (d === best.d && span.length > best.span.length))) best = { d, span };
+    }
+  }
+  return best ? best.span : null;
+}
+
 // Values in a call line stay on one line: newlines and tabs are escaped like skills.md step lines.
 function lineValue(value) {
   if (value != null && typeof value === 'object') return JSON.stringify(value);
@@ -132,7 +180,7 @@ function splitRow(line, separator) {
   return cells.map(cell => { const text = cell.trim(); return text.length >= 2 && text.startsWith('"') && text.endsWith('"') ? text.slice(1, -1) : text; });
 }
 
-function coerce(spec, value, values, aliases) {
+function coerce(spec, value, values, aliases, key = 'value') {
   switch (spec.type) {
     case 'string': // single line: inner whitespace runs collapse to one space
       return typeof value === 'string' ? { ok: true, value: unquote(value).replace(/\s+/g, ' ') } : { ok: false };
@@ -188,6 +236,19 @@ function coerce(spec, value, values, aliases) {
       const source = typeof value === 'string' ? (jsonArray(unquote(value)) ?? value) : value;
       let rows;
       if (Array.isArray(source)) {
+        // A flat list of several scalars is ambiguous: one row or a column of one-cell
+        // rows, and the engine writes it silently either way. Specs with `flat: false`
+        // refuse it and show both forms with the given values (gridcraft.set_cells,
+        // 2026-11-25 A/B: lfm3 sent the budget header row flat and it wrote one column).
+        if (spec.flat === false && source.length > 1 && source.every(cell => cell != null && (typeof cell === 'string' || typeof cell === 'number' || typeof cell === 'boolean'))) {
+          // A27 (build 18, from WAB's gridcraft-12): the refusal carries a copyable rows-form fix
+          // line built from the given values - lfm3 retried the identical flat list three times
+          // when the error only showed both JSON forms. callLine renders the flat list as the
+          // rows-form call line (grid=Date, Income), which the table coercion parses as one row;
+          // shortcut: a cell containing a comma would re-parse ambiguously - the message's
+          // nested JSON form is the unambiguous copy for that case.
+          return { ok: false, message: `a flat list of ${source.length} values is ambiguous: ${key}=${JSON.stringify([source])} writes a row; ${key}=${JSON.stringify(source.map(cell => [cell]))} writes a column`, fixRows: source };
+        }
         rows = [];
         for (const row of source) {
           if (typeof row === 'string') rows.push(splitRow(row.trim(), row.includes('\t') ? '\t' : ','));
@@ -197,6 +258,16 @@ function coerce(spec, value, values, aliases) {
           } else return { ok: false };
         }
       } else if (typeof source === 'string') {
+        // A29 (build 20, from gridcraft-05): a single-line comma string is ambiguous in exactly
+        // the same way as a flat list - the model re-sent the refused flat list as one CSV
+        // string and it was accepted as one row of six cells (silent wrong success). Strings
+        // with newlines keep the string form: one row per line, cells by comma/tab.
+        if (spec.flat === false && !source.includes('\n')) {
+          const cells = splitRow(source.trim(), source.includes('\t') ? '\t' : ',');
+          if (cells.length > 1) {
+            return { ok: false, message: `a single-line comma string is ambiguous: ${key}=${JSON.stringify([cells])} writes a row; ${key}=${JSON.stringify(cells.map(cell => [cell]))} writes a column`, fixRows: cells };
+          }
+        }
         rows = source.split('\n').map(line => line.trim()).filter(line => line !== '').map(line => splitRow(line, line.includes('\t') ? '\t' : ','));
       } else return { ok: false };
       return { ok: true, value: rows };
@@ -215,7 +286,7 @@ function coerce(spec, value, values, aliases) {
 }
 
 /** One corrected callLine from the tool's first example, with the bad value replaced. */
-function fixLine(tool, param, replacement) {
+function fixLine(tool, param, replacement, liveApp) {
   const example = tool?.examples?.[0]?.args ?? {};
   // A path in a fix line is always a placeholder: the model copies fix lines, and an example
   // path ("/PDFCraft/contract.pdf") sent it to a file that does not exist (eval M6, B16).
@@ -223,8 +294,15 @@ function fixLine(tool, param, replacement) {
   const args = Object.fromEntries(Object.entries(example).map(([key, value]) => [key, isPath(key) ? `<${key}>` : value]));
   if (param) {
     const spec = tool.params?.[param];
+    // B17: a live app/window enum never shows a fixed example app - a small model copies fix
+    // lines verbatim, and desktop.open_app's example (gridcraft) opened the wrong app (09).
+    // The context app wins; with none, the placeholder, which the guard refuses cleanly.
+    const isLiveEnum = spec?.type === 'enum' && ['apps', 'windows'].includes(spec?.values);
     const placeholder = spec?.type === 'enum' ? (enumValues(spec, () => []))[0] ?? '' : spec?.type === 'boolean' ? 'true' : spec && ['integer', 'number'].includes(spec.type) ? (spec.min ?? 0) : spec?.type === 'path' ? '/' : spec && ['list', 'table'].includes(spec.type) ? 'a' : '';
-    args[param] = replacement !== undefined ? replacement : isPath(param) ? `<${param}>` : example[param] ?? placeholder;
+    // A29: for a flat:false table the copyable retry must be the JSON rows form - a single-line
+    // CSV string is refused by the table coercion as ambiguous (it is the flat list's twin).
+    const isStrictTable = spec?.type === 'table' && spec.flat === false;
+    args[param] = replacement !== undefined ? (isStrictTable && Array.isArray(replacement) ? JSON.stringify([replacement]) : replacement) : isPath(param) ? `<${param}>` : isLiveEnum ? (liveApp ?? `<${param}>`) : example[param] ?? placeholder;
   }
   return callLine(tool.name, args);
 }
@@ -241,13 +319,19 @@ function expected(spec, values) {
 // 2026-11-24: `query=uname -a`, then `arg=lang=sh code=uname -a`, for terminal.run). Pure; the
 // raw object comes back unchanged when no rule applies.
 // 1. An unknown key whose string value spells the tool's own key=value pairs is split into them
-//    (the last value runs to the end, so `code=uname -a` keeps its spaces).
+//    (the last value runs to the end, so `code=uname -a` keeps its spaces). `key: value` colons
+//    count as separators too (lfm3-1.7b sent tool_param="new: true", J2 effectcraft 0/12).
 // 2. Then, if exactly one unknown key is left and exactly one required string or text parameter
 //    is missing, the value moves to that parameter.
 const escapeRe = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 function ownPairs(text, names) {
   if (!names.length) return null;
-  const marks = [...text.matchAll(new RegExp(`(?:^|\\s)(${names.map(escapeRe).join('|')})=`, 'g'))];
+  // Pairs also separate on a comma or semicolon (lfm3-1.7b sweep b17 cyberchef-01/02 sent
+  // tool_param "recipe=SHA256,input=4865"; the comma form used to swallow the second pair
+  // into the first value - "unknown operation(s) input=4865..."). A multi-op recipe like
+  // "From_Hex,To_Upper_case,To_Base64" keeps its commas: only a declared param name splits.
+  // The boundary eats the whole separator run, so ", input=" leaves no trailing comma.
+  const marks = [...text.matchAll(new RegExp(`(?:^|[\\s,;]+)(${names.map(escapeRe).join('|')})[:=]`, 'g'))];
   if (!marks.length || text.slice(0, marks[0].index).trim()) return null;
   const out = {};
   marks.forEach((mark, i) => {
@@ -265,18 +349,104 @@ function ownObject(value) {
   if (obj == null || typeof obj !== 'object' || Array.isArray(obj)) return null;
   return Object.keys(obj).length ? obj : null;
 }
+/** A loose single-line object the small models type instead of JSON (cadcraft-06: "{handles:
+ *  line, from: [0, 0]}"; filmcraft-03: "{ item: beach-sunset.jpg, track: V1, seconds: 0 }"):
+ *  unquoted keys and values, top-level "key: value" pairs, top-level commas only (an [x,y]
+ *  list keeps its own). Null when the text is not a loose object. */
+export function looseObject(text) {
+  const source = String(text ?? '').trim();
+  if (!source.startsWith('{') || !source.endsWith('}') || source.includes('\n')) return null;
+  const out = {};
+  let depth = 0, pair = '';
+  for (const ch of source.slice(1, -1)) {
+    if (ch === '[') depth += 1;
+    else if (ch === ']') depth -= 1;
+    if (ch === ',' && depth === 0) { addLoosePair(out, pair); pair = ''; continue; }
+    pair += ch;
+  }
+  addLoosePair(out, pair);
+  return Object.keys(out).length ? out : null;
+}
+// One "key: value" pair of a loose object, in place; a pair without a colon is skipped.
+function addLoosePair(out, pair) {
+  const sep = pair.indexOf(':');
+  if (sep <= 0) return;
+  out[pair.slice(0, sep).trim().replace(/^['"]|['"]$/g, '')] = looseValue(pair.slice(sep + 1));
+}
+// A param value of a loose object or key=value line: an [a,b] point or list, true/false, a
+// number, or the string itself.
+export const looseValue = raw => {
+  const value = String(raw).trim();
+  if (/^(true|false)$/i.test(value)) return value.toLowerCase() === 'true';
+  if (/^-?\d+(\.\d+)?$/.test(value)) return Number(value);
+  if (value.startsWith('[') && value.endsWith(']')) {
+    const parts = value.slice(1, -1).split(',').map(part => part.trim()).filter(part => part !== '');
+    const nums = parts.map(Number);
+    if (parts.length && nums.every(n => !Number.isNaN(n))) return nums;
+  }
+  return value;
+};
 
 export function repairArgs(tool, raw) {
   const params = tool?.params ?? {};
   if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return raw;
   const names = Object.keys(params);
   let args = { ...raw };
+  for (const key of Object.keys(args)) {
+    // The model wraps the whole call in a parameter the tool already declares (the run_command
+    // family declares params=): params="{\"command\": ..., \"params\": {...}}" (lfm3-1.7b, J2
+    // cadcraft 0/2, effectcraft 0/12). Unwrap only when the object carries a missing required
+    // param, so a legitimate params={"center": ...} next to a present command= is never touched.
+    if (!params[key]) continue;
+    const inner = ownObject(args[key]);
+    if (!inner) continue;
+    const lacking = names.filter(name => params[name].required && (args[name] == null || args[name] === ''));
+    if (!lacking.length || !Object.keys(inner).some(name => lacking.includes(name))) continue;
+    const { [key]: _spent, ...rest } = args;
+    const merged = { ...rest };
+    for (const [innerKey, value] of Object.entries(inner)) {
+      const slot = params[innerKey];
+      merged[innerKey] = (slot?.type === 'text' || slot?.type === 'string') && value !== null && typeof value === 'object' ? JSON.stringify(value) : value;
+    }
+    args = merged;
+  }
   for (const key of Object.keys(args).filter(k => !params[k])) {
     // lfm3-1.7b wrapped its args as params="{\"text\": \"line 0,0 10,0\"}" (journey cadcraft-01).
-    const pairs = ownObject(args[key]) ?? (typeof args[key] === 'string' ? ownPairs(args[key], names) : null);
+    // A25: the same wrap as a LOOSE object (unquoted keys, filmcraft-03: args="{ item: beach-
+    // sunset.jpg, track: V1, seconds: 0 }") - unwrap it here; left to the rule below it would
+    // hand the whole blob to the one required param and loop on "item <blob> not in the project".
+    const value = args[key];
+    const pairs = ownObject(value) ?? (typeof value === 'string' ? looseObject(value) ?? ownPairs(value, names) : null);
     if (!pairs) continue;
     const { [key]: _spent, ...rest } = args;
     args = { ...pairs, ...rest };
+  }
+  // lfm3-1.7b passed the owning app as an argument (files.list app=files, carried over from
+  // find_tool's own app parameter): it is redundant, so an unknown app key spelling the
+  // tool's own app prefix is dropped instead of costing rounds on unknown_argument.
+  const appPrefix = String(tool?.name ?? '').split('.')[0];
+  if (appPrefix && args.app != null && !params.app && String(args.app).toLowerCase() === appPrefix) delete args.app;
+  // lfm3-1.7b sent the run_command tools' params as a JSON object, {"cell": "B2", "input":
+  // "Hello"} (gridcraft-08). A parameter named params that is text or string, given an object
+  // or its JSON text, becomes key=value lines; the object's shape is the call, not content.
+  for (const [key, spec] of Object.entries(params)) {
+    if (key !== 'params' || !['text', 'string'].includes(spec.type)) continue;
+    const obj = ownObject(args[key]);
+    if (obj) args[key] = Object.entries(obj).map(([name, value]) => `${name}=${typeof value === 'object' && value !== null ? JSON.stringify(value) : value}`).join('\n');
+  }
+  // lfm3-1.7b spelled the command id inside the params text, "command=cell.set cell=A2
+  // input=100" (gridcraft-09). A missing required string parameter spelled as the first pair
+  // of a given string parameter moves out.
+  for (const name of names) {
+    if (!params[name].required || params[name].type !== 'string' || (args[name] != null && args[name] !== '')) continue;
+    for (const key of Object.keys(args)) {
+      if (key === name || typeof args[key] !== 'string') continue;
+      const match = new RegExp(`^\\s*${name}=(?:"([^"]*)"|(\\S+))`).exec(args[key]);
+      if (!match) continue;
+      args[name] = match[1] ?? match[2];
+      args[key] = args[key].slice(match[0].length).trim();
+      break;
+    }
   }
   const unknown = Object.keys(args).filter(k => !params[k]);
   const missing = names.filter(k => params[k].required && (args[k] == null || args[k] === ''));
@@ -300,8 +470,12 @@ function isPlaceholder(text, key, spec) {
  * tool: { name, params }. choices: (name) => string[] for live enums ('apps', 'windows').
  * aliases: { [enumValueLower]: canonical } extra matches, e.g. { 'grid craft': 'gridcraft', 'dark mode': 'dark' }.
  */
-export function checkArgs(tool, raw, { choices = () => [], aliases = {} } = {}) {
+export function checkArgs(tool, raw, { choices = () => [], aliases = {}, liveApp = null } = {}) {
   const params = tool?.params ?? {};
+  // Zero-parameter tools ignore whatever the model sends (vectorcraft undo/redo, j3 b14: the
+  // model wrapped every call in an args= blob and "has no parameter args; it takes: " dead-ended
+  // the journey). There is nothing to validate, so there is nothing to refuse.
+  if (Object.keys(params).length === 0) return { ok: true, args: {} };
   const given = raw != null && typeof raw === 'object' && !Array.isArray(raw) ? repairArgs(tool, raw) : {};
   const args = {};
   const absent = key => given[key] == null || (typeof given[key] === 'string' && unquote(given[key]) === '');
@@ -314,15 +488,18 @@ export function checkArgs(tool, raw, { choices = () => [], aliases = {} } = {}) 
     if (typeof value === 'string' && isPlaceholder(unquote(value), key, spec) && spec.default !== undefined) { args[key] = spec.default; continue; }
     if (typeof value === 'string' && isPlaceholder(unquote(value), key, spec)) return { ok: false, error: { type: 'placeholder', message: `${key}=<${key}> is a placeholder: put the user's own ${key} there (${spec.description ?? spec.type}).`, fix: '' } };
     const values = spec.type === 'enum' ? enumValues(spec, choices) : [];
-    const out = coerce(spec, value, values, aliases);
+    const out = coerce(spec, value, values, aliases, key);
     if (!out.ok) {
+      // A coerce failure can carry its own teaching message (the flat table refusal); it
+      // wins over the generic "must be a table" line.
+      if (out.message) return { ok: false, error: { type: 'invalid_argument', message: `${key}: ${out.message}`, fix: out.fix ?? (out.fixRows ? fixLine(tool, key, out.fixRows) : '') } };
       const message = out.bounds ? `${key} must be ${out.article} ${out.bounds.join(' and ')}; got "${display(value)}"` : `${key} must be ${expected(spec, values)}; got "${display(value)}"${out.closest ? `; did you mean ${out.closest}?` : ''}`;
       return { ok: false, error: { type: 'invalid_argument', message, fix: fixLine(tool, key, out.closest) } };
     }
     args[key] = out.value;
   }
   for (const [key, spec] of Object.entries(params)) {
-    if (spec.required && absent(key)) return { ok: false, error: { type: 'missing_argument', message: `${tool.name} needs ${key} (${spec.description})`, fix: fixLine(tool, key) } };
+    if (spec.required && absent(key)) return { ok: false, error: { type: 'missing_argument', message: `${tool.name} needs ${key} (${spec.description})`, fix: fixLine(tool, key, undefined, liveApp) } };
   }
   for (const [key, spec] of Object.entries(params)) if (absent(key) && spec.default !== undefined) args[key] = spec.default;
   return { ok: true, args };
