@@ -13,7 +13,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { setupApp } from './common.mjs';
-import { validateExecRequest, planExec, execReply, handleExecChannelMessage, execGate, formatAgentRun, redrawAbovePrompt } from './terminal-exec.mjs';
+import { validateExecRequest, planExec, execReply, handleExecChannelMessage, execGate, formatAgentRun, redrawAbovePrompt, isAgentProbeRun } from './terminal-exec.mjs';
 
 const $ = selector => document.querySelector(selector);
 const base = new URL('/pc/vendor/unkernel/', location.href).href;
@@ -322,6 +322,7 @@ function handleExecRequest(data) {
 // keystroke, so its line buffer is untouched and the next keypress reflows the prompt
 // normally (single-row prompt lines are the case that must stay exact).
 function showAgentRun({ from, lang, code, exitCode, output, truncated, durationMs, reason }) {
+  if (isAgentProbeRun({ lang, code })) return; // the readiness probe is hidden from the xterm
   const buffer = term.buffer?.active;
   if (!buffer) return; // xterm not open yet: the status line already said how the run ended
   const row = buffer.getLine(buffer.baseY + buffer.cursorY);

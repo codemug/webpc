@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateExecRequest, planExec, execReply, base64Encode, handleExecChannelMessage, execGate, formatAgentRun, redrawAbovePrompt, MAX_OUTPUT, MAX_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, EXEC_ARG_LIMIT } from '../src/scripts/pc/apps/terminal-exec.mjs';
+import { validateExecRequest, planExec, execReply, base64Encode, handleExecChannelMessage, execGate, formatAgentRun, redrawAbovePrompt, isAgentProbeRun, MAX_OUTPUT, MAX_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, EXEC_ARG_LIMIT } from '../src/scripts/pc/apps/terminal-exec.mjs';
 
 const req = { type: 'exec-request', id: 'r1', from: 'WebPC Agent', lang: 'sh', code: 'echo hi', timeoutMs: DEFAULT_TIMEOUT_MS };
 
@@ -147,6 +147,17 @@ test('formatAgentRun: the footer names the ending - exit with ms, timed out, can
   assert.equal(foot({ reason: 'timeout' }), '\x1b[2m[timed out]\x1b[0m');
   assert.equal(foot({ reason: 'cancelled' }), '\x1b[2m[cancelled]\x1b[0m');
   assert.equal(foot({ reason: 'the guest pty was lost' }), '\x1b[2m[error: the guest pty was lost]\x1b[0m');
+});
+
+test('isAgentProbeRun: the readiness sentinel is hidden from the xterm, real commands are not', () => {
+  assert.equal(isAgentProbeRun({ lang: 'sh', code: 'echo wcpc-ready-abc123' }), true);
+  assert.equal(isAgentProbeRun({ lang: 'sh', code: 'echo wcpc-ready-z9' }), true, 'the token is 1-8 base36 chars');
+  assert.equal(isAgentProbeRun({ lang: 'sh', code: 'echo wcpc-ready-' }), false, 'no token is not a probe');
+  assert.equal(isAgentProbeRun({ lang: 'sh', code: 'echo wcpc-ready-abc extra' }), false, 'the probe is the single echo line');
+  assert.equal(isAgentProbeRun({ lang: 'sh', code: 'echo wcpc-ready-abc; ls' }), false, 'anything after the token is not a probe');
+  assert.equal(isAgentProbeRun({ lang: 'python', code: 'echo wcpc-ready-abc' }), false, 'only sh probes run');
+  assert.equal(isAgentProbeRun({ lang: 'sh', code: 'echo wcpc-ready-ABC' }), false, 'the token is lowercase base36');
+  assert.equal(isAgentProbeRun({ lang: 'sh', code: 'echo hi' }), false, 'a normal echo is not a probe');
 });
 
 test('redrawAbovePrompt: erases the prompt line, the block above it, the row restored, the cursor back at its column; every break is \\r\\n', () => {
