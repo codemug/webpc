@@ -79,6 +79,9 @@ export const tools = [
     name: 'packets.filter',
     purpose: 'Apply a display filter, e.g. tcp.port == 443.',
     when: 'Use when the user wants to see only certain packets.',
+    // A4: protocol names are the filter's inner vocabulary (find_tool "icmp" found nothing -
+    // the names live in display filters, not the tool text).
+    keywords: ['tcp', 'icmp', 'udp', 'arp', 'dns', 'http', 'https', 'ssh', 'smtp', 'tls'],
     params: { expr: { type: 'string', description: 'The display filter expression; empty or omitted clears the filter' } },
     effect: 'change',
     needs: NEEDS,

@@ -39,7 +39,8 @@ const parseValue = raw => {
 // key=value lines -> object (the generic long-tail form for params and props).
 const parseParams = text => {
   const out = {};
-  for (const line of String(text ?? '').split('\n')) {
+  // A literal backslash-n counts as a line break too: small models often write \n in the text.
+  for (const line of String(text ?? '').split(/\n|\\n/)) {
     const row = line.trim();
     if (!row) continue;
     const eq = row.indexOf('=');
@@ -94,7 +95,7 @@ export const tools = [
     effect: 'change',
     effectFor: args => (DESTRUCTIVE.some(prefix => String(args.command ?? '').startsWith(prefix)) ? 'destructive' : 'change'),
     needs: NEEDS,
-    examples: [{ args: { command: 'align.left', params: 'ids=3, 4' }, says: 'Left-align the selected layers' }],
+    examples: [{ args: { command: 'align.left', params: 'ids=3,4' }, says: 'Left-align the selected layers' }],
     // tools.rs:627-637 engine.execute; unknown ids get invalid_argument with the 3 closest
     run: async (args, ctx) => {
       const app = teachApp(await ctx.craft(APP), NO_DOC.message, NO_DOC.fix);

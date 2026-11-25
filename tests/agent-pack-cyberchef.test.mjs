@@ -33,6 +33,10 @@ const OPS = {
   'From Hex': { module: 'Encodings', description: 'Decode Hex-encoded text.', args: [{ name: 'Delimiter', type: 'option', value: ['None', 'Space'] }] },
   'To Upper case': { module: 'Utils', description: 'Convert text to UPPER CASE.', args: [{ name: 'Scope', type: 'option', value: ['All', 'Word', 'Sentence', 'Paragraph'] }] },
   'MD5': { module: 'Hashing', description: 'Compute an MD5 <a href="#">hash</a>.', args: [{ name: 'Output format', type: 'option', value: ['Hex', 'Base64'] }, { name: 'Endianness', type: 'option', value: ['Big', 'Little'] }] },
+  // v11.5.0's ROT13 is a general rotate with an Amount arg (default 13) - the per-op-arg tests
+  // and the cyberchef-08 Caesar-shift journey both drive it this way.
+  'ROT13': { module: 'Default', description: 'Rotates alphabet characters by the given amount.', args: [{ name: 'Rotate lower case chars', type: 'boolean', value: true }, { name: 'Rotate upper case chars', type: 'boolean', value: true }, { name: 'Rotate numbers', type: 'boolean', value: false }, { name: 'Amount', type: 'number', value: 13 }] },
+  'URL Decode': { module: 'URL', description: 'Converts URI/URL percent-encoded characters back.', args: [] },
   // The SHA2 arg layout the vendored v11.5.0 definition carries: Size (argSelector) first, then
   // two Rounds number args - the second applies to the smaller sizes. The alias test asserts
   // against this shape, so a layout change upstream surfaces as a failing test.
@@ -145,6 +149,63 @@ test('cyberchef.bake maps the other hash alias spellings onto SHA2 with the matc
   }
 });
 
+test('cyberchef.bake matches operation names case- and separator-insensitively', async () => {
+  const chef = fakeChef();
+  for (const [recipe, op] of [['rot13', 'ROT13'], ['to_base64', 'To Base64'], ['FROM_HEX', 'From Hex'], ['to-base64', 'To Base64']]) {
+    await chef.runTool('cyberchef.bake', { recipe, input: 'x' });
+    assert.equal(chef.calls.at(-1)[2][0].op, op, recipe);
+  }
+});
+
+test('cyberchef.bake maps the plain phrasings the models use onto the real operation names', async () => {
+  const chef = fakeChef();
+  for (const [recipe, op] of [
+    ['base64_encode', 'To Base64'],
+    ['base64 encode', 'To Base64'],
+    ['encode base64', 'To Base64'],
+    ['base64 decode', 'From Base64'],
+    ['hex decode', 'From Hex'],
+    ['hex encode', 'To Hex'],
+    ['uppercase', 'To Upper case'],
+    ['upper case', 'To Upper case'],
+    ['rot13 decode', 'ROT13'],
+    ['url decode', 'URL Decode'],
+  ]) {
+    await chef.runTool('cyberchef.bake', { recipe, input: 'x' });
+    assert.equal(chef.calls.at(-1)[2][0].op, op, recipe);
+  }
+});
+
+test('cyberchef.bake carries per-operation args into the op settings, coerced to the arg types', async () => {
+  const chef = fakeChef();
+  const out = await chef.runTool('cyberchef.bake', { recipe: 'ROT13(Amount=19)', input: 'OLSSV' });
+  assert.deepEqual(out.ops, ['ROT13']);
+  const [, , ops] = chef.calls[0];
+  // The Amount number arg is coerced to 19; the boolean args keep their defaults.
+  assert.deepEqual(ops, [{ op: 'ROT13', args: [true, true, false, 19] }]);
+});
+
+test('cyberchef.bake keeps arg-list commas inside the step parens and matches option values by label', async () => {
+  const chef = fakeChef();
+  await chef.runTool('cyberchef.bake', { recipe: 'From_Hex,To_Upper_case(Scope=Word),ROT13(Amount=19,Rotate_numbers=true),MD5', input: '48656c6c6f' });
+  const [, , ops] = chef.calls[0];
+  assert.deepEqual(ops.map(op => op.op), ['From Hex', 'To Upper case', 'ROT13', 'MD5']);
+  assert.deepEqual(ops[1].args, ['Word'], 'the option value is matched by label');
+  assert.deepEqual(ops[2].args, [true, true, true, 19], 'the underscored arg name matches and the boolean is coerced');
+});
+
+test('cyberchef.bake rejects an unknown per-operation argument with the closest arg name and the fixed call', async () => {
+  const chef = fakeChef();
+  await assert.rejects(chef.runTool('cyberchef.bake', { recipe: 'To_Hex(Delimitr=Space)', input: 'x' }), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.match(error.message, /To Hex has no argument named "Delimitr"; closest: Delimiter/);
+    assert.equal(error.fix, 'call_tool tool=cyberchef.bake recipe=To Hex(Delimiter=Space) input=x');
+    return true;
+  });
+  assert.equal(chef.calls.length, 0, 'bake is not called for a bad recipe');
+});
+
 test('cyberchef.bake runs a comma-separated multi-step pipeline in order', async () => {
   const chef = fakeChef();
   const out = await chef.runTool('cyberchef.bake', { recipe: 'From_Hex,To_Upper_case', input: '48656c6c6f' });
@@ -162,13 +223,15 @@ test('cyberchef.bake defaults the input to an empty string when omitted', async 
   assert.equal(chef.calls[0][1], '');
 });
 
-test('cyberchef.bake rejects an unknown operation with the closest names', async () => {
+test('cyberchef.bake rejects an unknown operation with the closest names and the fixed call', async () => {
   const chef = fakeChef();
   await assert.rejects(chef.runTool('cyberchef.bake', { recipe: 'To_Base6', input: 'x' }), error => {
     assert.ok(error instanceof ToolError);
     assert.equal(error.type, 'invalid_argument');
     assert.match(error.message, /unknown operation\(s\) To Base/);
     assert.match(error.message, /closest: To Base64/);
+    // The fix line is the exact call with the closest operation name filled in.
+    assert.equal(error.fix, 'call_tool tool=cyberchef.bake recipe=To Base64 input=x');
     return true;
   });
   assert.equal(chef.calls.length, 0, 'bake is not called for a bad recipe');
@@ -200,6 +263,9 @@ test('cyberchef.list_operations filters by a case-insensitive name substring', a
   const out = await chef.runTool('cyberchef.list_operations', { query: 'base64' });
   assert.deepEqual(out.operations.map(row => row.name), ['To Base64', 'From Base64']);
   assert.deepEqual(out.operations[0], { name: 'To Base64', module: 'Encodings', args: ['Alphabet'], description: 'Encode text as Base64.' });
+  // The model passes the recipe spelling (underscores): the query matches the normalized names.
+  const underscored = await chef.runTool('cyberchef.list_operations', { query: 'To_Upper_case' });
+  assert.deepEqual(underscored.operations.map(row => row.name), ['To Upper case']);
 });
 
 test('cyberchef.list_operations strips HTML from descriptions and maps arg names', async () => {
@@ -283,4 +349,13 @@ test('every skill opens by launching CyberChef, then uses numbered cyberchef ste
 test('skill steps and tools lines validate against the runtime checkArgs', () => {
   const errors = checkSkills(skills, byName, { checkArgs: (tool, args) => checkArgs(tool, args, { choices }) });
   assert.deepEqual(errors, []);
+});
+
+test('the hash skill names the SHA aliases and the pipeline skill the single-input rule and per-op args', () => {
+  const hash = skills.find(skill => skill.slug === 'hash-text');
+  for (const alias of ['SHA256', 'SHA224', 'SHA384', 'SHA512']) assert.ok(hash.gotchas.includes(alias), `hash skill names ${alias}`);
+  assert.ok(!hash.gotchas.includes('UNVERIFIED'), 'the SHA256 alias is verified live');
+  const pipeline = skills.find(skill => skill.slug === 'multi-step-pipeline');
+  assert.ok(pipeline.gotchas.includes('previous one\'s output'), 'the pipeline skill says each step reads the previous output');
+  assert.ok(pipeline.gotchas.includes('ROT13(Amount=19)'), 'the pipeline skill shows the per-op arg syntax');
 });

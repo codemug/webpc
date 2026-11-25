@@ -1,0 +1,181 @@
+app: figcraft
+# FigCraft journeys (J1, Craft Integrator lane), reworked after the lead's gate review.
+# State checks read through craft_request on document.inspect, whose shape is pinned by the
+# upstream engine (storytold/figcraft v0.18.1, crates/engine/src/automation/inspect.rs):
+# {name, selection, pages: [{id, name, type, text?, childCount or children}]}. tool_result is
+# used only where the command output is the deliverable itself (the SVG export). Layer ids are
+# engine-assigned, so multi-step journeys stay flat (page-level creates); create_node
+# auto-selects and export without ids exports the selection.
+
+journeys:
+  - id: figcraft-01-login-screen
+    split: train
+    title: "Start a login document, add the frame, save it"
+    prompt: >-
+      I am starting a new app design in FigCraft and the first thing I need is the login screen.
+      Start a new document called Login, add a 375 by 812 frame named Screen on the page, and
+      then save the document to /FigCraft/login.figcraft so I can pick it back up in Files
+      tomorrow.
+    setup:
+      - close_all: true
+      - open_app: figcraft
+    oracle:
+      - { tool: figcraft.new_document, name: Login }
+      - { tool: figcraft.create_node, type: frame, name: Screen, width: 375, height: 812 }
+      - { tool: figcraft.save_copy, path: /FigCraft/login.figcraft }
+    checks:
+      - window_open: figcraft
+      - craft_request: { app: figcraft, method: document.inspect, expect: { path: name, equals: Login } }
+      - craft_request: { app: figcraft, method: document.inspect, params: { depth: 1 }, expect: { path: 'pages[0].children[0].name', equals: Screen } }
+      - file_exists: /FigCraft/login.figcraft
+    covers: [figcraft.new_document, figcraft.create_node, figcraft.save_copy]
+    notes: The document name and the layer tree pin the end state through the app; the file on disk pins the save.
+
+  - id: figcraft-02-text-layer-svg-export
+    split: train
+    title: "Add a text layer and export it as SVG"
+    prompt: >-
+      Before I start the real artwork I want a quick proof that text renders inside exports.
+      Start a fresh FigCraft document, add a text layer near the top left of the page that says
+      Shipped on time, and export that layer as SVG so I can paste it into the release notes.
+    setup:
+      - close_all: true
+      - open_app: figcraft
+    oracle:
+      - { tool: figcraft.new_document, name: Proof }
+      - { tool: figcraft.create_node, type: text, text: Shipped on time, x: 40, y: 40 }
+      - { tool: figcraft.export, format: svg }
+    checks:
+      - craft_request: { app: figcraft, method: document.inspect, params: { depth: 1 }, expect: { path: 'pages[0].children[0].characters', contains: Shipped on time } }
+      - tool_result: { tool: figcraft.export, path: data, contains: PHN2Zy }
+    covers: [figcraft.new_document, figcraft.create_node, figcraft.export]
+    notes: The document state pins the text layer through its characters property; the export result is a base64 SVG (data starts with the base64 of the svg markup), so the deliverable is pinned on its payload prefix, not on decoded text.
+
+  - id: figcraft-03-open-seeded-svg
+    split: train
+    title: "Import a small SVG logo from Files"
+    prompt: >-
+      There is a small logo at /FigCraft/logo.svg that I exported from another tool. Open it in
+      FigCraft for me and make sure the import actually brought the artwork in, because last
+      time an import opened an empty document and I lost an hour figuring out what happened.
+    setup:
+      - close_all: true
+      - open_app: figcraft
+      - seed_file: { path: /FigCraft/logo.svg, text: '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="40"><rect width="120" height="40" fill="#FF5A5F"/><circle cx="20" cy="20" r="10" fill="#fff"/></svg>' }
+    oracle:
+      - { tool: figcraft.open_file, path: /FigCraft/logo.svg }
+    checks:
+      - window_open: figcraft
+      - craft_request: { app: figcraft, method: document.inspect, params: { depth: 0 }, expect: { path: 'pages[0].childCount', at_least: 1 } }
+    covers: [figcraft.open_file]
+    notes: The seeded SVG has two top-level shapes; the page child count proves the artwork landed, not just an empty document.
+
+  - id: figcraft-04-count-the-imported-shapes
+    split: train
+    title: "Open the logo and report how many top-level shapes it has"
+    prompt: >-
+      I just opened /FigCraft/logo.svg in FigCraft for the banner work. Tell me how many
+      shapes the imported logo frame contains once it is open, so I know the import brought
+      everything across before I start rearranging things on the page.
+    setup:
+      - close_all: true
+      - open_app: figcraft
+      - seed_file: { path: /FigCraft/logo.svg, text: '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="40"><rect width="120" height="40" fill="#FF5A5F"/><circle cx="20" cy="20" r="10" fill="#fff"/></svg>' }
+    oracle:
+      - { tool: figcraft.open_file, path: /FigCraft/logo.svg }
+      - { tool: figcraft.inspect_document, depth: 1 }
+    checks:
+      - answer_contains: '2'
+      - craft_request: { app: figcraft, method: document.inspect, params: { depth: 0 }, expect: { path: 'pages[0].childCount', equals: 1 } }
+      - craft_request: { app: figcraft, method: document.inspect, params: { depth: 1 }, expect: { path: 'pages[0].children[0].childCount', equals: 2 } }
+    covers: [figcraft.open_file, figcraft.inspect_document]
+    notes: Read then answer; the SVG import wraps the artwork in one frame named after the file, so the page holds one child whose two children are the seeded shapes.
+
+  - id: figcraft-05-save-and-reopen-round-trip
+    split: holdout
+    title: "Save a tiny document and open the saved copy back"
+    prompt: >-
+      I keep losing work between restarts, so I want the save and reopen round trip proven on a
+      tiny document before I trust it with the real thing. Start a new document called Card, add
+      one rectangle to it, save the document to /FigCraft/card.figcraft, and then open that saved
+      file back so I can see the saved copy is the one that comes back.
+    setup:
+      - close_all: true
+      - open_app: figcraft
+    oracle:
+      - { tool: figcraft.new_document, name: Card }
+      - { tool: figcraft.create_node, type: rectangle, width: 200, height: 100 }
+      - { tool: figcraft.save_copy, path: /FigCraft/card.figcraft }
+      - { tool: figcraft.open_file, path: /FigCraft/card.figcraft }
+    checks:
+      - file_exists: /FigCraft/card.figcraft
+      - craft_request: { app: figcraft, method: document.inspect, expect: { path: name, equals: Card } }
+    covers: [figcraft.new_document, figcraft.create_node, figcraft.save_copy, figcraft.open_file]
+    notes: Multi-step round trip; the document name after reopening the saved copy pins that the saved file is the one that came back.
+
+  - id: figcraft-06-undo-and-redo-a-rectangle
+    split: train
+    title: "Undo a rectangle creation, then redo it"
+    prompt: >-
+      I added a rectangle to a fresh document and I want to practise the undo history before the
+      client call. Start a new FigCraft document, add a rectangle to the page, undo that
+      creation so the page is empty again, and then redo it, so the rectangle is back on the
+      page and the last move in the history is the create.
+    setup:
+      - close_all: true
+      - open_app: figcraft
+    oracle:
+      - { tool: figcraft.new_document, name: History }
+      - { tool: figcraft.create_node, type: rectangle, width: 160, height: 90 }
+      - { tool: figcraft.undo }
+      - { tool: figcraft.redo }
+    checks:
+      - craft_request: { app: figcraft, method: document.inspect, params: { depth: 0 }, expect: { path: 'pages[0].childCount', equals: 1 } }
+      - craft_request: { app: figcraft, method: document.inspect, params: { depth: 1 }, expect: { path: 'pages[0].children[0].type', equals: rectangle } }
+    covers: [figcraft.new_document, figcraft.create_node, figcraft.undo, figcraft.redo]
+    notes: The page ends with exactly one rectangle child; without the redo the count would be zero, so the check fails if the work is skipped.
+
+  - id: figcraft-07-background-fill-colour
+    split: holdout
+    title: "Open the logo and report the background fill colour"
+    prompt: >-
+      Before I ship the banner I want to confirm the brand red survived the import into the
+      editor. Open /FigCraft/logo.svg in FigCraft and tell me the exact fill colour of the
+      background rectangle in hex, because the design brief calls for a specific shade and I
+      need to verify the file still has it.
+    setup:
+      - close_all: true
+      - open_app: figcraft
+      - seed_file: { path: /FigCraft/logo.svg, text: '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="40"><rect width="120" height="40" fill="#FF5A5F"/><circle cx="20" cy="20" r="10" fill="#fff"/></svg>' }
+    oracle:
+      - { tool: figcraft.open_file, path: /FigCraft/logo.svg }
+      - { tool: figcraft.inspect_document, depth: 2 }
+    checks:
+      - window_open: figcraft
+      - answer_matches: '(?i)#ff5a5f'
+      - craft_request: { app: figcraft, method: document.inspect, params: { depth: 2 }, expect: { path: 'pages[0].children[0].children[0].fills[0].color', equals: '#FF5A5F' } }
+    covers: [figcraft.open_file, figcraft.inspect_document]
+    notes: Read then answer; the fill sits on the rectangle inside the imported frame, so the read goes two levels deep. The engine normalises the fill to css hex, so the answer is checked case-insensitively and the app state pins the same value.
+
+  - id: figcraft-08-poster-and-overwrite-save
+    split: train
+    title: "Build a poster document and save over the same path twice"
+    prompt: >-
+      I made a small poster in FigCraft and I want a copy in Files that I can attach to the
+      release ticket. Start a new document, add a text layer that says Post release notes here,
+      save a copy to /FigCraft/poster.figcraft, and then save one more copy over the same path
+      with overwrite enabled so the latest state is the copy that survives on disk.
+    setup:
+      - close_all: true
+      - open_app: figcraft
+    oracle:
+      - { tool: figcraft.new_document, name: Poster }
+      - { tool: figcraft.create_node, type: text, text: Post release notes here }
+      - { tool: figcraft.save_copy, path: /FigCraft/poster.figcraft }
+      - { tool: figcraft.save_copy, path: /FigCraft/poster.figcraft, overwrite: true }
+    checks:
+      - file_exists: /FigCraft/poster.figcraft
+      - craft_request: { app: figcraft, method: document.inspect, expect: { path: name, equals: Poster } }
+      - tool_result: { tool: figcraft.save_copy, path: created, equals: false }
+    covers: [figcraft.new_document, figcraft.create_node, figcraft.save_copy]
+    notes: Exercises the destructive overwrite path of save_copy; the .figcraft file is a zip archive (document.json deflated inside), so the document name is not plain text on disk and the overwrite is pinned by the second save reporting created false.

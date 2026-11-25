@@ -2,14 +2,27 @@
 slug: check-the-document
 summary: Read the open PDF: its state, page, zoom and mode.
 keywords: document info, metadata, pages, what is in, inspect, bookmarks
-tools: desktop.open_app, pdfcraft.doc_info, pdfcraft.doc_inspect
+tools: desktop.open_app, pdfcraft.doc_info, pdfcraft.doc_inspect, pdfcraft.ui_inspect
 
 When: the user asks what is in the open PDF or how many pages it has.
 Steps:
 1. call_tool tool=desktop.open_app app=pdfcraft
 2. call_tool tool=pdfcraft.doc_info
 Check: the result shows the document's state, page, zoom and mode; doc_inspect reads the same state.
-Gotchas: both tools take no params and read the document's ui.state; the page's file.properties only opens the Properties dialog and returns nothing, so it is not a read tool.
+Gotchas: both tools take no params and read the document's ui.state; the page's file.properties only opens the Properties dialog and returns nothing, so it is not a read tool; ui_inspect reads the on-screen accessibility tree instead (controls and open dialogs, id, role, label and rect per element).
+
+## Read the document text
+slug: read-the-document-text
+summary: Read what the PDF says, page by page, through the app's text export.
+keywords: text, what does it say, read, content, quote, page text, words
+tools: desktop.open_app, pdfcraft.read_text
+
+When: the user asks what the document or a page says, or wants a quote from it.
+Steps:
+1. call_tool tool=desktop.open_app app=pdfcraft
+2. call_tool tool=pdfcraft.read_text
+Check: the result's text field holds the document text in reading order; name is the exported text file.
+Gotchas: the export runs in the app and also downloads the text file in the browser; a PDF with no extractable text (a scan) makes the tool say so instead of returning empty text.
 
 ## Find a phrase in the document
 slug: find-a-phrase

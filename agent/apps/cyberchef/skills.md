@@ -48,12 +48,12 @@ Steps:
 1. call_tool tool=desktop.open_app app=cyberchef
 2. call_tool tool=cyberchef.bake recipe=From_Hex,To_Upper_case input=48656c6c6f
 Check: the result output is the final step's output (here HELLO) and ops lists the operations run.
-Gotchas: change recipe= and input=; operations run left to right, comma-separated, so From_Hex,To_Upper_case decodes first then uppercases; every name must be a real operation.
+Gotchas: change recipe= and input=; operations run left to right, comma-separated, and one input= feeds the first operation only - every following operation reads the previous one's output, so a later step never re-reads the original input (to base64-encode an MD5, the recipe is MD5,To_Base64 with one input=); every name must be a real operation; an operation can carry its own settings in the recipe, e.g. recipe=ROT13(Amount=19) for a non-default shift.
 
 ## Hash the text
 slug: hash-text
 summary: Compute a digest (MD5 by default) of the input text.
-keywords: hash, digest, md5, checksum, fingerprint, signature, sha256
+keywords: hash, digest, md5, checksum, fingerprint, signature, sha256, sha-256, sha224, sha384, sha512
 tools: desktop.open_app, cyberchef.bake
 
 When: the user wants a hash or digest of some text.
@@ -61,7 +61,7 @@ Steps:
 1. call_tool tool=desktop.open_app app=cyberchef
 2. call_tool tool=cyberchef.bake recipe=MD5 input=hello world
 Check: the result output is the hash digest in hex.
-Gotchas: change input= and recipe=; MD5 is shown as the example; for SHA-256 use recipe=SHA256 (UNVERIFIED until the live bake of "abc" confirms the digest) and likewise SHA224, SHA384 or SHA512; use cyberchef.list_operations for the other hash operations (SHA, CRC).
+Gotchas: change input= and recipe=; MD5 is shown as the example; SHA-256 is recipe=SHA256 (likewise SHA224, SHA384, SHA512 - the SHA-2 aliases bake the SHA2 operation at that size, verified live), while MD5 and SHA1 are their own operations; use cyberchef.list_operations for the other hash operations (SHA, CRC).
 
 ## Find an operation
 slug: find-an-operation
@@ -74,4 +74,4 @@ Steps:
 1. call_tool tool=desktop.open_app app=cyberchef
 2. call_tool tool=cyberchef.list_operations query=base64
 Check: the result lists matching operations with their names; use a returned name in cyberchef.bake recipe=.
-Gotchas: change query= or drop it to list more; names use spaces (To Base64), so in a recipe write them with underscores (To_Base64); the list is capped at the top 10 matches.
+Gotchas: change query= or drop it to list more; the query is a case-insensitive substring of the name, so base64, To_Base64 and To Upper case all find "To Base64"; the list is capped at the top 10 matches.

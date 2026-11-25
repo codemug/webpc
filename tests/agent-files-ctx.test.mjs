@@ -45,7 +45,8 @@ test('mkdir makes parents, list shows paths, stat and find work', async () => {
   assert.deepEqual((await files.list('/Reports')).map(e => [e.path, e.kind]), [['/Reports/2026', 'folder']]);
   assert.equal((await files.stat('/Reports/2026/march.txt')).kind, 'file');
   assert.deepEqual(await files.find('MARCH'), [{ path: '/Reports/2026/march.txt', kind: 'file' }]);
-  await code(files.writeText('/Missing/a.txt', 'x'), 'not_found');
+  await files.writeText('/Missing/a.txt', 'x'); // a missing parent is made, not refused
+  assert.equal((await files.stat('/Missing')).kind, 'folder');
   await code(files.list('/Reports/2026/march.txt'), 'not_a_folder');
 });
 
@@ -96,4 +97,14 @@ test('a browser DOMException (numeric code 8) becomes not_found, not a raw error
   const ctx = createFilesCtx({ ...store, exists: async () => domNotFound() });
   await code(ctx.readBytes('/GridCraft/budget.xlsx'), 'not_found');
   await code(ctx.readText('/GridCraft/budget.xlsx'), 'not_found');
+});
+
+/** A save into a folder that is not there yet makes it, as mkdir -p would. */
+test('writeText, writeBytes and appendText make missing parent folders', async () => {
+  const { files } = setup();
+  assert.equal((await files.writeText('/Decks/2026/notes.txt', 'hi')).path, '/Decks/2026/notes.txt');
+  await files.writeBytes('/FigCraft/login.figcraft', new Uint8Array([1, 2]));
+  await files.appendText('/logs/run.txt', 'one');
+  for (const path of ['/Decks', '/Decks/2026', '/FigCraft', '/logs']) assert.equal((await files.stat(path)).kind, 'folder', path);
+  assert.equal((await files.readText('/Decks/2026/notes.txt')).text, 'hi');
 });

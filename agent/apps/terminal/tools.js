@@ -129,6 +129,11 @@ export const tools = [
     name: 'terminal.run',
     purpose: 'Run a shell command (uname, ls, pip) or Python/Node code in the Linux terminal.',
     when: 'Use when the user wants any command, script or code run in Linux or the terminal.',
+    // A4: program names live in the guest, not the tool text, so an inner name (find_tool
+    // "grep") or an install intent would not match. Common guest programs index this tool;
+    // generic words (date, echo, test) are deliberately left out - they would pull shell runs
+    // into unrelated queries.
+    keywords: ['ls', 'cat', 'grep', 'sed', 'awk', 'wc', 'head', 'tail', 'sort', 'uniq', 'find', 'which', 'whoami', 'uname', 'df', 'du', 'free', 'top', 'ps', 'kill', 'mkdir', 'cp', 'mv', 'rm', 'touch', 'chmod', 'chown', 'tar', 'gzip', 'zip', 'curl', 'wget', 'ssh', 'scp', 'git', 'python', 'python3', 'node', 'npm', 'pip', 'pip3', 'nano', 'vim', 'less', 'basename', 'dirname', 'realpath', 'ping', 'traceroute', 'ifconfig', 'netstat', 'jq', 'base64', 'od', 'xxd', 'file', 'diff', 'make', 'apk', 'apt', 'busybox', 'strace', 'gdb'],
     params: {
       lang: { type: 'enum', values: ['python', 'node', 'sh'], default: 'sh', description: 'Language of the code (default sh)' },
       code: { type: 'text', required: true, description: 'Code to run in the guest' },

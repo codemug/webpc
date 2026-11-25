@@ -16,17 +16,15 @@ Gotchas: change the center and radius; spaces act as Enter, so the whole command
 slug: draw-a-line
 summary: Draw a line between two points with the line command.
 keywords: line, draw, segment, points, geometry
-tools: desktop.open_app, cadcraft.command_line, cadcraft.inspect
+tools: desktop.open_app, cadcraft.command_line, cadcraft.script, cadcraft.inspect
 
 When: the user wants a line or segment drawn.
 Steps:
 1. call_tool tool=desktop.open_app app=cadcraft
 2. call_tool tool=cadcraft.inspect
-3. call_tool tool=cadcraft.command_line text=line
-4. call_tool tool=cadcraft.command_line text=0,0
-5. call_tool tool=cadcraft.command_line text=10,0
+3. call_tool tool=cadcraft.script text=line\n0,0\n10,0\n (one input per line, the final blank line included)
 Check: cadcraft.inspect with entities=true lists the new line.
-Gotchas: answer the active prompt one point at a time; a relative point is @dx,dy and a polar one @dist<angle.
+Gotchas: LINE keeps asking for points; end the script with a blank line to finish, because a whitespace-only command_line call is rejected by the pack and a trailing space on the call that starts the command is swallowed, so a blank script line is the only reliable terminating Enter. Otherwise the next inputs feed the still-open command instead of starting a new one. A relative point is @dx,dy and a polar one @dist<angle.
 
 ## Run a command-line script
 slug: run-a-cad-script

@@ -256,13 +256,24 @@ function ownPairs(text, names) {
   });
   return out;
 }
+/** A JSON object (or its JSON text) sent under a key the tool does not have, else null. Its keys
+ *  are unwrapped even when some are wrong: the error then names the wrong inner key, and one stray
+ *  key can still fill the one missing required param (lfm3-1.7b sent parameters="{\"layout\": ...}"). */
+function ownObject(value) {
+  let obj = value;
+  if (typeof value === 'string' && value.trim().startsWith('{')) { try { obj = JSON.parse(value); } catch { return null; } }
+  if (obj == null || typeof obj !== 'object' || Array.isArray(obj)) return null;
+  return Object.keys(obj).length ? obj : null;
+}
+
 export function repairArgs(tool, raw) {
   const params = tool?.params ?? {};
   if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return raw;
   const names = Object.keys(params);
   let args = { ...raw };
   for (const key of Object.keys(args).filter(k => !params[k])) {
-    const pairs = typeof args[key] === 'string' ? ownPairs(args[key], names) : null;
+    // lfm3-1.7b wrapped its args as params="{\"text\": \"line 0,0 10,0\"}" (journey cadcraft-01).
+    const pairs = ownObject(args[key]) ?? (typeof args[key] === 'string' ? ownPairs(args[key], names) : null);
     if (!pairs) continue;
     const { [key]: _spent, ...rest } = args;
     args = { ...pairs, ...rest };
@@ -274,6 +285,14 @@ export function repairArgs(tool, raw) {
     args = { ...rest, [missing[0]]: value };
   }
   return args;
+}
+
+// A copied template slot: <key> itself, or a generic slot word (lfm3-1.7b sent input=<text> to
+// cyberchef.bake). Real angle-bracket input such as <b> or <div> is not a slot word, so it passes.
+const SLOT_WORDS = new Set(['text', 'value', 'input', 'string', 'number', 'name', 'path', 'query', 'your text', 'user text']);
+function isPlaceholder(text, key, spec) {
+  const slot = /^<([a-z_ ]+)>$/i.exec(text)?.[1]?.toLowerCase();
+  return Boolean(slot) && (slot === key.toLowerCase() || slot === spec?.type || SLOT_WORDS.has(slot));
 }
 
 /**
@@ -292,8 +311,8 @@ export function checkArgs(tool, raw, { choices = () => [], aliases = {} } = {}) 
     if (absent(key)) continue; // an empty or null slot counts as absent: required params error, optional params get their default
     // A copied <key> placeholder on a parameter with a default means the default (lfm3-1.7b sent
     // lang=<lang> to terminal.run on eval task C17); without a default it is an error.
-    if (typeof value === 'string' && unquote(value) === `<${key}>` && spec.default !== undefined) { args[key] = spec.default; continue; }
-    if (typeof value === 'string' && unquote(value) === `<${key}>`) return { ok: false, error: { type: 'placeholder', message: `${key}=<${key}> is a placeholder: put the user's own ${key} there (${spec.description ?? spec.type}).`, fix: '' } };
+    if (typeof value === 'string' && isPlaceholder(unquote(value), key, spec) && spec.default !== undefined) { args[key] = spec.default; continue; }
+    if (typeof value === 'string' && isPlaceholder(unquote(value), key, spec)) return { ok: false, error: { type: 'placeholder', message: `${key}=<${key}> is a placeholder: put the user's own ${key} there (${spec.description ?? spec.type}).`, fix: '' } };
     const values = spec.type === 'enum' ? enumValues(spec, choices) : [];
     const out = coerce(spec, value, values, aliases);
     if (!out.ok) {

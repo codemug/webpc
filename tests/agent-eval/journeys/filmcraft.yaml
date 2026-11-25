@@ -1,0 +1,223 @@
+app: filmcraft
+# FilmCraft journeys (J1, Craft Integrator lane), written to the post-gate rules.
+# State checks read through craft_request on the engine query commands, whose shapes are pinned
+# by the upstream source (storytold/filmcraft v0.20.1, crates/engine/src/commands.rs and
+# crates/project/src): project.inspect -> {name, root: {children: [{item, name, type, ...} |
+# {id, name, children}]}, activeSequence}; sequence.inspect (active sequence when item is
+# omitted) -> {name, duration, in, out, playhead, video: [{name, items: [{clip, item, start,
+# duration, ...}]}], audio: [...], selection}; history.list -> {undo: [labels], redo: [labels]}.
+# All times are ticks at 254016000000 per second. A still image places at the measured
+# 5.005 s default (1271350080000 ticks; the engine's default is not a round 5.0 s), and the
+# tone-440hz-2s.wav fixture measures 2.002 s (508540032000 ticks), so the expected values are
+# the measured ones, and a razor at N s leaves the rest at 5.005 - N s. A fresh project
+# allocates ids from 1 (item, bin and sequence ids all come from one counter), and V1/A1
+# address the first video and audio tracks.
+
+journeys:
+  - id: filmcraft-01-project-and-bins
+    split: train
+    title: "Start a project and organise it into two bins"
+    prompt: >-
+      I am starting a new project in FilmCraft before any media arrives, and I want it tidy
+      from the first frame. Start a new project called Trail Run and create two bins in it,
+      one called Footage and one called Audio, so the clips and the sound files can be sorted
+      straight away when I import them later.
+    setup:
+      - close_all: true
+      - open_app: filmcraft
+    oracle:
+      - { tool: filmcraft.new_project, name: 'Trail Run' }
+      - { tool: filmcraft.new_bin, name: Footage }
+      - { tool: filmcraft.new_bin, name: Audio }
+    checks:
+      - craft_request: { app: filmcraft, method: project.inspect, expect: { path: name, equals: 'Trail Run' } }
+      - craft_request: { app: filmcraft, method: project.inspect, expect: { path: 'root.children[0].name', equals: Footage } }
+      - craft_request: { app: filmcraft, method: project.inspect, expect: { path: 'root.children[1].name', equals: Audio } }
+    covers: [filmcraft.new_project, filmcraft.new_bin]
+    notes: A fresh project has an empty root bin and hands ids out from one counter, so the bins sit in the root in creation order and the name check plus both bin names pin the whole end state.
+
+  - id: filmcraft-02-import-a-still
+    split: train
+    title: "Import a still image into a fresh project"
+    prompt: >-
+      I shot a still at the trailhead and it is already sitting in Files at /FilmCraft/beach-sunset.jpg.
+      I want it inside FilmCraft before I build the show around it. Start a new project called
+      Lookbook and import that file into the project, so I can see the still in the bin and it
+      is ready for the timeline.
+    setup:
+      - close_all: true
+      - open_app: filmcraft
+      - seed_fixture: { path: /FilmCraft/beach-sunset.jpg, fixture: beach-sunset.jpg }
+    oracle:
+      - { tool: filmcraft.new_project, name: Lookbook }
+      - { tool: filmcraft.open_file, path: /FilmCraft/beach-sunset.jpg }
+    checks:
+      - craft_request: { app: filmcraft, method: project.inspect, expect: { path: name, equals: Lookbook } }
+      - craft_request: { app: filmcraft, method: project.inspect, expect: { path: 'root.children[0].item', equals: 1 } }
+      - craft_request: { app: filmcraft, method: project.inspect, expect: { path: 'root.children[0].name', equals: beach-sunset.jpg } }
+      - craft_request: { app: filmcraft, method: project.inspect, expect: { path: 'root.children[0].type', equals: 'Still Image' } }
+    covers: [filmcraft.new_project, filmcraft.open_file]
+    notes: A fresh project allocates item ids from 1, so the first import is item 1; the file name and the engine's Still Image type label pin the import.
+
+  - id: filmcraft-03-still-to-the-timeline
+    split: train
+    title: "Put the imported still onto a new sequence"
+    prompt: >-
+      I want to see the trailhead still on the timeline, not just in the bin. Start a new
+      project called Hero Shot in FilmCraft, import /FilmCraft/beach-sunset.jpg into it, create
+      a sequence called Cut, and place the still on the first video track at the very start of
+      the sequence, so the sequence shows the still for its full default length.
+    setup:
+      - close_all: true
+      - open_app: filmcraft
+      - seed_fixture: { path: /FilmCraft/beach-sunset.jpg, fixture: beach-sunset.jpg }
+    oracle:
+      - { tool: filmcraft.new_project, name: 'Hero Shot' }
+      - { tool: filmcraft.open_file, path: /FilmCraft/beach-sunset.jpg }
+      - { tool: filmcraft.run_command, command: file.newSequence, params: 'name=Cut' }
+      - { tool: filmcraft.place, item: 1, track: V1 }
+    checks:
+      - craft_request: { app: filmcraft, method: project.inspect, expect: { path: name, equals: 'Hero Shot' } }
+      - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: 'video[0].items[0].item', equals: 1 } }
+      - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: 'video[0].items[0].start', equals: 0 } }
+      - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: 'video[0].items[0].duration', equals: 1271350080000 } }
+      - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: duration, equals: 1271350080000 } }
+    covers: [filmcraft.new_project, filmcraft.open_file, filmcraft.run_command, filmcraft.place]
+    notes: The still takes the measured 5.005 s default still duration (1271350080000 ticks), so the clip duration and the sequence length both pin the placement.
+
+  - id: filmcraft-04-picture-and-sound
+    split: train
+    title: "Lay a still and a tone on the same sequence"
+    prompt: >-
+      The launch film needs both picture and sound from the top of the timeline. Start a new
+      project called Launch in FilmCraft and import /FilmCraft/beach-sunset.jpg and
+      /FilmCraft/tone-440hz-2s.wav into it. Create a sequence called Launch, put the still on
+      the first video track at the start, and lay the tone under it on the first audio track at
+      the start, so the film opens with the picture and the 2 second tone playing together.
+    setup:
+      - close_all: true
+      - open_app: filmcraft
+      - seed_fixture: { path: /FilmCraft/beach-sunset.jpg, fixture: beach-sunset.jpg }
+      - seed_fixture: { path: /FilmCraft/tone-440hz-2s.wav, fixture: tone-440hz-2s.wav }
+    oracle:
+      - { tool: filmcraft.new_project, name: Launch }
+      - { tool: filmcraft.open_file, path: /FilmCraft/beach-sunset.jpg }
+      - { tool: filmcraft.open_file, path: /FilmCraft/tone-440hz-2s.wav }
+      - { tool: filmcraft.run_command, command: file.newSequence, params: 'name=Launch' }
+      - { tool: filmcraft.place, item: 1, track: V1 }
+      - { tool: filmcraft.place, item: 2, audioTrack: A1 }
+    checks:
+      - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: 'video[0].items[0].item', equals: 1 } }
+      - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: 'video[0].items[0].duration', equals: 1271350080000 } }
+      - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: 'audio[0].items[0].item', equals: 2 } }
+      - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: 'audio[0].items[0].duration', equals: 508540032000 } }
+      - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: duration, equals: 1271350080000 } }
+    covers: [filmcraft.new_project, filmcraft.open_file, filmcraft.run_command, filmcraft.place]
+    notes: The imports land as items 1 and 2 in order; the tone fixture measures 2.002 s (508540032000 ticks) and the still 5.005 s, so the sequence length stays at the picture's length and each track's clip pins its own media.
+
+  - id: filmcraft-05-razor-the-still
+    split: holdout
+    title: "Cut the open still clip at 2 seconds"
+    prompt: >-
+      The still on my timeline is running too long for the intro and I want it cut before the
+      review call. The open FilmCraft project has the still from /FilmCraft/mountain-portrait.jpg
+      sitting on the first video track of the sequence, starting at zero. Razor that clip at 2
+      seconds so the first piece is exactly 2 seconds long and the rest follows after the cut.
+    setup:
+      - close_all: true
+      - open_app: filmcraft
+      - seed_fixture: { path: /FilmCraft/mountain-portrait.jpg, fixture: mountain-portrait.jpg }
+      - { run: { tool: filmcraft.new_project, name: Cut } }
+      - { run: { tool: filmcraft.open_file, path: /FilmCraft/mountain-portrait.jpg } }
+      - { run: { tool: filmcraft.run_command, command: file.newSequence, params: 'name=Cut' } }
+      - { run: { tool: filmcraft.place, item: 1, track: V1 } }
+    oracle:
+      - { tool: filmcraft.razor, seconds: 2 }
+    checks:
+      - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: 'video[0].items[0].duration', equals: 508032000000 } }
+      - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: 'video[0].items[1].duration', equals: 763318080000 } }
+      - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: duration, equals: 1271350080000 } }
+    covers: [filmcraft.razor]
+    notes: The 5.005 s still split at 2 s gives a 2 s piece (508032000000 ticks) and a 3.005 s piece (763318080000 ticks), and the sequence stays 5.005 s long, so all three pins only pass once the cut happened.
+
+  - id: filmcraft-06-mark-the-middle
+    split: train
+    title: "Set in and out marks on the middle of a clip"
+    prompt: >-
+      The client wants to watch only the middle of the opening shot. Start a new project called
+      Outro Marks in FilmCraft, import /FilmCraft/beach-sunset.jpg, create a sequence called
+      Outro and place the still on the first video track at the start. Then set the in mark at
+      1 second and the out mark at 4 seconds, so the marked region covers the middle of the
+      five second clip and nothing is cut.
+    setup:
+      - close_all: true
+      - open_app: filmcraft
+      - seed_fixture: { path: /FilmCraft/beach-sunset.jpg, fixture: beach-sunset.jpg }
+    oracle:
+      - { tool: filmcraft.new_project, name: 'Outro Marks' }
+      - { tool: filmcraft.open_file, path: /FilmCraft/beach-sunset.jpg }
+      - { tool: filmcraft.run_command, command: file.newSequence, params: 'name=Outro' }
+      - { tool: filmcraft.place, item: 1, track: V1 }
+      - { tool: filmcraft.run_command, command: markers.markIn, params: 'seconds=1' }
+      - { tool: filmcraft.run_command, command: markers.markOut, params: 'seconds=4' }
+    checks:
+      - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: in, equals: 254016000000 } }
+      - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: out, equals: 1016064000000 } }
+      - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: 'video[0].items[0].duration', equals: 1271350080000 } }
+    covers: [filmcraft.new_project, filmcraft.open_file, filmcraft.run_command, filmcraft.place]
+    notes: markIn and markOut target the program (the active sequence) by default and only set the sequence's in and out marks; the clip duration check proves the clip was not cut by the marks.
+
+  - id: filmcraft-07-undo-redo-a-razor
+    split: train
+    title: "Razor a clip, undo the cut, then redo it"
+    prompt: >-
+      I am nervous about cutting before the client sees the show, so I want the undo history to
+      prove the cut is recoverable. The open FilmCraft project has a 5 second still on the
+      first video track of the sequence. Razor the clip at 3 seconds, undo that cut so the clip
+      is whole again, and then redo it, so the timeline ends with the two piece cut and the
+      Razor step is the most recent thing in the undo history.
+    setup:
+      - close_all: true
+      - open_app: filmcraft
+      - seed_fixture: { path: /FilmCraft/beach-sunset.jpg, fixture: beach-sunset.jpg }
+      - { run: { tool: filmcraft.new_project, name: History } }
+      - { run: { tool: filmcraft.open_file, path: /FilmCraft/beach-sunset.jpg } }
+      - { run: { tool: filmcraft.run_command, command: file.newSequence, params: 'name=History' } }
+      - { run: { tool: filmcraft.place, item: 1, track: V1 } }
+    oracle:
+      - { tool: filmcraft.razor, seconds: 3 }
+      - { tool: filmcraft.undo }
+      - { tool: filmcraft.redo }
+    checks:
+      - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: 'video[0].items[0].duration', equals: 762048000000 } }
+      - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: 'video[0].items[1].duration', equals: 509302080000 } }
+      - craft_request: { app: filmcraft, method: history.list, expect: { path: undo, contains: Razor } }
+    covers: [filmcraft.razor, filmcraft.undo, filmcraft.redo]
+    notes: The 3 s and 2.005 s pieces prove the cut is applied at the end, and the Razor label in the undo stack is the engine's edit label for the razor command, so the history pins the round trip.
+
+  - id: filmcraft-08-save-and-reopen
+    split: holdout
+    title: "Save the project and open the saved copy back"
+    prompt: >-
+      I am handing this cut to the colour team and I want the handoff file to be the one that
+      comes back. Start a new project called Handoff in FilmCraft, import /FilmCraft/beach-sunset.jpg,
+      create a sequence called Handoff Cut, and place the still on the first video track at the
+      start. Save the project to /FilmCraft/handoff.fcproj, and then open that saved file back
+      so the project sitting open is the copy I just wrote to disk.
+    setup:
+      - close_all: true
+      - open_app: filmcraft
+      - seed_fixture: { path: /FilmCraft/beach-sunset.jpg, fixture: beach-sunset.jpg }
+    oracle:
+      - { tool: filmcraft.new_project, name: Handoff }
+      - { tool: filmcraft.open_file, path: /FilmCraft/beach-sunset.jpg }
+      - { tool: filmcraft.run_command, command: file.newSequence, params: 'name=Handoff Cut' }
+      - { tool: filmcraft.place, item: 1, track: V1 }
+      - { tool: filmcraft.save_copy, path: /FilmCraft/handoff.fcproj }
+      - { tool: filmcraft.open_file, path: /FilmCraft/handoff.fcproj }
+    checks:
+      - file_exists: /FilmCraft/handoff.fcproj
+      - craft_request: { app: filmcraft, method: project.inspect, expect: { path: name, equals: handoff } }
+      - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: duration, equals: 1271350080000 } }
+    covers: [filmcraft.new_project, filmcraft.open_file, filmcraft.run_command, filmcraft.place, filmcraft.save_copy]
+    notes: Reopening a project activates its first sequence, and a saved project takes its name from the file stem, so the name changing from Handoff to handoff is the round trip signal and the 5.005 s sequence length proves the clip came back.

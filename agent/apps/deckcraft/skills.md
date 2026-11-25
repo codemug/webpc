@@ -10,7 +10,7 @@ Steps:
 2. call_tool tool=deckcraft.new_presentation theme=Harbor
 3. call_tool tool=deckcraft.add_slide layout=titleAndContent title=Q1 Plan
 Check: deckcraft.inspect lists the new slides.
-Gotchas: new_presentation replaces the open presentation (destructive; unsaved work is lost); change theme= and the slide layout and title.
+Gotchas: new_presentation replaces the open presentation (destructive; unsaved work is lost); change theme= and the slide layout and title; the deck's layouts are the names in deckcraft.inspect layouts[] - a title slide is Title Slide, a content slide with a body is Title and Content, a section slide is Section Header, no placeholders is Blank (the short kinds title, titleAndContent, sectionHeader and blank work too); a rejected layout or theme error lists the valid names.
 
 ## Build a slide with text and a shape
 slug: build-a-slide
@@ -25,7 +25,7 @@ Steps:
 3. call_tool tool=deckcraft.add_text_box x=40 y=260 w=500 text=Key numbers size=24
 4. call_tool tool=deckcraft.add_shape preset=rect x=40 y=420 w=300 h=80 fill=#3B5BDB
 Check: deckcraft.inspect_slide shows the shapes with their ids.
-Gotchas: change the coordinates and text; add_shape fills with fill= and outlines with line= (line=none removes the outline).
+Gotchas: change the coordinates and text; layout= is a name from deckcraft.inspect layouts[] (Title and Content for a heading-plus-body slide; a rejected layout error lists the valid names); add_shape fills with fill= and outlines with line= (line=none removes the outline); a rejected preset error lists the valid presets.
 
 ## Change text on a slide
 slug: change-slide-text

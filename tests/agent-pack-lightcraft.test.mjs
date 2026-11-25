@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pack, tools, usesCommands, usesMethods } from '../agent/apps/lightcraft/tools.js';
+import { pack, tools, usesCommands, usesMethods, waitUntilCounted } from '../agent/apps/lightcraft/tools.js';
 import { tools as desktopTools } from '../agent/desktop/tools.js';
 import { ToolError, specErrors, checkArgs } from '../src/apps/ai-agent/runtime/args.mjs';
 import { parseSkills, checkSkills } from '../src/apps/ai-agent/runtime/skills.mjs';
@@ -47,7 +47,7 @@ const runTool = (name, args, page) => byName(name).run(args, { host: fakeHost(pa
 test('the pack declares its id, title and live-check exports', () => {
   assert.deepEqual(pack, { id: 'lightcraft', title: 'LightCraft' });
   assert.deepEqual(usesCommands.sort(), [
-    'develop.reset', 'edit.redo', 'edit.undo', 'library.filter', 'library.info', 'library.select',
+    'catalog.stats', 'develop.reset', 'edit.redo', 'edit.undo', 'library.filter', 'library.info', 'library.select',
     'library.sort', 'photo.delete', 'photo.rate', 'photo.restore', 'photo.rotateLeft', 'photo.rotateRight',
   ].sort());
   assert.deepEqual(usesMethods, []);
@@ -103,7 +103,7 @@ test('the effects are read for the info read, destructive for delete and reset, 
 test('library_info, select, sort, rate, rotate, delete, restore, develop_reset, undo and redo send their commands', async () => {
   const page = makePage();
   await runTool('lightcraft.library_info', {}, page);
-  await runTool('lightcraft.select', { ids: [3, 7] }, page);
+  await runTool('lightcraft.select', { ids: ['3', '7'] }, page); // checkArgs hands list items over as text
   await runTool('lightcraft.select', {}, page);
   await runTool('lightcraft.sort', { key: 'rating', ascending: false }, page);
   await runTool('lightcraft.rate', { rating: 4, ids: [3], advance: true }, page);
@@ -129,11 +129,11 @@ test('library_info, select, sort, rate, rotate, delete, restore, develop_reset, 
 });
 
 // A fake wrapper window for the file tool: the #file input records the change dispatch
-// (openFromBytes drives it, app.mjs:38). The host bridge (not the page API) opens the file,
-// so no page command is involved.
-const fakeWrapper = () => {
+// (openFromBytes drives it, app.mjs:38). The wrapper also carries the editor frame, because
+// the T10 count wait reads catalog.stats through the page API around the open.
+const fakeWrapper = (page, commitOnOpen = () => {}) => {
   const opened = [];
-  const fileInput = { files: null, dispatchEvent: event => { if (event?.type === 'change') opened.push(fileInput.files?.[0] ?? null); } };
+  const fileInput = { files: null, dispatchEvent: event => { if (event?.type === 'change') { opened.push(fileInput.files?.[0] ?? null); commitOnOpen(); } } };
   class DataTransfer {
     constructor() { this._files = []; this.items = { add: file => this._files.push(file) }; }
     get files() { return this._files; }
@@ -147,7 +147,7 @@ const fakeWrapper = () => {
   return {
     opened,
     DataTransfer, File, Event,
-    document: { getElementById: id => (id === 'file' ? fileInput : null) },
+    document: { getElementById: id => (id === 'file' ? fileInput : id === 'editor' ? { contentWindow: { lightcraft: page } } : null) },
     location: { origin: 'https://pc.example' },
   };
 };
@@ -162,8 +162,30 @@ const fileHost = (bytes, wrapper) => {
   };
 };
 
+// A page that simulates the app's async import commit (T10): the host bridge counts the
+// photo into the catalog only `after` catalog.stats reads following the open (1 = at once).
+const settlingPage = (basePhotos, after) => {
+  const events = [];
+  let opens = 0, committed = 0, statsAfterOpen = 0;
+  const command = (id) => {
+    events.push(id);
+    if (id === 'catalog.stats') {
+      statsAfterOpen += 1;
+      if (statsAfterOpen >= after) committed = opens;
+      return Promise.resolve(JSON.stringify({ photos: basePhotos + committed }));
+    }
+    return Promise.resolve(JSON.stringify({ id }));
+  };
+  return {
+    events,
+    command,
+    noteOpen: () => { opens += 1; statsAfterOpen = 0; events.push('open'); },
+  };
+};
+
 test('lightcraft.import_file reads the photo and drives the wrapper file input', async () => {
-  const wrapper = fakeWrapper();
+  const page = settlingPage(23, 1); // the commit is visible at once
+  const wrapper = fakeWrapper(page, page.noteOpen);
   const ctx = fileHost(new Uint8Array([1, 2, 3]), wrapper);
   const out = await byName('lightcraft.import_file').run({ path: '/Photos/trip/IMG_0001.cr2' }, ctx);
   assert.deepEqual(ctx.calls.read, ['/Photos/trip/IMG_0001.cr2']);
@@ -171,6 +193,29 @@ test('lightcraft.import_file reads the photo and drives the wrapper file input',
   assert.equal(wrapper.opened[0].name, 'IMG_0001.cr2');
   assert.deepEqual([...wrapper.opened[0].parts[0]], [1, 2, 3]);
   assert.deepEqual(out, { name: 'IMG_0001.cr2', bytes: 3 }); // no opened field: the page has no inspect
+  // T10: the count is read before the open, and the tool settles on the first counted read.
+  assert.deepEqual(page.events, ['catalog.stats', 'open', 'catalog.stats']);
+});
+
+test('lightcraft.import_file returns only once the catalog has counted the photo (T10)', async () => {
+  const page = settlingPage(23, 3); // the commit lands on the third stats read after the open
+  const wrapper = fakeWrapper(page, page.noteOpen);
+  const ctx = fileHost(new Uint8Array([1, 2, 3]), wrapper);
+  const out = await byName('lightcraft.import_file').run({ path: '/Photos/trip/IMG_0001.cr2' }, ctx);
+  assert.deepEqual(out, { name: 'IMG_0001.cr2', bytes: 3 });
+  // One pre-open count read, the open, then two stale reads and one settled read.
+  assert.deepEqual(page.events, ['catalog.stats', 'open', 'catalog.stats', 'catalog.stats', 'catalog.stats']);
+});
+
+test('waitUntilCounted gives up with a teaching error when the count never rises', async () => {
+  const page = { command: async () => JSON.stringify({ photos: 23 }) };
+  const host = { appWindow: async () => ({ document: { getElementById: id => (id === 'editor' ? { contentWindow: { lightcraft: page } } : null) } }) };
+  await assert.rejects(waitUntilCounted(host, 23, 1500, 50), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'app_error');
+    assert.match(error.message, /did not count it within 2 s/);
+    return true;
+  });
 });
 
 test('lightcraft.import_file turns a store not_found into a teaching ToolError', async () => {

@@ -52,12 +52,26 @@ const fakeDocs = (overrides = {}, { initial } = {}) => {
     descendants: f => {
       let pos = 0;
       for (const para of paragraphs) {
-        f({ isTextblock: true, isText: false, attrs: { paraId: para.paraId }, content: { size: liveText(para.segs).length }, get textContent() { return liveText(para.segs); } }, pos);
+        // nodeSize is the content length: the tools compute the paragraph range as
+        // [from.pos, to.pos + to.size), which in this fake world is the next paragraph's start.
+        f({ isTextblock: true, isText: false, attrs: { paraId: para.paraId, ...(para.styleId ? { styleId: para.styleId } : {}) }, content: { size: liveText(para.segs).length }, get textContent() { return liveText(para.segs); }, get nodeSize() { return liveText(para.segs).length; } }, pos);
         for (const seg of para.segs) {
           if (!seg.dead) f({ isTextblock: false, isText: true, text: seg.text, marks: seg.mark ? [{ type: seg.mark }] : [] }, pos);
           pos += seg.text.length;
         }
       }
+    },
+    // The cut fragment for move_section: the paragraphs whose start sits in [from, to). Dead
+    // segments still count for positions (removed text does in a doc), so the range is stable
+    // after the delete step of the same transaction.
+    slice: (from, to) => {
+      let pos = 0;
+      const frag = [];
+      for (const para of paragraphs) {
+        if (pos >= from && pos < to) frag.push(para);
+        pos += para.segs.reduce((a, s) => a + s.text.length, 0);
+      }
+      return frag;
     },
     nodesBetween: (from, to, cb) => {
       const st = starts();
@@ -70,21 +84,29 @@ const fakeDocs = (overrides = {}, { initial } = {}) => {
     get content() { return { size: segList().reduce((a, s) => a + s.text.length, 0) }; },
   };
   // A fake Transaction: insertText replaces a range with text (the find_replace path);
-  // removeMark / delete back the accept-all transaction (the insert_text path).
+  // removeMark / delete back the accept-all transaction (the insert_text path); setSelection
+  // records the selection the list tools set; delete + insert back the move_section cut and
+  // paste (the fragment is the paragraphs object, moved in the array when dispatched).
   const newTr = () => {
     const t = {
       steps: [],
       insertText: (text, from, to) => { t.steps.push(['insertText', text, from, to]); return t; },
       removeMark: (from, to, mark) => { t.steps.push(['removeMark', from, to, mark]); return t; },
       delete: (from, to) => { t.steps.push(['delete', from, to]); return t; },
+      setSelection: sel => { t.steps.push(['setSelection', sel]); return t; },
+      insert: (pos, fragment) => { t.steps.push(['insert', pos, fragment]); return t; },
     };
     return t;
   };
   // state.tr is a getter like EditorState.tr (prosemirror-state:843), so it hands out a fresh
   // transaction; getView().state and .dispatch are what the tools target on the live view.
+  // selection is a live text selection whose constructor carries the app's TextSelection.create
+  // (the list tools reach the class through it, realm-safe).
+  const selection = { anchor: 0, head: 0, constructor: { create: (doc, from, to) => ({ anchor: from, head: to }) } };
   const state = {
     schema: { marks: { insertion: INS, deletion: DEL } },
     doc,
+    selection,
     get tr() { return newTr(); },
   };
   const dispatch = t => {
@@ -104,7 +126,7 @@ const fakeDocs = (overrides = {}, { initial } = {}) => {
         const [, text, from, to] = step;
         // Typing into an empty paragraph (a fresh document): no text node holds the position.
         const empty = paragraphs.find(p => liveText(p.segs) === '');
-        if (to === undefined && empty) { empty.segs.push({ text, mark: null, dead: false }); continue; }
+        if (to === undefined && empty) { empty.segs.push({ text, mark: null, dead: false }); if (!empty.paraId) empty.paraId = `p${++paraSeq}`; continue; }
         segs.forEach((seg, i) => {
           const s = st[i], e = s + seg.text.length;
           if (from < s || to > e) return;
@@ -117,6 +139,24 @@ const fakeDocs = (overrides = {}, { initial } = {}) => {
           const para = paragraphs.find(x => x.segs.includes(seg));
           para.segs.splice(para.segs.indexOf(seg), 1, ...next);
         });
+      } else if (step[0] === 'insert') {
+        // The move_section paste: the fragment paragraphs are pulled out of the array (they were
+        // marked dead by the delete step of the same transaction), un-dead and re-inserted at
+        // the target, which is a position in the post-delete world (the live starts of the
+        // paragraphs that remain).
+        const [, pos, fragment] = step;
+        const frag = Array.isArray(fragment) ? fragment : [fragment];
+        for (const para of frag) {
+          const i = paragraphs.indexOf(para);
+          if (i >= 0) paragraphs.splice(i, 1);
+        }
+        frag.forEach(para => para.segs.forEach(seg => { seg.dead = false; }));
+        let idx = paragraphs.length, acc = 0;
+        for (let i = 0; i < paragraphs.length; i++) {
+          if (acc >= pos) { idx = i; break; }
+          acc += liveText(paragraphs[i].segs).length;
+        }
+        paragraphs.splice(idx, 0, ...frag);
       }
     }
   };
@@ -164,6 +204,15 @@ const fakeDocs = (overrides = {}, { initial } = {}) => {
     },
     applyFormatting: opts => { calls.push(['applyFormatting', opts]); return true; },
     createDocument: opts => { calls.push(['createDocument', opts]); return true; },
+    executeCommand: async (id, params) => { calls.push(['executeCommand', id, params]); return true; },
+    deleteParagraphs: opts => {
+      calls.push(['deleteParagraphs', opts]);
+      const ids = new Set(opts.paraIds);
+      for (let i = paragraphs.length - 1; i >= 0; i--) if (ids.has(paragraphs[i].paraId)) paragraphs.splice(i, 1);
+      return true;
+    },
+    save: () => { calls.push(['save']); return new ArrayBuffer(3); },
+    importDocx: bytes => { calls.push(['importDocx', bytes.length ?? bytes.byteLength]); },
     // getEditorRef (PagedEditorRef, react-ltZBBRVr.d.ts:1225): getState() is the FRESH ProseMirror
     // state the tools read; getView() exposes state (with the tr getter, like EditorState.tr) and
     // dispatch for both the accept transaction (insert_text) and plain find_replace insertText
@@ -183,10 +232,12 @@ test('the pack declares its id and title', () => {
   assert.deepEqual(pack, { id: 'docs', title: 'Docs' });
 });
 
-test('the pack exposes exactly the 6 docs tools', () => {
-  assert.equal(tools.length, 6);
+test('the pack exposes exactly the 12 docs tools', () => {
+  assert.equal(tools.length, 12);
   assert.deepEqual(tools.map(tool => tool.name).sort(), [
-    'docs.bold_selection', 'docs.find_replace', 'docs.get_text', 'docs.insert_text', 'docs.new', 'docs.set_heading',
+    'docs.bold_selection', 'docs.delete_section', 'docs.find_replace', 'docs.get_text',
+    'docs.insert_after', 'docs.insert_text', 'docs.make_list', 'docs.move_section',
+    'docs.new', 'docs.open', 'docs.save', 'docs.set_heading',
   ]);
 });
 
@@ -197,7 +248,7 @@ test('every tool has the required text fields, effect, needs and examples', () =
     assert.ok(tool.when.startsWith('Use when'), `${tool.name} when must start with "Use when"`);
     assert.ok(tool.when.length <= 120, `${tool.name} when is ${tool.when.length} chars`);
     assert.ok(['read', 'change', 'destructive', 'external'].includes(tool.effect), `${tool.name} bad effect`);
-    assert.deepEqual(tool.needs, ['host', 'app:docs']);
+    assert.deepEqual(tool.needs, ['docs.save', 'docs.open'].includes(tool.name) ? ['host', 'app:docs', 'files'] : ['host', 'app:docs']);
     assert.equal(typeof tool.run, 'function');
     assert.ok(tool.examples.length >= 1, `${tool.name} has examples`);
     for (const example of tool.examples) {
@@ -222,8 +273,11 @@ test('every example passes the runtime checkArgs the way the build runs it', () 
 
 test('the effects are read for reads, change for edits, and docs.new is destructive', () => {
   assert.equal(byName('docs.get_text').effect, 'read', 'get_text');
-  for (const name of ['docs.insert_text', 'docs.set_heading', 'docs.find_replace', 'docs.bold_selection']) assert.equal(byName(name).effect, 'change', name);
-  assert.equal(byName('docs.new').effect, 'destructive', 'new');
+  for (const name of ['docs.insert_text', 'docs.set_heading', 'docs.find_replace', 'docs.bold_selection', 'docs.make_list', 'docs.insert_after', 'docs.move_section']) assert.equal(byName(name).effect, 'change', name);
+  for (const name of ['docs.new', 'docs.delete_section', 'docs.open']) assert.equal(byName(name).effect, 'destructive', name);
+  assert.equal(byName('docs.save').effect, 'change', 'save');
+  assert.equal(byName('docs.save').effectFor({ overwrite: true }), 'destructive', 'save overwrite');
+  assert.equal(byName('docs.save').effectFor({}), 'change', 'save default');
 });
 
 test('docs.get_text reads the live document with a paraId per paragraph', async () => {
@@ -349,6 +403,133 @@ test('docs.new creates a fresh document with the default title', async () => {
   assert.deepEqual(docs.calls.at(-1), ['createDocument', { title: 'Weekly report', sections: [] }]);
 });
 
+test('docs.make_list selects the line range and runs the list command', async () => {
+  const docs = fakeDocs();
+  const out = await docs.runTool('docs.make_list', { kind: 'bullet', from_text: 'First draft', to_text: 'Second line' });
+  assert.deepEqual(out, { kind: 'bullet', from: 'First draft', to: 'Second line' });
+  const sel = docs.viewDispatches[0].steps.find(s => s[0] === 'setSelection');
+  // "First draft" starts at 0, "Second line" starts at 11 and its nodeSize is 11: the
+  // selection spans both paragraphs, ending at the next paragraph's start.
+  assert.deepEqual(sel[1], { anchor: 0, head: 22 });
+  const cmd = docs.calls.at(-1);
+  assert.equal(cmd[0], 'executeCommand');
+  assert.equal(cmd[1], 'toggleBulletList');
+  await assert.rejects(docs.runTool('docs.make_list', { kind: 'numbered', from_text: 'Second line', to_text: 'First draft' }), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    return true;
+  });
+});
+
+test('docs.insert_after inserts after the paragraph with the exact text and accepts it', async () => {
+  const docs = fakeDocs();
+  const out = await docs.runTool('docs.insert_after', { text: 'Mid line', after: 'First draft' });
+  assert.deepEqual(out, { insertedAfter: 'p1', text: 'Mid line' });
+  const after = await docs.runTool('docs.get_text', {});
+  assert.deepEqual(after.paragraphs.map(p => p.text), ['First draft', 'Mid line', 'Second line']);
+  await assert.rejects(docs.runTool('docs.insert_after', { text: 'x', after: 'No such line' }), error => {
+    assert.ok(error instanceof ToolError);
+    assert.match(error.message, /no paragraph with the exact text/);
+    return true;
+  });
+});
+
+test('docs.delete_section removes the paragraph range and keeps the rest', async () => {
+  const docs = fakeDocs({}, { initial: [
+    { paraId: 'p1', segs: [{ text: 'Old ideas', mark: null, dead: false }] },
+    { paraId: 'p2', segs: [{ text: 'Red wiring', mark: null, dead: false }] },
+    { paraId: 'p3', segs: [{ text: 'Current plan', mark: null, dead: false }] },
+  ]});
+  const out = await docs.runTool('docs.delete_section', { from_text: 'Old ideas', to_text: 'Red wiring' });
+  assert.deepEqual(out, { deleted: 2, from: 'Old ideas', to: 'Red wiring' });
+  assert.deepEqual(docs.calls.find(c => c[0] === 'deleteParagraphs')[1].paraIds, ['p1', 'p2']);
+  const after = await docs.runTool('docs.get_text', {});
+  assert.deepEqual(after.paragraphs.map(p => p.text), ['Current plan']);
+});
+
+test('docs.move_section moves the range above the anchor line and keeps every line', async () => {
+  const initial = [
+    { paraId: 'p1', segs: [{ text: 'Current plan', mark: null, dead: false }] },
+    { paraId: 'p2', segs: [{ text: 'Ship it.', mark: null, dead: false }] },
+    { paraId: 'p3', segs: [{ text: 'Next steps', mark: null, dead: false }] },
+    { paraId: 'p4', segs: [{ text: 'Open the beta.', mark: null, dead: false }] },
+  ];
+  const docs = fakeDocs({}, { initial });
+  const out = await docs.runTool('docs.move_section', { from_text: 'Next steps', to_text: 'Open the beta.', before_text: 'Current plan' });
+  assert.equal(out.before, 'Current plan');
+  assert.deepEqual((await docs.runTool('docs.get_text', {})).paragraphs.map(p => p.text), ['Next steps', 'Open the beta.', 'Current plan', 'Ship it.']);
+  // A target after the range: the target shifts up by the removed range in the cut world.
+  const docs2 = fakeDocs({}, { initial });
+  await docs2.runTool('docs.move_section', { from_text: 'Current plan', to_text: 'Ship it.', before_text: 'Open the beta.' });
+  assert.deepEqual((await docs2.runTool('docs.get_text', {})).paragraphs.map(p => p.text), ['Next steps', 'Current plan', 'Ship it.', 'Open the beta.']);
+});
+
+// A fake ctx.files for the save/open tools: the writes are recorded, the reads return the
+// given markdown or docx payload.
+const filesFake = (markdown = '') => {
+  const writes = [];
+  return {
+    writes,
+    readText: path => Promise.resolve({ path, name: 'plan.md', text: markdown }),
+    readBytes: path => Promise.resolve({ path, name: 'plan.docx', bytes: new Uint8Array([1, 2]), size: 2 }),
+    writeText: (path, text, { overwrite } = {}) => { writes.push({ path, text, overwrite }); return Promise.resolve({ path, size: text.length, created: true }); },
+    writeBytes: (path, bytes, { overwrite } = {}) => { writes.push({ path, size: bytes.length, overwrite }); return Promise.resolve({ path, size: bytes.length, created: true }); },
+  };
+};
+
+test('docs.save writes the document as markdown or docx bytes to Files', async () => {
+  const docs = fakeDocs({}, { initial: [
+    { paraId: 'p1', styleId: 'Heading1', segs: [{ text: 'Quarterly plan', mark: null, dead: false }] },
+    { paraId: 'p2', segs: [{ text: 'Ship the billing redesign in September.', mark: null, dead: false }] },
+  ]});
+  const files = filesFake();
+  const ctx = { host: { appWindow: async () => docs.win }, files };
+  const md = await byName('docs.save').run({ path: '/docs/plan.md' }, ctx);
+  assert.deepEqual(md, { path: '/docs/plan.md', size: 56, created: true, format: 'markdown' });
+  assert.equal(files.writes[0].text, '# Quarterly plan\nShip the billing redesign in September.');
+  const docx = await byName('docs.save').run({ path: '/docs/plan.docx' }, ctx);
+  assert.equal(docx.format, 'docx');
+  assert.equal(files.writes[1].size, 3);
+  await assert.rejects(byName('docs.save').run({ path: '/docs/plan.txt' }, ctx), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.match(error.message, /\.md \(markdown\) or \.docx/);
+    return true;
+  });
+});
+
+test('docs.save rejects when Files are not available', async () => {
+  const docs = fakeDocs();
+  await assert.rejects(byName('docs.save').run({ path: '/docs/plan.md' }, { host: { appWindow: async () => docs.win } }), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'not_available');
+    return true;
+  });
+});
+
+test('docs.open builds a new document from a markdown file in Files', async () => {
+  const docs = fakeDocs({ getSelection: () => null }, { initial: [{ paraId: null, segs: [] }] });
+  const files = filesFake('# Quarterly plan\nShip it.\n\nOpen the beta.');
+  const out = await byName('docs.open').run({ path: '/docs/plan.md' }, { host: { appWindow: async () => docs.win }, files });
+  assert.deepEqual(out, { path: '/docs/plan.md', opened: 'plan' });
+  assert.deepEqual(docs.calls[0], ['createDocument', { title: 'plan', sections: [] }]);
+  // The # line becomes a heading paragraph; blank lines are skipped; the lines land in order.
+  assert.deepEqual(docs.calls.find(c => c[0] === 'setParagraphStyle'), ['setParagraphStyle', { paraId: 'p3', styleId: 'Heading1' }]);
+  assert.deepEqual((await docs.runTool('docs.get_text', {})).paragraphs.map(p => p.text), ['Quarterly plan', 'Ship it.', 'Open the beta.']);
+});
+
+test('docs.open loads a docx file through the editor import', async () => {
+  const docs = fakeDocs({ getSelection: () => null }, { initial: [{ paraId: null, segs: [] }] });
+  const out = await byName('docs.open').run({ path: '/docs/plan.docx' }, { host: { appWindow: async () => docs.win }, files: filesFake() });
+  assert.deepEqual(out, { path: '/docs/plan.docx', opened: 'plan' });
+  assert.ok(docs.calls.some(c => c[0] === 'importDocx'), 'the docx bytes go through importDocx');
+  await assert.rejects(byName('docs.open').run({ path: '/docs/plan.txt' }, { host: { appWindow: async () => docs.win }, files: filesFake() }), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    return true;
+  });
+});
+
 test('a tool rejects with not_available when ctx.host is absent', async () => {
   await assert.rejects(byName('docs.get_text').run({}, { host: null }), error => {
     assert.ok(error instanceof ToolError);
@@ -377,9 +558,9 @@ test('a host rejection code is passed through as the ToolError type', async () =
 
 const { skills, errors: skillErrors } = parseSkills(SKILLS_MD, 'docs');
 
-test('skills.md parses with the runtime parser without errors and has 6 skills', () => {
+test('skills.md parses with the runtime parser without errors and has 12 skills', () => {
   assert.deepEqual(skillErrors, []);
-  assert.equal(skills.length, 6);
+  assert.equal(skills.length, 12);
   for (const skill of skills) {
     assert.ok(skill.slug && skill.summary, `skill ${skill.slug} slug/summary`);
     assert.ok(skill.summary.length <= 160, `skill ${skill.slug} summary is ${skill.summary.length} chars`);

@@ -1,0 +1,324 @@
+# Docs journeys (12). train 9, holdout 3 (docs-04, docs-08, docs-12).
+# Revised for gate round 2 (2026-11-25): the heading-plus-lines and replace-variant
+# pile is replaced by the missing capabilities the review listed - formatting (bold),
+# a list, export to Files, opening a document, a question about a seeded document,
+# deleting a section, moving a section. All five J3 gaps are built in the pack
+# (docs.make_list, docs.save, docs.open, docs.delete_section, docs.move_section, and
+# docs.insert_after for text-anchored inserts) and the journeys are oracles; a setup
+# run step creates every document a prompt assumes.
+# docs-07 needs no tool: its oracle carries the runtime paragraph id as a
+# ${0.paragraphs[0].paraId} step reference and pins the order by reading back.
+# Checks pin only wording the user gave; text checks ignore case and repeated spaces.
+# Heading levels are never checked as headings (the result of docs.get_text does not
+# show them): the affected journeys carry a check_gap.
+app: docs
+journeys:
+  - id: docs-01-release-notes
+    split: train
+    title: "A release note with a heading and a bolded summary line"
+    prompt: >-
+      Write the release note for today's drop. Start with a top heading Release notes,
+      then a line saying Three fixes and a new feature in this release, and make that
+      summary line bold so it stands out when it is skimmed.
+    setup:
+      - close_all: true
+      - open_app: docs
+      - reset_app: docs
+    oracle:
+      - tool: docs.insert_text
+        text: Release notes
+      - tool: docs.set_heading
+        level: 1
+      - tool: docs.insert_text
+        text: Three fixes and a new feature in this release.
+      - tool: docs.bold_selection
+    checks:
+      - docs_text_contains: "Release notes"
+      - docs_text_contains: "Three fixes and a new feature in this release"
+    covers: [docs.insert_text, docs.set_heading, docs.bold_selection]
+    notes: "Create plus formatting; the user's two lines are pinned."
+    check_gap: "the heading level and the bold state are not readable by the current check kinds; a read on docs.get_text would pin them where the result shows it."
+
+  - id: docs-02-draft-to-final
+    split: train
+    title: "Polish a launch note: reword once and replace the word draft everywhere"
+    prompt: >-
+      I have a rough launch note and I want it tightened. Type the sentence The launch
+      draft goes out on Tuesday, please review the draft before then, then change the
+      phrase review the draft to read and sign off, and after that replace every
+      occurrence of the word draft with final so the note is clean.
+    setup:
+      - close_all: true
+      - open_app: docs
+      - reset_app: docs
+    oracle:
+      - tool: docs.insert_text
+        text: The launch draft goes out on Tuesday, please review the draft before then.
+      - tool: docs.find_replace
+        find: review the draft
+        replace: read and sign off
+      - tool: docs.find_replace
+        find: draft
+        replace: final
+    checks:
+      - docs_text_contains: "launch final goes out on Tuesday"
+      - docs_text_contains: "read and sign off before then"
+    covers: [docs.insert_text, docs.find_replace]
+    notes: "Two replacement passes; the second pass acts on text the first pass produced, and both end states are pinned."
+
+  - id: docs-03-plan-questions
+    split: train
+    title: "Answer two questions about an existing document"
+    prompt: >-
+      My plan document has a line with the launch date and a line with the budget. Read
+      it and tell me the launch date and the budget.
+    setup:
+      - close_all: true
+      - open_app: docs
+      - reset_app: docs
+      - run: { tool: docs.insert_text, text: "Launch: 30 September" }
+      - run: { tool: docs.insert_text, text: "Budget: 12000" }
+    oracle:
+      - tool: docs.get_text
+    checks:
+      - answer_contains: "30 September"
+      - answer_contains: "12000"
+    covers: [docs.get_text]
+    notes: "Read-then-answer over a document seeded by setup; both answers come from the document, not the prompt."
+
+  - id: docs-04-first-occurrence-only
+    split: holdout
+    title: "Replace only the first of two occurrences"
+    prompt: >-
+      The sentence I need fixed has the word asap in it twice, and I only want the first
+      one changed. Type Please send the report asap, or asap if the client calls,
+      otherwise Monday, then replace just the first occurrence of asap with by Friday
+      and leave the second one exactly where it is.
+    setup:
+      - close_all: true
+      - open_app: docs
+      - reset_app: docs
+    oracle:
+      - tool: docs.insert_text
+        text: Please send the report asap, or asap if the client calls, otherwise Monday.
+      - tool: docs.find_replace
+        find: asap
+        replace: by Friday
+        limit: 1
+    checks:
+      - docs_text_contains: "by Friday, or asap"
+      - docs_text_contains: "otherwise Monday"
+    covers: [docs.insert_text, docs.find_replace]
+    notes: "limit=1 pinned both ways: the replacement is present and the second asap survived, so an unbounded replace fails."
+
+  - id: docs-05-ship-checklist
+    split: train
+    title: "A ship-day checklist as a bulleted list"
+    prompt: >-
+      Make me a checklist for ship day. Start with a heading Ship day, then the four
+      lines as a bulleted list: freeze the build, verify the status page, keep the war
+      room open, and have the rollback ready.
+    setup:
+      - close_all: true
+      - open_app: docs
+      - reset_app: docs
+    oracle:
+      - tool: docs.insert_text
+        text: Ship day
+      - tool: docs.set_heading
+        level: 1
+      - tool: docs.insert_text
+        text: freeze the build
+      - tool: docs.insert_text
+        text: verify the status page
+      - tool: docs.insert_text
+        text: keep the war room open
+      - tool: docs.insert_text
+        text: have the rollback ready
+      - tool: docs.make_list
+        kind: bullet
+        from_text: freeze the build
+        to_text: have the rollback ready
+    checks:
+      - docs_text_contains: "freeze the build"
+      - docs_text_contains: "verify the status page"
+      - docs_text_contains: "have the rollback ready"
+    covers: [docs.insert_text, docs.set_heading, docs.make_list]
+    notes: "List-formatting journey; the four user lines are pinned and the make_list step applies the bullet styling."
+    check_gap: "bullet style is not readable by the current check kinds."
+
+  - id: docs-06-save-to-files
+    split: train
+    title: "Export the open document to a file in Files"
+    prompt: >-
+      I have this plan document open and I want a copy of it in my files at
+      /docs/plan.md as a markdown file, so it sits with my other notes and I can keep
+      working on the open one.
+    setup:
+      - close_all: true
+      - open_app: docs
+      - reset_app: docs
+      - run: { tool: docs.insert_text, text: Quarterly plan }
+      - run: { tool: docs.insert_text, text: Ship the billing redesign in September. }
+    oracle:
+      - tool: docs.save
+        path: /docs/plan.md
+    checks:
+      - file_exists: /docs/plan.md
+      - file_contains: { path: /docs/plan.md, text: "Ship the billing redesign in September" }
+    covers: [docs.save]
+    notes: "Export journey; the file landing in Files with the document's content is the end state."
+
+  - id: docs-07-mid-doc-insert
+    split: train
+    title: "Insert a line after a specific paragraph, not at the end"
+    prompt: >-
+      In my document, right after the paragraph that starts with First draft done I need
+      the line Sent to the client to appear, and it must not go at the end of the
+      document where the closing line sits.
+    setup:
+      - close_all: true
+      - open_app: docs
+      - reset_app: docs
+      - run: { tool: docs.insert_text, text: First draft done }
+      - run: { tool: docs.insert_text, text: End of experiment notes }
+    oracle:
+      - tool: docs.get_text
+      - tool: docs.insert_text
+        text: "Sent to the client"
+        para_id: "${0.paragraphs[0].paraId}"
+      - tool: docs.get_text
+    checks:
+      - docs_text_contains: "Sent to the client"
+      - answer_matches: "Sent to the client.{1,10}End of experiment notes"
+    notes: "Genuine read-then-act journey; setup seeds the document, the oracle reads the paragraph ids, inserts after the first paragraph's id (${0.paragraphs[0].paraId}) and the final read pins the order."
+
+  - id: docs-08-start-over
+    split: holdout
+    title: "Start over with a fresh document and an intro line"
+    prompt: >-
+      I messed up the experiment notes and want to forget them, so start over with a
+      brand new document titled Q3 plan and in it type the line that this quarter we
+      ship the billing redesign.
+    setup:
+      - close_all: true
+      - open_app: docs
+      - reset_app: docs
+      - run: { tool: docs.insert_text, text: Old experiment notes }
+      - run: { tool: docs.insert_text, text: Try the red wiring first }
+    oracle:
+      - tool: docs.new
+        title: "Q3 plan"
+      - tool: docs.insert_text
+        text: This quarter we ship the billing redesign.
+    checks:
+      - docs_text_contains: "This quarter we ship the billing redesign"
+    covers: [docs.insert_text, docs.new]
+    notes: "Destructive restart; the old lines are seeded by setup, the new content is pinned."
+    check_gap: "docs_text_contains cannot assert the absence of the old lines; a check reading the full document text would pin the restart."
+
+  - id: docs-09-open-saved-document
+    split: train
+    title: "Open a saved document from Files"
+    prompt: >-
+      I have a plan document saved in my files at /docs/plan.md from last week. Open it
+      in the document app so I can keep working on it where I left off.
+    setup:
+      - close_all: true
+      - open_app: docs
+      - reset_app: docs
+      - seed_file: { path: /docs/plan.md, text: "Ship the billing redesign in September.\nOpen the beta to 500 users in October." }
+    oracle:
+      - tool: docs.open
+        path: /docs/plan.md
+    checks:
+      - docs_text_contains: "Ship the billing redesign in September"
+    covers: [docs.open]
+    notes: "Open journey; the seeded content is the document the prompt assumes, and its presence in the open document is the pin."
+
+  - id: docs-10-delete-section
+    split: train
+    title: "Delete a section of the notes and keep the rest"
+    prompt: >-
+      My notes have a section called Old ideas that I no longer need. Delete that whole
+      section, both the heading line and the line under it, keeping the rest of the
+      document exactly as it is.
+    setup:
+      - close_all: true
+      - open_app: docs
+      - reset_app: docs
+      - run: { tool: docs.insert_text, text: Old ideas }
+      - run: { tool: docs.insert_text, text: Try the red wiring first }
+      - run: { tool: docs.insert_text, text: Current plan }
+      - run: { tool: docs.insert_text, text: Ship the billing redesign. }
+    oracle:
+      - tool: docs.delete_section
+        from_text: Old ideas
+        to_text: Try the red wiring first
+    checks:
+      - docs_text_contains: "Ship the billing redesign."
+      - docs_text_contains: "Current plan"
+    covers: [docs.delete_section]
+    notes: "Delete journey over a seeded document; the surviving sections are pinned."
+    check_gap: "the absence of the Old ideas section is not assertable with the current checks."
+
+  - id: docs-11-move-section
+    split: train
+    title: "Move a section to the top of the document"
+    prompt: >-
+      My notes are in the wrong order. Move the section Next steps with its line to the
+      very top of the document, above the Current plan section, without touching the
+      other text.
+    setup:
+      - close_all: true
+      - open_app: docs
+      - reset_app: docs
+      - run: { tool: docs.insert_text, text: Current plan }
+      - run: { tool: docs.insert_text, text: Ship the billing redesign. }
+      - run: { tool: docs.insert_text, text: Next steps }
+      - run: { tool: docs.insert_text, text: Open the beta to 500 users. }
+    oracle:
+      - tool: docs.move_section
+        from_text: Next steps
+        to_text: Open the beta to 500 users.
+        before_text: Current plan
+      - tool: docs.get_text
+    checks:
+      - docs_text_contains: "Next steps"
+      - docs_text_contains: "Open the beta to 500 users"
+      - docs_text_contains: "Ship the billing redesign."
+      - answer_matches: "Next steps.{1,10}Open the beta to 500 users.{1,10}Current plan"
+    covers: [docs.move_section, docs.get_text]
+    notes: "Reorganise journey over a seeded document; all sections survive and the final read pins the new order (Next steps and its line above Current plan)."
+
+  - id: docs-12-demo-invite
+    split: holdout
+    title: "Demo invite document with heading and three lines"
+    prompt: >-
+      I need to invite the team to the product demo. Make a heading Demo invite, then a
+      line saying join the product demo on Wednesday at 14:00, then a line saying the
+      room is the glass one and the link goes in the invite, and finally a line asking
+      people to reply if they cannot make it.
+    setup:
+      - close_all: true
+      - open_app: docs
+      - reset_app: docs
+    oracle:
+      - tool: docs.insert_text
+        text: Demo invite
+      - tool: docs.set_heading
+        level: 1
+      - tool: docs.insert_text
+        text: Join the product demo on Wednesday at 14:00.
+      - tool: docs.insert_text
+        text: The room is the glass one, and the link goes in the invite.
+      - tool: docs.insert_text
+        text: Reply if you cannot make it.
+    checks:
+      - docs_text_contains: "Demo invite"
+      - docs_text_contains: "Wednesday at 14:00"
+      - docs_text_contains: "glass"
+      - docs_text_contains: "cannot make it"
+    covers: [docs.insert_text, docs.set_heading]
+    notes: "Holdout variant of the invite genre; the checks pin only the facts the user gave, never the wording I invented."
+    check_gap: "the heading level is not readable by the current check kinds."

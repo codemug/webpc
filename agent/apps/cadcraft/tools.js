@@ -30,7 +30,8 @@ const windowOf = args => ([args.window_x0, args.window_y0, args.window_x1, args.
 // key=value lines -> object, with number and boolean coercion (the generic long-tail tool).
 const parseParams = text => {
   const out = {};
-  for (const line of String(text ?? '').split('\n')) {
+  // A literal backslash-n counts as a line break too: small models often write \n in the text.
+  for (const line of String(text ?? '').split(/\n|\\n/)) {
     const row = line.trim();
     if (!row) continue;
     const eq = row.indexOf('=');
@@ -65,7 +66,7 @@ export const tools = [
     needs: NEEDS,
     examples: [{ args: { text: 'line\n0,0\n10,0\n' }, says: 'Draw a line from 0,0 to 10,0' }],
     // tools.rs:120 cmdline.script
-    run: async (args, ctx) => teachApp(await ctx.craft(APP), NO_DOC.message, NO_DOC.fix).request('cmdline.script', pick(args, ['text'])),
+    run: async (args, ctx) => teachApp(await ctx.craft(APP), NO_DOC.message, NO_DOC.fix).request('cmdline.script', { text: String(args.text ?? '').replace(/\\n/g, '\n') }), // literal \n from small models is a line break
   },
   {
     name: 'cadcraft.inspect',

@@ -42,7 +42,8 @@ const parseValue = raw => {
 // key=value lines -> object (the generic long-tail form for params).
 const parseParams = text => {
   const out = {};
-  for (const line of String(text ?? '').split('\n')) {
+  // A literal backslash-n counts as a line break too: small models often write \n in the text.
+  for (const line of String(text ?? '').split(/\n|\\n/)) {
     const row = line.trim();
     if (!row) continue;
     const eq = row.indexOf('=');

@@ -1,0 +1,121 @@
+app: materialcraft
+# MaterialCraft journeys (J1, Craft Integrator lane), written to the post-gate rules.
+# MaterialCraft is a standalone wrapper app with no page API (no request/execute/commands
+# surface), so there is no craft_request read: the app's own observable state is the
+# wrapper's status line, which the materialcraft.status tool reads. The wrapper sets it to
+# "Save in the editor to download and keep a browser copy" when the editor reports ready,
+# and to "Opened: <file name>" whenever a file is handed to the editor (scripts/pc/craft/
+# app.mjs openFile); with several drops in a row the line always reports the last one.
+# Images drop in as bitmaps (releases.mjs accept: .sbs, .mcraft, image/*). save_copy is
+# deliberately not exercised in any journey: it waits for the editor's own Save download,
+# which no catalog tool can trigger, so a save journey would time out by design. Journeys
+# therefore cover the bitmap drop surface and the status read, and question journeys
+# check the answer plus the status line itself.
+
+journeys:
+  - id: materialcraft-01-drop-beach-bitmap
+    split: train
+    title: Drop the beach photo in as a bitmap
+    prompt: >-
+      I want the beach sunset scan as a bitmap in the material work so I can build a shader
+      around it. The file is in Files at /MaterialCraft/beach-sunset.jpg. Drop that image
+      into MaterialCraft for me so it is on the canvas as a bitmap and I can wire the first
+      nodes of the graph to it.
+    setup:
+      - close_all: true
+      - open_app: materialcraft
+      - seed_fixture: { path: /MaterialCraft/beach-sunset.jpg, fixture: beach-sunset.jpg }
+    oracle:
+      - { tool: materialcraft.open_file, path: /MaterialCraft/beach-sunset.jpg }
+    checks:
+      - window_open: materialcraft
+      - read_tool: { tool: materialcraft.status, path: status, contains: 'Opened: beach-sunset.jpg' }
+    covers: [materialcraft.open_file]
+    notes: The wrapper's status line is the app's observable state (there is no page API), and it reports Opened plus the file name once the bitmap is handed to the editor.
+
+  - id: materialcraft-02-portrait-bitmap-report
+    split: train
+    title: Drop the portrait in and report the file name
+    prompt: >-
+      I have two scans floating around in Files and I want to make sure the portrait is the
+      bitmap the graph is going to use. Drop /MaterialCraft/mountain-portrait.jpg into
+      MaterialCraft, then look at what the app is reporting and tell me the exact file name
+      the status line says was opened, so I know the bitmap I am wiring up is the portrait.
+    setup:
+      - close_all: true
+      - open_app: materialcraft
+      - seed_fixture: { path: /MaterialCraft/mountain-portrait.jpg, fixture: mountain-portrait.jpg }
+    oracle:
+      - { tool: materialcraft.open_file, path: /MaterialCraft/mountain-portrait.jpg }
+      - { tool: materialcraft.status }
+    checks:
+      - answer_contains: mountain-portrait.jpg
+      - read_tool: { tool: materialcraft.status, path: status, contains: 'Opened:' }
+    covers: [materialcraft.open_file, materialcraft.status]
+    notes: Read then answer; the answer carries the file name and the status line independently confirms the drop, so the two checks pin the same fact from both sides.
+
+  - id: materialcraft-03-city-bitmap-reimport
+    split: holdout
+    title: Redrop the city bitmap and confirm it is the open one
+    prompt: >-
+      The city night bitmap seems to have dropped out of MaterialCraft earlier and the canvas
+      looks empty to me, so I need it back before the shader review. Drop
+      /MaterialCraft/city-night.png into MaterialCraft again and confirm from the app status
+      that the city bitmap is the one that is open now, so I can stop worrying about the
+      missing bitmap and get back to the graph.
+    setup:
+      - close_all: true
+      - open_app: materialcraft
+      - seed_fixture: { path: /MaterialCraft/city-night.png, fixture: city-night.png }
+    oracle:
+      - { tool: materialcraft.open_file, path: /MaterialCraft/city-night.png }
+      - { tool: materialcraft.status }
+    checks:
+      - read_tool: { tool: materialcraft.status, path: status, equals: 'Opened: city-night.png' }
+      - answer_contains: city-night.png
+    covers: [materialcraft.open_file, materialcraft.status]
+    notes: The user believes the earlier drop was lost; the oracle drops the bitmap and the exact status line pins that the drop landed on that file, while the answer confirms the agent reported it.
+
+  - id: materialcraft-04-what-the-status-says
+    split: train
+    title: Report what a fresh MaterialCraft wrapper status says
+    prompt: >-
+      I just opened MaterialCraft fresh and before I drop any bitmaps in I want to understand
+      how the wrapper keeps my graph work safe, because a lost shader graph would ruin the
+      build. Read the app status and tell me what the wrapper is telling me right now, so I
+      know how I should save the package before I close the tab and how a saved copy is kept.
+    setup:
+      - close_all: true
+      - open_app: materialcraft
+    oracle:
+      - { tool: materialcraft.status }
+    checks:
+      - answer_contains: 'browser copy'
+      - read_tool: { tool: materialcraft.status, path: status, equals: 'Save in the editor to download and keep a browser copy' }
+    covers: [materialcraft.status]
+    notes: A fresh editor reports ready and the wrapper sets its ready status line; the answer check wants the browser copy fact and the status check pins the exact line the wrapper shows.
+
+  - id: materialcraft-05-two-bitmaps-last-wins
+    split: train
+    title: Drop two bitmaps and report which one the status shows
+    prompt: >-
+      I am prepping both scans for the material set and I want them both through the drop in
+      MaterialCraft. Drop /MaterialCraft/beach-sunset.jpg first, and then drop
+      /MaterialCraft/city-night.png right after, because the order matters to me. When you
+      are done, tell me which file the status line is reporting as the open one now, so I
+      know which bitmap the editor is sitting on.
+    setup:
+      - close_all: true
+      - open_app: materialcraft
+      - seed_fixture: { path: /MaterialCraft/beach-sunset.jpg, fixture: beach-sunset.jpg }
+      - seed_fixture: { path: /MaterialCraft/city-night.png, fixture: city-night.png }
+    oracle:
+      - { tool: materialcraft.open_file, path: /MaterialCraft/beach-sunset.jpg }
+      - { tool: materialcraft.open_file, path: /MaterialCraft/city-night.png }
+      - { tool: materialcraft.status }
+    checks:
+      - window_open: materialcraft
+      - read_tool: { tool: materialcraft.status, path: status, equals: 'Opened: city-night.png' }
+      - answer_contains: city-night.png
+    covers: [materialcraft.open_file, materialcraft.status]
+    notes: The status line always reports the last file handed to the editor, so after the two drops it names the city night image; the exact status check plus the answer pin the final state.

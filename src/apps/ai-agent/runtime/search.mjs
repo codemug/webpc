@@ -10,8 +10,11 @@ export const FIELDS = ['name', 'title', 'keywords', 'purpose', 'when', 'summary'
 export const BOOST = { name: 3, title: 3, keywords: 2, purpose: 1.5, when: 1.5, summary: 1.5, body: 1 };
 
 // Stop words dropped from queries before they reach MiniSearch (the brief list, verbatim).
+// Question words joined later: "What is 6 times 7?" matched media.status ("what is playing") and the
+// see-what-is-open skill on "what" alone, above the sum skill.
 const STOP_WORDS = new Set([
-  'a', 'an', 'the', 'to', 'of', 'in', 'on', 'for', 'and', 'or', 'is', 'it', 'my', 'me', 'please', 'can', 'you', 'i'
+  'a', 'an', 'the', 'to', 'of', 'in', 'on', 'for', 'and', 'or', 'is', 'it', 'my', 'me', 'please', 'can', 'you', 'i',
+  'what', 'whats', 'how', 'which', 'does', 'do'
 ]);
 
 // The same split the MiniSearch default tokenizer uses (whitespace plus any punctuation),
@@ -31,10 +34,14 @@ const OPTIONS = {
 const REGEX_MAX_SOURCE = 200;
 const LIMIT_MAX = 20;
 
-/** Lowercase a query, split it on whitespace and punctuation, drop stop words, join with spaces. */
+/** Lowercase a query, split it on whitespace and punctuation, drop stop words, join with spaces.
+ *  Bare numbers are values, not search words: with prefix search "6 times 7" matched every
+ *  coordinate, size and step number ("60", "72", "6.") and ranked a FigCraft skill above the sum
+ *  skill. They are dropped unless the query has nothing else. */
 function cleanQuery(query) {
   const words = String(query).toLowerCase().split(SPLIT).filter(word => word && !STOP_WORDS.has(word));
-  return words.join(' ');
+  const named = words.filter(word => !/^\d+$/.test(word));
+  return (named.length ? named : words).join(' ');
 }
 
 /** Lowercase a query and split it on whitespace and punctuation, keeping stop words. */

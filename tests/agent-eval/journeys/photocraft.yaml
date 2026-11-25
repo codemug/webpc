@@ -1,0 +1,119 @@
+app: photocraft
+# PhotoCraft journeys (J1, Craft Integrator lane), written to the post-gate rules.
+# PhotoCraft is a standalone wrapper app with no page API (no request/execute/commands
+# surface), so there is no craft_request read: the app's own observable state is the
+# wrapper's status line, which the photocraft.status tool reads. The wrapper sets it to
+# "Save in the editor to download and keep a browser copy" when the editor reports ready,
+# and to "Opened: <file name>" whenever a file is handed to the editor (scripts/pc/craft/
+# app.mjs openFile); with several opens in a row the line always reports the last one.
+# save_copy is deliberately not exercised in any journey: it waits for the editor's own
+# Save download, which no catalog tool can trigger, so a save journey would time out by
+# design. Journeys therefore cover the image import surface and the status read, and
+# question journeys check the answer plus the status line itself.
+
+journeys:
+  - id: photocraft-01-import-beach-photo
+    split: train
+    title: Import the beach photo into PhotoCraft
+    prompt: >-
+      The beach sunset shot I took is in Files at /PhotoCraft/beach-sunset.jpg and I want it
+      in PhotoCraft before I start any retouching work. Import that image for me so it is on
+      the canvas and I can see the layers before I decide what to adjust in the picture.
+    setup:
+      - close_all: true
+      - open_app: photocraft
+      - seed_fixture: { path: /PhotoCraft/beach-sunset.jpg, fixture: beach-sunset.jpg }
+    oracle:
+      - { tool: photocraft.open_file, path: /PhotoCraft/beach-sunset.jpg }
+    checks:
+      - window_open: photocraft
+      - read_tool: { tool: photocraft.status, path: status, contains: 'Opened: beach-sunset.jpg' }
+    covers: [photocraft.open_file]
+    notes: The wrapper's status line is the app's observable state (there is no page API), and it reports Opened plus the file name once the image is handed to the editor.
+
+  - id: photocraft-02-report-the-import
+    split: train
+    title: Import the night city and report the file name
+    prompt: >-
+      I imported a picture into PhotoCraft but I have two city shots floating around and I am
+      not sure which one is open. Import /PhotoCraft/city-night.png into PhotoCraft, then look
+      at what the app is reporting and tell me the exact file name the status line says was
+      opened, so I know the image I am editing is the night one and not the other city shot.
+    setup:
+      - close_all: true
+      - open_app: photocraft
+      - seed_fixture: { path: /PhotoCraft/city-night.png, fixture: city-night.png }
+    oracle:
+      - { tool: photocraft.open_file, path: /PhotoCraft/city-night.png }
+      - { tool: photocraft.status }
+    checks:
+      - answer_contains: city-night.png
+      - read_tool: { tool: photocraft.status, path: status, contains: 'Opened:' }
+    covers: [photocraft.open_file, photocraft.status]
+    notes: Read then answer; the answer carries the file name and the status line independently confirms the import, so the two checks pin the same fact from both sides.
+
+  - id: photocraft-03-portrait-reimport
+    split: holdout
+    title: Reimport the portrait and confirm it is the open image
+    prompt: >-
+      The portrait import into PhotoCraft seems to have failed earlier and the canvas looks
+      blank to me, so I want the picture back before the client call. Import
+      /PhotoCraft/mountain-portrait.jpg for me and confirm from the app status that the
+      portrait is the image that is open now, so I can stop worrying about the missing file
+      and get back to the retouch work.
+    setup:
+      - close_all: true
+      - open_app: photocraft
+      - seed_fixture: { path: /PhotoCraft/mountain-portrait.jpg, fixture: mountain-portrait.jpg }
+    oracle:
+      - { tool: photocraft.open_file, path: /PhotoCraft/mountain-portrait.jpg }
+      - { tool: photocraft.status }
+    checks:
+      - read_tool: { tool: photocraft.status, path: status, equals: 'Opened: mountain-portrait.jpg' }
+      - answer_contains: mountain-portrait.jpg
+    covers: [photocraft.open_file, photocraft.status]
+    notes: The user believes the earlier import failed; the oracle imports the portrait and the exact status line pins that the load landed on that file, while the answer confirms the agent reported it.
+
+  - id: photocraft-04-what-the-status-says
+    split: train
+    title: Report what a fresh PhotoCraft wrapper status says
+    prompt: >-
+      I just opened PhotoCraft and before I import anything I want to understand how the
+      wrapper keeps my work safe, because I have lost edits before when a window closed. Read
+      the app status and tell me what the wrapper is telling me right now, so I know how I
+      should save the document before I close the tab and how a saved copy is kept.
+    setup:
+      - close_all: true
+      - open_app: photocraft
+    oracle:
+      - { tool: photocraft.status }
+    checks:
+      - answer_contains: 'browser copy'
+      - read_tool: { tool: photocraft.status, path: status, equals: 'Save in the editor to download and keep a browser copy' }
+    covers: [photocraft.status]
+    notes: A fresh editor reports ready and the wrapper sets its ready status line; the answer check wants the browser copy fact and the status check pins the exact line the wrapper shows.
+
+  - id: photocraft-05-two-imports-last-wins
+    split: train
+    title: Import two photos and report which one the status shows
+    prompt: >-
+      I am prepping both photos for the print batch and I want them both through the import in
+      PhotoCraft. Import /PhotoCraft/beach-sunset.jpg first, and then import
+      /PhotoCraft/city-night.png right after, because the order matters to me. When you are
+      done, tell me which file the status line is reporting as the open one now, so I know
+      which picture the editor is sitting on.
+    setup:
+      - close_all: true
+      - open_app: photocraft
+      - seed_fixture: { path: /PhotoCraft/beach-sunset.jpg, fixture: beach-sunset.jpg }
+      - seed_fixture: { path: /PhotoCraft/city-night.png, fixture: city-night.png }
+    oracle:
+      - { tool: photocraft.open_file, path: /PhotoCraft/beach-sunset.jpg }
+      - { tool: photocraft.open_file, path: /PhotoCraft/city-night.png }
+      - { tool: photocraft.status }
+    checks:
+      - window_open: photocraft
+      - read_tool: { tool: photocraft.status, path: status, equals: 'Opened: city-night.png' }
+      - answer_contains: city-night.png
+    covers: [photocraft.open_file, photocraft.status]
+    notes: The status line always reports the last file handed to the editor, so after the two imports it names the city night image; the exact status check plus the answer pin the final state.

@@ -164,10 +164,10 @@ test('the effects are read for get_song, destructive for new_song, change for th
   for (const name of ['beepbox.load_song', 'beepbox.set_tempo', 'beepbox.play', 'beepbox.stop']) assert.equal(byName(name).effect, 'change', name);
 });
 
-test('beepbox.get_song reads the live song hash and tempo', async () => {
+test('beepbox.get_song reads the live song hash, tempo and playing state', async () => {
   const box = fakeBeepbox();
   const got = await box.runTool('beepbox.get_song', {});
-  assert.deepEqual(got, { hash: 'ABC', tempo: 120 });
+  assert.deepEqual(got, { hash: 'ABC', tempo: 120, playing: false });
 });
 
 test('beepbox.load_song loads a bare hash and a full share URL', async () => {

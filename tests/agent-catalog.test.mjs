@@ -1,6 +1,7 @@
 // Unit tests for the Buddy M1 catalog module (src/apps/ai-agent/runtime/catalog.mjs):
 // buildCatalog validation (name shape, uniqueness, effect, needs, specErrors, examples via
-// the real checkArgs from args.mjs), the search docs, signature() and capped describe().
+// the real checkArgs from args.mjs, the optional inner-vocabulary keywords), the search
+// docs, signature() and capped describe().
 // Run: node --test tests/agent-catalog.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -274,4 +275,22 @@ test('buildCatalog: the same packs give the same docs, map keys and errors', () 
   assert.deepEqual(b.docs, a.docs);
   assert.deepEqual([...b.tools.keys()], [...a.tools.keys()]);
   assert.deepEqual(b.errors, a.errors);
+});
+
+test('buildCatalog: tool keywords join the search doc, de-duplicated against the name words', () => {
+  const doc = buildCatalog([{ pack: { id: 'probe', title: 'Probe' }, tools: [
+    bareTool('probe.run_thing', { keywords: ['Thing', 'thing', 'inner-name'], purpose: 'Run a thing.', when: 'When things run.' })
+  ]}], { choices: appChoices });
+  assert.deepEqual(doc.errors, []);
+  assert.deepEqual(doc.docs[0].keywords, ['Thing', 'inner-name', 'probe', 'run'], 'the first case variant wins the de-duplication; name words last');
+});
+
+test('buildCatalog: invalid keywords are build errors and drop the tool', () => {
+  for (const keywords of ['nope', ['ok', ''], ['ok', 'x'.repeat(61)]]) {
+    const doc = buildCatalog([{ pack: { id: 'probe', title: 'Probe' }, tools: [
+      bareTool('probe.bad', { keywords, purpose: 'Run a thing.', when: 'When things run.' })
+    ]}], { choices: appChoices });
+    assert.equal(doc.tools.size, 0, JSON.stringify(keywords));
+    assert.ok(doc.errors.some(error => error.includes('keyword')), doc.errors.join('; '));
+  }
 });

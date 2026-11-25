@@ -45,18 +45,19 @@ const runTool = (name, args, craft) => byName(name).run(args, { host: {}, craft:
 
 test('the pack declares its id, title and live-check exports', () => {
   assert.deepEqual(pack, { id: 'pdfcraft', title: 'PdfCraft' });
-  assert.deepEqual(usesCommands.sort(), ['edit.find', 'edit.link', 'edit.redo', 'edit.replace', 'edit.text', 'edit.undo', 'file.close', 'file.save', 'file.word_count', 'page.delete', 'page.duplicate', 'page.insert_blank', 'page.reverse', 'page.rotate'].sort());
-  assert.deepEqual(usesMethods, []);
+  assert.deepEqual(usesCommands.sort(), ['edit.find', 'edit.link', 'edit.redo', 'edit.replace', 'edit.text', 'edit.undo', 'export.text', 'file.close', 'file.save', 'file.word_count', 'page.delete', 'page.duplicate', 'page.insert_blank', 'page.reverse', 'page.rotate'].sort());
+  assert.deepEqual(usesMethods, ['ui.click', 'ui.inspect', 'ui.key']);
 });
 
-test('the pack exposes exactly the 18 pdfcraft tools', () => {
-  assert.equal(tools.length, 20);
+test('the pack exposes exactly the 22 pdfcraft tools', () => {
+  assert.equal(tools.length, 22);
   assert.deepEqual(tools.map(tool => tool.name).sort(), [
     'pdfcraft.command_list', 'pdfcraft.doc_close', 'pdfcraft.doc_info', 'pdfcraft.doc_inspect',
     'pdfcraft.doc_save', 'pdfcraft.edit_redo', 'pdfcraft.edit_undo', 'pdfcraft.link_add',
     'pdfcraft.open_file', 'pdfcraft.page_add_text', 'pdfcraft.page_delete', 'pdfcraft.page_duplicate',
-    'pdfcraft.page_insert_blank', 'pdfcraft.page_reverse', 'pdfcraft.page_rotate', 'pdfcraft.run_command',
-    'pdfcraft.save_copy', 'pdfcraft.text_find', 'pdfcraft.text_replace', 'pdfcraft.text_word_count',
+    'pdfcraft.page_insert_blank', 'pdfcraft.page_reverse', 'pdfcraft.page_rotate', 'pdfcraft.read_text',
+    'pdfcraft.run_command', 'pdfcraft.save_copy', 'pdfcraft.text_find', 'pdfcraft.text_replace',
+    'pdfcraft.text_word_count', 'pdfcraft.ui_inspect',
   ]);
 });
 
@@ -92,7 +93,7 @@ test('every example passes the runtime checkArgs the way the build runs it', () 
 });
 
 test('the effects follow the upstream destructive flags plus the close rule', () => {
-  const reads = ['pdfcraft.doc_inspect', 'pdfcraft.doc_info', 'pdfcraft.text_word_count', 'pdfcraft.text_find', 'pdfcraft.command_list'];
+  const reads = ['pdfcraft.doc_inspect', 'pdfcraft.doc_info', 'pdfcraft.text_word_count', 'pdfcraft.text_find', 'pdfcraft.command_list', 'pdfcraft.read_text', 'pdfcraft.ui_inspect'];
   for (const name of reads) assert.equal(byName(name).effect, 'read', name);
   for (const name of ['pdfcraft.page_delete', 'pdfcraft.doc_close', 'pdfcraft.doc_save']) assert.equal(byName(name).effect, 'destructive', name);
   for (const tool of tools) if (!reads.includes(tool.name) && tool.effect !== 'destructive') assert.equal(tool.effect, 'change', tool.name);
@@ -102,6 +103,12 @@ test('pdfcraft.doc_inspect calls the adapter inspect (ui.state on the page)', as
   const craft = fakeCraft();
   assert.deepEqual(await runTool('pdfcraft.doc_inspect', {}, craft), { document: 'report.pdf', pages: 3 });
   assert.deepEqual(craft.calls, [['inspect']]);
+});
+
+test('pdfcraft.ui_inspect reads the page ui.inspect method (the a11y tree)', async () => {
+  const craft = fakeCraft();
+  assert.deepEqual(await runTool('pdfcraft.ui_inspect', {}, craft), { method: 'ui.inspect', params: {} });
+  assert.deepEqual(craft.calls, [['request', 'ui.inspect', {}]]);
 });
 
 test('the read tools send their engine command ids (doc_info reads the page state, no params)', async () => {
@@ -320,11 +327,92 @@ test('pdfcraft.save_copy with no document open surfaces the open-a-PDF teaching 
   });
 });
 
+// A craft fake for read_text: export.text opens the dialog, Enter may or may not close it
+// (enterCloses), a ui.click fires the wrapper save (the confirmed export downloads), and
+// inspect answers ui.state with the dialog field. The tree feeds the click fallback.
+const readTextCraft = (wrapper, { enterCloses = true, tree = null, empty = false } = {}) => {
+  const calls = [];
+  let dialogOpen = false;
+  const fireSave = () => wrapper.fire({
+    origin: 'https://pc.example', source: wrapper.frame,
+    data: { type: 'pdfcraft:save', name: 'report-q3.txt', bytes: empty ? new Uint8Array(0) : new Uint8Array([72, 105]) },
+  });
+  const api = {
+    commands: () => Promise.resolve([]),
+    execute: (id, params) => {
+      calls.push(['execute', id, params]);
+      if (id === 'export.text') dialogOpen = true;
+      return Promise.resolve({ ran: id });
+    },
+    request: (method, params) => {
+      calls.push(['request', method, params]);
+      if (method === 'ui.key' && enterCloses) { dialogOpen = false; fireSave(); }
+      if (method === 'ui.click') { dialogOpen = false; fireSave(); }
+      if (method === 'ui.inspect') return Promise.resolve(tree ?? { children: [] });
+      return Promise.resolve({ ok: true });
+    },
+    inspect: () => { calls.push(['inspect']); return Promise.resolve({ dialog: dialogOpen ? 'Export(Text)' : null }); },
+  };
+  return { calls, craft: () => Promise.resolve(api) };
+};
+
+test('pdfcraft.read_text confirms the export dialog with Enter and returns the captured text', async () => {
+  const wrapper = fakeWrapper();
+  const rt = readTextCraft(wrapper, { enterCloses: true });
+  const out = await byName('pdfcraft.read_text').run({}, { host: { appWindow: async () => wrapper }, craft: rt.craft });
+  assert.deepEqual(out, { name: 'report-q3.txt', text: 'Hi' });
+  assert.deepEqual(rt.calls.filter(c => c[0] === 'execute'), [['execute', 'export.text', {}]]);
+  assert.ok(rt.calls.some(c => c[0] === 'request' && c[1] === 'ui.key' && c[2].key === 'Enter'), 'Enter is sent');
+  assert.ok(!rt.calls.some(c => c[0] === 'request' && c[1] === 'ui.click'), 'no click when Enter closed the dialog');
+});
+
+test('pdfcraft.read_text clicks the dialog button from the a11y tree when Enter leaves it open', async () => {
+  const wrapper = fakeWrapper();
+  const tree = { root: { children: [{ role: 'button', label: 'Export', rect: [10, 20, 80, 30] }] } };
+  const rt = readTextCraft(wrapper, { enterCloses: false, tree });
+  const out = await byName('pdfcraft.read_text').run({}, { host: { appWindow: async () => wrapper }, craft: rt.craft });
+  assert.deepEqual(out, { name: 'report-q3.txt', text: 'Hi' });
+  const click = rt.calls.find(c => c[0] === 'request' && c[1] === 'ui.click');
+  assert.ok(click, 'the Export button is clicked');
+  assert.deepEqual(click[2], { x: 50, y: 35 }); // the rect [x, y, w, h] centre
+});
+
+test('pdfcraft.read_text on a text-free PDF gives the no-text teaching error', async () => {
+  const wrapper = fakeWrapper();
+  const rt = readTextCraft(wrapper, { enterCloses: true, empty: true });
+  await assert.rejects(byName('pdfcraft.read_text').run({}, { host: { appWindow: async () => wrapper }, craft: rt.craft }), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'not_available');
+    assert.match(error.message, /no text to export/);
+    return true;
+  });
+});
+
+test('pdfcraft.read_text with no document open surfaces the open-a-PDF teaching error', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = {
+    host: { appWindow: async () => wrapper },
+    craft: () => Promise.resolve({
+      commands: () => Promise.resolve([]),
+      execute: () => Promise.reject(Object.assign(new Error('export.text is disabled right now'), { code: 'app_error' })),
+      request: () => Promise.reject(new Error('no request without a document')),
+      inspect: () => Promise.resolve({ dialog: null }),
+    }),
+  };
+  await assert.rejects(byName('pdfcraft.read_text').run({}, ctx), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'not_available');
+    assert.equal(error.message, 'PDFCraft has no document open.');
+    assert.equal(error.fix, 'Open a PDF in PDFCraft first');
+    return true;
+  });
+});
+
 const { skills, errors: skillErrors } = parseSkills(SKILLS_MD, 'pdfcraft');
 
-test('skills.md parses with the runtime parser without errors and has 11 skills', () => {
+test('skills.md parses with the runtime parser without errors and has 12 skills', () => {
   assert.deepEqual(skillErrors, []);
-  assert.equal(skills.length, 11);
+  assert.equal(skills.length, 12);
   for (const skill of skills) {
     assert.ok(skill.slug && skill.summary, `skill ${skill.slug} slug/summary`);
     assert.ok(skill.summary.length <= 160, `skill ${skill.slug} summary is ${skill.summary.length} chars`);

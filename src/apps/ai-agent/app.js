@@ -5,6 +5,7 @@ import { pickFile } from './picker.mjs';
 import { createFileHost } from './files-host.js';
 import { createSearchHost } from './search-host.js';
 import { AgentSession } from './session.js';
+import { createTools } from './agent.js';
 import { ConversationStore, validateConversation, MODEL_KEY, LEGACY_MODEL_KEY } from './storage.js';
 import { MODELS, DEFAULT_MODEL } from './models.js';
 import { checkImage, IMAGE_MAX_SIDE } from './agent.js';
@@ -433,6 +434,34 @@ const desktopHost = () => { try { return parent !== window && parent.pcHost ? pa
 const filesCtx = createFilesCtx(fileStore, { broadcast: path => filesChangeChannel?.postMessage({ type: 'changed', path }) });
 // ctx.craft(id): an ArtCraft app's page API (window.<id> inside its editor frame), opened if needed.
 const craft = async id => craftApi(await desktopHost().appWindow(id), id);
+// ?eval=1 oracle hook: run a catalog tool through the exact path a model's call_tool takes
+// (the same meta tool, the same session ctx: legacy, host, files, craft, signal), record the
+// call in __buddyTrace like any other call and return its result. Defined only when EVAL_TRACE
+// is on; the eval runner's --oracle mode drives it with no model, so a journey is proven
+// achievable before the agent ever sees it.
+if (EVAL_TRACE) {
+  // An eval opens a chat per journey: drop the saved chats (all but the visible one) before each,
+  // so a long run never reaches the 200-chat limit (the queue runner died there after ~180 runs).
+  window.__buddyPruneThreads = async () => {
+    let removed = 0;
+    for (const row of await threads.list()) {
+      if (row.id === visibleId) continue;
+      await threads.remove(row.id).catch(() => {}); statusMap.delete(row.id); sessions.delete(row.id); removed++;
+    }
+    await renderChats();
+    return removed;
+  };
+  window.__buddyRun = async (tool, args) => {
+    const options = { signal: new AbortController().signal, allowReaderProxy: false };
+    const legacy = createTools({ allowedHosts: () => new Set(), webSearch: q => webSearch(q, options), httpGet: url => httpGet(url, options), runJavaScript: code => runJavaScript(code, options), translate: chromeTools.translate, summarize: chromeTools.summarize, detectLanguage: chromeTools.detectLanguage, listFiles: fileTools.list, readFile: fileTools.read, writeFile: fileTools.write, searchFiles: fileTools.search, runCode, ocrImage: visionTools.ocr, removeBackground: visionTools.remove });
+    const ctx = { legacy, host: desktopHost() ?? null, files: filesCtx, craft, signal: options.signal };
+    const raw = { tool, ...(args ?? {}) };
+    const result = await agent.metaTools.call_tool.run(raw, ctx);
+    traceStart('call_tool', raw);
+    traceResult('call_tool', raw, result);
+    return result;
+  };
+}
 // M3: one AgentSession per open thread, each saving through the thread store. `session` is the
 // visible one, so the single-session code paths (controls, composer, export) keep reading it.
 // Every thread's model work goes through the shared model (part A): per-thread scheduling and

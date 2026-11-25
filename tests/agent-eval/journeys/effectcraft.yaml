@@ -1,0 +1,205 @@
+app: effectcraft
+# EffectCraft journeys (J1, Craft Integrator lane), written to the post-gate rules.
+# State checks read through craft_request on the engine query commands, whose shapes are pinned
+# by the upstream source (storytold/effectcraft v0.24.1, crates/engine/src/cmd/query.rs):
+# project.summary -> {path, dirty, items: [{id, name, type, ...}], activeComp, time, undo:
+# [labels]}; comp.info (active comp when comp is omitted) -> {name, width, height, frameRate,
+# duration, workArea, layers: [{id, index, name, in, out, start, ...}]}; layer.tree -> the layer
+# plus its property tree (groups and props, each with path/value); prop.get -> {value,
+# animated, keys: [{time, value, ...}], expression}. Layers are addressed by name, comp.new
+# makes its comp active and new layers span the whole comp (in 0, out the comp duration), a
+# text layer's name follows its text when no name is given, and a saved project restores its
+# open comps on reopen (file.open restore_view). comp.new snaps duration to whole frames
+# (default 29.97 fps: a 5 s comp reads back 5.005 s, a 10 s one 10.01 s), so duration checks
+# bracket the asked length (at_least just below and at_most just above): the bracket holds
+# for the 29.97 fps read-back and rejects the longer comp that at_least alone would pass.
+
+journeys:
+  - id: effectcraft-01-titles-comp
+    split: train
+    title: "Start a titles composition with a text layer"
+    prompt: >-
+      I am kicking off the titles work for the launch film and I want the comp set up before I
+      touch any type. Start a fresh EffectCraft project, create a composition called Titles that
+      is 1920 by 1080 and lasts 5 seconds, and add a text layer that says Shipped on time, so
+      the comp is ready for the first pass of the copy.
+    setup:
+      - close_all: true
+      - open_app: effectcraft
+    oracle:
+      - { tool: effectcraft.project_open, new: true }
+      - { tool: effectcraft.run_command, command: comp.new, params: 'name=Titles\nwidth=1920\nheight=1080\nduration=5' }
+      - { tool: effectcraft.run_command, command: layer.newText, params: 'text=Shipped on time' }
+    checks:
+      - craft_request: { app: effectcraft, method: comp.info, expect: { path: name, equals: Titles } }
+      - craft_request: { app: effectcraft, method: comp.info, expect: { path: width, equals: 1920 } }
+      - craft_request: { app: effectcraft, method: comp.info, expect: { path: duration, at_least: 4.99, at_most: 5.01 } }
+      - craft_request: { app: effectcraft, method: comp.info, expect: { path: 'layers[0].name', equals: 'Shipped on time' } }
+    covers: [effectcraft.project_open, effectcraft.run_command]
+    notes: A text layer with no name takes the text as its name, so the layer name pins the text; the comp size and duration pin the comp.new parameters.
+
+  - id: effectcraft-02-background-solid
+    split: train
+    title: "Put a background solid into a new comp"
+    prompt: >-
+      The ad comp needs a flat background before anything else gets layered on top. Start a new
+      EffectCraft project, make a composition called Ad 15 that is 10 seconds long, and add a
+      solid called Background sized to the comp at 1920 by 1080, so the bottom of the layer
+      stack is a solid block of colour for the whole comp.
+    setup:
+      - close_all: true
+      - open_app: effectcraft
+    oracle:
+      - { tool: effectcraft.project_open, new: true }
+      - { tool: effectcraft.run_command, command: comp.new, params: 'name=Ad 15\nduration=10' }
+      - { tool: effectcraft.run_command, command: layer.newSolid, params: 'name=Background\nwidth=1920\nheight=1080' }
+    checks:
+      - craft_request: { app: effectcraft, method: comp.info, expect: { path: name, equals: 'Ad 15' } }
+      - craft_request: { app: effectcraft, method: comp.info, expect: { path: duration, at_least: 9.99, at_most: 10.01 } }
+      - craft_request: { app: effectcraft, method: comp.info, expect: { path: 'layers[0].name', equals: Background } }
+      - craft_request: { app: effectcraft, method: comp.info, expect: { path: 'layers[0].out', at_least: 9.99, at_most: 10.01 } }
+    covers: [effectcraft.project_open, effectcraft.run_command]
+    notes: New layers span the whole comp, so the solid's out point at the 10 s comp end pins that the layer was added to this comp and not trimmed.
+
+  - id: effectcraft-03-opacity-fade
+    split: train
+    title: "Fade a text layer in with opacity keyframes"
+    prompt: >-
+      I want the opening line to fade in over one second instead of popping on. Start a new
+      EffectCraft project, create a 2 second composition called Fade In, add a text layer that
+      says Hello, and keyframe its opacity from 0 at 0 seconds to 100 at 1 second, so the layer
+      is fully visible by the end of the fade and the property is animated.
+    setup:
+      - close_all: true
+      - open_app: effectcraft
+    oracle:
+      - { tool: effectcraft.project_open, new: true }
+      - { tool: effectcraft.run_command, command: comp.new, params: 'name=Fade In\nduration=2' }
+      - { tool: effectcraft.run_command, command: layer.newText, params: 'text=Hello' }
+      - { tool: effectcraft.keyframe_add, layer: 'Hello', path: transform/opacity, keys: '[{"time":0,"value":0},{"time":1,"value":100}]' }
+    checks:
+      - craft_request: { app: effectcraft, method: comp.info, expect: { path: 'layers[0].name', equals: Hello } }
+      - craft_request: { app: effectcraft, method: prop.get, params: { layer: 'Hello', path: transform/opacity }, expect: { path: animated, equals: true } }
+      - craft_request: { app: effectcraft, method: prop.get, params: { layer: 'Hello', path: transform/opacity }, expect: { path: 'keys[0].value', equals: 0 } }
+      - craft_request: { app: effectcraft, method: prop.get, params: { layer: 'Hello', path: transform/opacity }, expect: { path: 'keys[1].value', equals: 100 } }
+    covers: [effectcraft.project_open, effectcraft.run_command, effectcraft.keyframe_add]
+    notes: The keyframes read back in time order through prop.get, so the 0 to 100 fade is pinned on the property itself; the layer is addressed by its name, which follows the text.
+
+  - id: effectcraft-04-blur-the-card
+    split: train
+    title: "Apply a Gaussian Blur to a solid with a set blurriness"
+    prompt: >-
+      The promo card needs to look soft behind the headline. Start a new EffectCraft project,
+      create a 5 second composition called Soft, add a solid called Card at 800 by 600, and
+      apply a Gaussian Blur to it with the blurriness set to 12, so the card is blurred from the
+      start of the comp and I can see the effect sitting on that layer only.
+    setup:
+      - close_all: true
+      - open_app: effectcraft
+    oracle:
+      - { tool: effectcraft.project_open, new: true }
+      - { tool: effectcraft.run_command, command: comp.new, params: 'name=Soft\nduration=5' }
+      - { tool: effectcraft.run_command, command: layer.newSolid, params: 'name=Card\nwidth=800\nheight=600' }
+      - { tool: effectcraft.effect_add, layer: 'Card', effect: 'Gaussian Blur', values: '{"blurriness":12}' }
+    checks:
+      - craft_request: { app: effectcraft, method: comp.info, expect: { path: 'layers[0].name', equals: Card } }
+      - craft_request: { app: effectcraft, method: prop.get, params: { layer: 'Card', path: 'effects/#1/blurriness' }, expect: { path: value, equals: 12 } }
+    covers: [effectcraft.project_open, effectcraft.run_command, effectcraft.effect_add]
+    notes: The effect instance is the first child of the layer's effects group, so its first parameter is addressed as effects/#1/blurriness; the value pin proves the blur landed on that layer with the asked blurriness.
+
+  - id: effectcraft-05-still-on-the-comp
+    split: train
+    title: "Import a still and add it as a layer"
+    prompt: >-
+      The night city still is already in Files at /EffectCraft/city-night.png and I want it on
+      the timeline. Start a new EffectCraft project, import that image, create a 5 second
+      composition called Night, and add the imported still as a layer on that comp starting at
+      zero, so the comp opens on the city shot.
+    setup:
+      - close_all: true
+      - open_app: effectcraft
+      - seed_fixture: { path: /EffectCraft/city-night.png, fixture: city-night.png }
+    oracle:
+      - { tool: effectcraft.project_open, new: true }
+      - { tool: effectcraft.open_file, path: /EffectCraft/city-night.png }
+      - { tool: effectcraft.run_command, command: comp.new, params: 'name=Night\nduration=5' }
+      - { tool: effectcraft.run_command, command: layer.addItem, params: 'item=city-night.png' }
+    checks:
+      - craft_request: { app: effectcraft, method: comp.info, expect: { path: name, equals: Night } }
+      - craft_request: { app: effectcraft, method: comp.info, expect: { path: 'layers[0].name', equals: city-night.png } }
+      - craft_request: { app: effectcraft, method: comp.info, expect: { path: 'layers[0].start', equals: 0 } }
+    covers: [effectcraft.project_open, effectcraft.open_file, effectcraft.run_command]
+    notes: layer.addItem takes the item by name, so no item id is assumed; the layer's start at zero and its name (the file name) pin the placement.
+
+  - id: effectcraft-06-opacity-expression
+    split: train
+    title: "Drive the opacity with an expression"
+    prompt: >-
+      I want the live badge to pulse instead of being set by hand. Start a new EffectCraft
+      project, create a 4 second composition called Pulse, add a text layer that says Live, and
+      put the expression Math.sin(time*2*Math.PI)*50+50 on its opacity, so the layer breathes
+      between 0 and 100 with the comp time instead of a static value.
+    setup:
+      - close_all: true
+      - open_app: effectcraft
+    oracle:
+      - { tool: effectcraft.project_open, new: true }
+      - { tool: effectcraft.run_command, command: comp.new, params: 'name=Pulse\nduration=4' }
+      - { tool: effectcraft.run_command, command: layer.newText, params: 'text=Live' }
+      - { tool: effectcraft.property_set, layer: 'Live', path: transform/opacity, expression: 'Math.sin(time*2*Math.PI)*50+50' }
+    checks:
+      - craft_request: { app: effectcraft, method: comp.info, expect: { path: 'layers[0].name', equals: Live } }
+      - craft_request: { app: effectcraft, method: prop.get, params: { layer: 'Live', path: transform/opacity }, expect: { path: expression, equals: 'Math.sin(time*2*Math.PI)*50+50' } }
+    covers: [effectcraft.project_open, effectcraft.run_command, effectcraft.property_set]
+    notes: prop.get returns the stored expression text, so the exact pulse expression is pinned on the property; the property is still plain (no keys) because the motion comes from the expression.
+
+  - id: effectcraft-07-undo-redo-an-opacity
+    split: holdout
+    title: "Set an opacity, undo it, then redo it"
+    prompt: >-
+      I am checking the history panel behaves before I hand the comp to the team. The open
+      EffectCraft project has a 3 second comp called History with a text layer that says Hold.
+      Set that layer's opacity to 50, undo the change so the opacity is back to 100, and then
+      redo it, so the layer ends at 50 and the change is the most recent thing the history can
+      bring back.
+    setup:
+      - close_all: true
+      - open_app: effectcraft
+      - { run: { tool: effectcraft.project_open, new: true } }
+      - { run: { tool: effectcraft.run_command, command: comp.new, params: 'name=History\nduration=3' } }
+      - { run: { tool: effectcraft.run_command, command: layer.newText, params: 'text=Hold' } }
+    oracle:
+      - { tool: effectcraft.property_set, layer: 'Hold', path: transform/opacity, value: '50' }
+      - { tool: effectcraft.undo }
+      - { tool: effectcraft.redo }
+    checks:
+      - craft_request: { app: effectcraft, method: comp.info, expect: { path: 'layers[0].name', equals: Hold } }
+      - craft_request: { app: effectcraft, method: prop.get, params: { layer: 'Hold', path: transform/opacity }, expect: { path: value, equals: 50 } }
+    covers: [effectcraft.property_set, effectcraft.undo, effectcraft.redo]
+    notes: The round trip ends at the set value, so the opacity pinning 50 confirms the redo restored the change; without the redo the value would still read 100.
+
+  - id: effectcraft-08-save-and-reopen
+    split: holdout
+    title: "Save the comp and open the saved project back"
+    prompt: >-
+      The client is going to open this comp on their own machine, so I want the file to be the
+      thing that comes back. Start a new EffectCraft project, create a 6 second composition
+      called Handoff, add a text layer that says Saved, save the project to
+      /EffectCraft/handoff.ecproj, and then open that saved file back so the project sitting
+      open is the one written to disk.
+    setup:
+      - close_all: true
+      - open_app: effectcraft
+    oracle:
+      - { tool: effectcraft.project_open, new: true }
+      - { tool: effectcraft.run_command, command: comp.new, params: 'name=Handoff\nduration=6' }
+      - { tool: effectcraft.run_command, command: layer.newText, params: 'text=Saved' }
+      - { tool: effectcraft.save_copy, path: /EffectCraft/handoff.ecproj }
+      - { tool: effectcraft.open_file, path: /EffectCraft/handoff.ecproj }
+    checks:
+      - file_exists: /EffectCraft/handoff.ecproj
+      - craft_request: { app: effectcraft, method: project.summary, expect: { path: path, contains: handoff.ecproj } }
+      - craft_request: { app: effectcraft, method: comp.info, expect: { path: name, equals: Handoff } }
+      - craft_request: { app: effectcraft, method: comp.info, expect: { path: 'layers[0].name', equals: Saved } }
+    covers: [effectcraft.project_open, effectcraft.run_command, effectcraft.save_copy, effectcraft.open_file]
+    notes: Reopening restores the saved view, so the active comp is the one from the file. The web host bridge opens a file by name, so the project path reads /handoff.ecproj (measured) and the check pins the file name, not the directory.

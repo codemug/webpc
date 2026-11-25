@@ -3,7 +3,7 @@
 // which the runtime wires as id => craftApi(await ctx.host.appWindow(id), id) (plan 9).
 import { ToolError, callLine, closest } from '../../../src/apps/ai-agent/runtime/args.mjs';
 import { teachApp } from '../../shared/craft.js';
-import { filesCall, openAndAwait, readOpenFile, saveBytesCopy } from '../../shared/craft-files.js';
+import { filesCall, openAndAwait, readOpenFile, saveBytesCopy, saveCopy } from '../../shared/craft-files.js';
 import { releases } from '../../../scripts/pc/craft/releases.mjs';
 
 const APP = 'pdfcraft';
@@ -28,7 +28,8 @@ const pick = (args, keys) => {
 // key=value lines -> object, with number and boolean coercion (the generic long-tail tool).
 const parseParams = text => {
   const out = {};
-  for (const line of String(text ?? '').split('\n')) {
+  // A literal backslash-n counts as a line break too: small models often write \n in the text.
+  for (const line of String(text ?? '').split(/\n|\\n/)) {
     const row = line.trim();
     if (!row) continue;
     const eq = row.indexOf('=');
@@ -41,6 +42,50 @@ const parseParams = text => {
 
 // Every ported tool takes the optional doc id; upstream requires it, the web page holds one document.
 const DOC = { type: 'integer', description: 'Document id; omit for the open document' };
+
+// The web command channel carries no data (probe r7: export.text, edit.column_select and
+// file.word_count answer {ran} only), so a real read runs the app's export and captures
+// its download the way save_copy does. export.text opens the Export(Text) dialog (probe
+// r7: the ui.state dialog field), which is confirmed with Enter (the egui default button);
+// when Enter leaves the dialog open, its Export button is clicked from the a11y tree.
+const waitDialog = async (craft, name, timeoutMs = 10000, intervalMs = 100) => {
+  const start = Date.now();
+  for (;;) {
+    const state = await craft.inspect();
+    if (state?.dialog === name) return;
+    if (Date.now() - start >= timeoutMs) throw new ToolError('app_error', `the ${name} dialog did not open`, '');
+    await new Promise(done => setTimeout(done, intervalMs));
+  }
+};
+
+// The a11y tree (the page ui.inspect method) is the only read that reaches the dialog
+// content; click the confirm button at its rect centre. Rects are [x, y, w, h] (egui Rect,
+// min plus size); the tree shape is unverified, so the walk visits every nested value.
+const clickDialogButton = async (craft, dialogName) => {
+  const button = findButton(await craft.request('ui.inspect', {}));
+  const rect = button?.rect;
+  if (!Array.isArray(rect) || rect.length < 2) throw new ToolError('app_error', `the ${dialogName} dialog has no clickable button in its tree`, '');
+  const [x, y, w = 0, h = 0] = rect.map(Number);
+  await craft.request('ui.click', { x: x + w / 2, y: y + h / 2 });
+};
+
+const findButton = (tree, seen = new Set()) => {
+  if (Array.isArray(tree)) {
+    for (const node of tree) {
+      const found = findButton(node, seen);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (!tree || typeof tree !== 'object' || seen.has(tree)) return null;
+  seen.add(tree);
+  if (tree.role === 'button' && /export|save|^ok$/i.test(String(tree.label ?? ''))) return tree;
+  for (const value of Object.values(tree)) {
+    const found = findButton(value, seen);
+    if (found) return found;
+  }
+  return null;
+};
 
 export const pack = { id: APP, title: 'PdfCraft' };
 
@@ -57,6 +102,20 @@ export const tools = [
     run: async (args, ctx) => (await ctx.craft(APP)).inspect(),
   },
   {
+    name: 'pdfcraft.ui_inspect',
+    purpose: 'Read the on-screen accessibility tree: controls, dialog, labels.',
+    when: 'Use when the document state is not enough, such as for an open dialog.',
+    params: {},
+    effect: 'read',
+    needs: NEEDS,
+    examples: [{ args: {}, says: 'What dialog is open?' }],
+    // The page ui.inspect control method (apps/pdfcraft-web/src/api.rs): the accessibility
+    // tree, id, role, label, value and rect per element. The only read that reaches
+    // open-dialog content on the web build, where every engine command answers {ran}
+    // only (probe r7).
+    run: async (args, ctx) => (await ctx.craft(APP)).request('ui.inspect', {}),
+  },
+  {
     name: 'pdfcraft.doc_info',
     purpose: 'Show the open document: its state, page, zoom and mode.',
     when: 'Use when the user asks what is in the open document or which page it shows.',
@@ -68,6 +127,37 @@ export const tools = [
     // {"ran":"file.properties"} (lead live check), so the info comes from the page's
     // docInspect (ui.state, the same source as doc_inspect) instead.
     run: async (args, ctx) => (await ctx.craft(APP)).inspect(),
+  },
+  {
+    name: 'pdfcraft.read_text',
+    purpose: 'Read the open PDF text, page by page, via the app text export.',
+    when: 'Use when the user asks what the document or a page says.',
+    params: { doc: DOC },
+    effect: 'read',
+    needs: NEEDS,
+    examples: [{ args: {}, says: 'What does page 1 say?' }],
+    // No command answers with text on the web channel (probe r7), so the read runs the
+    // app's export: export.text opens the Export(Text) dialog (probe r7: ui.state dialog
+    // field), the dialog is confirmed with Enter or a click on its Export button from the
+    // a11y tree, and saveCopy captures the pdfcraft:save message the wrapper's bootstrap
+    // anchor hook posts (webpc-bootstrap.js); the export also downloads the file.
+    run: async (args, ctx) => {
+      const wrapper = await ctx.host.appWindow(APP);
+      const craft = teachApp(await ctx.craft(APP), NO_DOC.message, NO_DOC.fix);
+      const save = await saveCopy(wrapper, APP, {
+        title: 'PDFCraft',
+        trigger: async () => {
+          await craft.execute('export.text', pick(args, ['doc']));
+          await waitDialog(craft, 'Export(Text)');
+          await craft.request('ui.key', { key: 'Enter' });
+          await new Promise(done => setTimeout(done, 500)); // let the dialog close and the export start
+          const state = await craft.inspect();
+          if (state?.dialog) await clickDialogButton(craft, state.dialog);
+        },
+      });
+      if (save.bytes.byteLength === 0) throw new ToolError('not_available', 'PDFCraft has no text to export: the document has no extractable text.', 'Check that the PDF is not a scan');
+      return { name: save.name, text: new TextDecoder('utf-8').decode(save.bytes) };
+    },
   },
   {
     name: 'pdfcraft.text_word_count',
@@ -383,11 +473,10 @@ export const tools = [
 ];
 
 // Live-check exports (brief): every command id the curated tools pass to execute.
-// Nothing passes through the request() path (doc_inspect uses inspect()), so
-// usesMethods is empty. run_command also passes arbitrary ids from the live list.
+// ui_inspect and read_text drive the dialog through the page's ui.* control methods.
 export const usesCommands = [
   'file.word_count', 'edit.find', 'edit.replace', 'page.rotate', 'page.reverse',
   'page.insert_blank', 'page.duplicate', 'edit.text', 'edit.link', 'edit.undo', 'edit.redo',
-  'page.delete', 'file.close', 'file.save',
+  'page.delete', 'file.close', 'file.save', 'export.text',
 ];
-export const usesMethods = [];
+export const usesMethods = ['ui.click', 'ui.inspect', 'ui.key'];

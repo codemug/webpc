@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pack, tools, usesCommands, usesMethods } from '../agent/apps/vectorcraft/tools.js';
+import { pack, tools, usesCommands, usesMethods, parseStep } from '../agent/apps/vectorcraft/tools.js';
 import { tools as desktopTools } from '../agent/desktop/tools.js';
 import { ToolError, specErrors, checkArgs, callLine } from '../src/apps/ai-agent/runtime/args.mjs';
 import { parseSkills, checkSkills } from '../src/apps/ai-agent/runtime/skills.mjs';
@@ -23,6 +23,7 @@ const byName = name => tools.find(tool => tool.name === name) ?? desktopTools.fi
 // The live command list, shaped like the craft-web-api commands() reply.
 const COMMANDS = [
   { id: 'shape.rectangle', label: 'Rectangle', menu: 'Object', params: 'x, y, width, height, radius', shortcut: '', enabled: true },
+  { id: 'shape.ellipse', label: 'Ellipse', menu: 'Object', params: 'x, y, width, height', shortcut: '', enabled: true },
   { id: 'object.align', label: 'Align', menu: 'Arrange', params: 'horizontal, vertical', shortcut: '', enabled: true },
   { id: 'object.delete', label: 'Delete', menu: 'Object', params: '', shortcut: '', enabled: true },
   { id: 'paint.setFill', label: 'Set Fill', menu: 'Paint', params: 'color, item', shortcut: '', enabled: true },
@@ -104,6 +105,25 @@ test('every example passes the runtime checkArgs the way the build runs it', () 
     for (const [n, example] of tool.examples.entries()) {
       const out = checkArgs(tool, example.args, { choices });
       assert.ok(out.ok, `${tool.name} example ${n}: ${out.error?.message}`);
+    }
+  }
+});
+
+// Small models copy the batch and run_command examples verbatim into the engine, so every
+// example step must use param keys the engine's command list names for that command id.
+test('batch and run_command examples use param keys the engine lists for the command', () => {
+  const listed = new Map(COMMANDS.map(entry => [entry.id, entry.params.split(',').map(key => key.trim()).filter(Boolean)]));
+  for (const tool of [byName('vectorcraft.batch'), byName('vectorcraft.run_command')]) {
+    for (const [n, example] of tool.examples.entries()) {
+      const lines = tool.name === 'vectorcraft.batch' ? example.args.commands : [`${example.args.command} ${example.args.params ?? ''}`];
+      for (const line of lines) {
+        const step = parseStep(line);
+        assert.ok(step, `${tool.name} example ${n}: step ${line} must parse`);
+        const keys = listed.get(step.command);
+        if (!keys || keys.length === 0) continue; // no live param list for this id: nothing to check against
+        const unknown = Object.keys(step.params).filter(key => !keys.includes(key));
+        assert.deepEqual(unknown, [], `${tool.name} example ${n}: ${step.command} takes ${keys.join(', ')}; the example sends ${unknown.join(', ')}`);
+      }
     }
   }
 });
@@ -291,7 +311,7 @@ test('vectorcraft.list_commands returns the top 10 matches by id, label or menu'
   const byMenu = await runTool('vectorcraft.list_commands', { query: 'arrange' }, craft);
   assert.deepEqual(byMenu, [{ id: 'object.align', label: 'Align', menu: 'Arrange', params: 'horizontal, vertical' }]);
   const all = await runTool('vectorcraft.list_commands', {}, craft);
-  assert.equal(all.length, 5);
+  assert.equal(all.length, 6);
 });
 
 test('vectorcraft.run_command parses key=value lines with JSON values and checks the id', async () => {

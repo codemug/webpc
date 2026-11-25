@@ -224,6 +224,12 @@ test('gridcraft.run_command parses key=value lines with number and boolean coerc
   assert.deepEqual(craft.calls, [['commands'], ['execute', 'home.bold', { range: 'A1:C1', on: true, steps: 2 }]]);
 });
 
+test('gridcraft.run_command reads a literal backslash-n as a line break (small models write it)', async () => {
+  const craft = fakeCraft();
+  await runTool('gridcraft.run_command', { command: 'home.bold', params: 'range=A1:C1\\non=true' }, craft);
+  assert.deepEqual(craft.calls, [['commands'], ['execute', 'home.bold', { range: 'A1:C1', on: true }]]);
+});
+
 test('gridcraft.run_command rejects an unknown id with invalid_argument and the 3 closest', async () => {
   const craft = fakeCraft();
   await assert.rejects(runTool('gridcraft.run_command', { command: 'cell.setq', params: '' }, craft), error => {

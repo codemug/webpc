@@ -1,0 +1,177 @@
+app: nettools
+# Nettools journeys (J1, OpenCode lane). The cards are all driven by the nettools.* pack tools,
+# which open the app and tab themselves - no setup state is needed except the seeded file for
+# the age journey. DoH and RDAP hit external services (cloudflare/rdap.org), so those journeys
+# pin what the service contract guarantees (NOERROR plus an address, the MX data, the
+# registration date), never the exact IP. Subnet and password checks are fully local and exact:
+# the subnet card prints "Network:  <addr>" / "Addresses: <n>" lines (subnet.mjs) and the
+# password card prints "Score: <n>/4" (security.mjs).
+
+journeys:
+  - id: nettools-01-dns-a
+    split: train
+    title: "Resolve the A record of example.com"
+    prompt: >-
+      Can you look up what IP address example.com resolves to right now? Do a normal A record
+      lookup for the domain in the network tools and give me the address in your reply so I can
+      add it to a test config.
+    oracle:
+      - { tool: nettools.dns_lookup, name: 'example.com', type: 'A' }
+    checks:
+      - tool_result: { tool: nettools.dns_lookup, path: result, matches: 'NOERROR' }
+      - tool_result: { tool: nettools.dns_lookup, path: result, matches: '\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}' }
+      - answer_matches: '\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}'
+    covers: [nettools.dns_lookup]
+    notes: >-
+      The DoH answer text is the record data (no hostname in the output), so the check pins
+      NOERROR plus a dotted quad instead of a specific address, and the reply must carry the
+      same quad.
+
+  - id: nettools-02-dns-mx
+    split: holdout
+    title: "Find the mail exchangers of google.com"
+    prompt: >-
+      We are comparing mail setups before switching providers and I want a reference. Look up
+      the MX records for google.com in the network tools and list the mail server host names in
+      your reply, so I can compare them with the ones in our config.
+    oracle:
+      - { tool: nettools.dns_lookup, name: 'google.com', type: 'MX' }
+    checks:
+      - tool_result: { tool: nettools.dns_lookup, path: result, contains: 'google.com' }
+      - answer_contains: 'google.com'
+    covers: [nettools.dns_lookup]
+    notes: >-
+      Holdout: the MX record data always carries the domain's mail host (measured live:
+      10 smtp.google.com; example.org has no MX at all, so the journey uses a domain whose MX
+      is stable provider infrastructure) - the lookup result is pinned on the domain and the
+      reply must relay the exchanger names; the host name or priority may move without breaking it.
+
+  - id: nettools-03-subnet-24-26
+    split: train
+    title: "Compute a /24 block and its first /26"
+    prompt: >-
+      I am planning a VLAN for the lab and I need the exact numbers before we carve it up.
+      Compute the details of the subnet 192.168.50.0/24 in the subnet calculator, then compute
+      the first /26 inside it, 192.168.50.0/26, and tell me that /26's first and last usable
+      host addresses plus how many addresses the /26 holds in total.
+    oracle:
+      - { tool: nettools.subnet, cidr: '192.168.50.0/24' }
+      - { tool: nettools.subnet, cidr: '192.168.50.0/26' }
+    checks:
+      - tool_result: { tool: nettools.subnet, path: result, contains: 'Addresses: 64' }
+      - answer_contains: '192.168.50.1'
+      - answer_contains: '192.168.50.62'
+    covers: [nettools.subnet]
+    notes: >-
+      Multi-step: the /24 read informs the /26 choice. tool_result reads the last subnet call,
+      so the 64-address line is pinned from the /26; the reply must carry the /26 usable range
+      (first host .1, last host .62). Fully local and deterministic.
+
+  - id: nettools-04-subnet-carve
+    split: holdout
+    title: "Compute a /16, then carve out its first /24"
+    prompt: >-
+      We are about to carve the network 10.20.0.0/16 into /24 subnets, and the first /24 will
+      host the lab gear. Run the subnet calculator on the big block first, then on the first
+      /24 inside it, 10.20.0.0/24, and tell me the first and last usable host addresses of that
+      /24 subblock, so I know the exact range the lab will use.
+    oracle:
+      - { tool: nettools.subnet, cidr: '10.20.0.0/16' }
+      - { tool: nettools.subnet, cidr: '10.20.0.0/24' }
+    checks:
+      - tool_result: { tool: nettools.subnet, path: result, contains: 'Addresses: 256' }
+      - answer_contains: '10.20.0.1'
+      - answer_contains: '10.20.0.254'
+    covers: [nettools.subnet]
+    notes: >-
+      Holdout and multi-step: the /16 read informs the /24 choice, and the reply must carry the
+      /24 usable range (10.20.0.1 to 10.20.0.254); the tool result pins the 256-address block.
+
+  - id: nettools-05-password-compare
+    split: train
+    title: "Compare the old password with the new candidate"
+    prompt: >-
+      I am about to retire the old password horse for the team vault and I picked a new
+      candidate, Blueberry!77, but I want proof the swap is an upgrade. Score the new candidate
+      first with the local strength checker, then score the old password, and tell me the score
+      each one gets and which of the two is the weaker.
+    oracle:
+      - { tool: nettools.password_strength, text: 'Blueberry!77' }
+      - { tool: nettools.password_strength, text: 'horse' }
+    checks:
+      - tool_result: { tool: nettools.password_strength, path: result, contains: 'Score: 0/4' }
+      - answer_contains: '0/4'
+    covers: [nettools.password_strength]
+    notes: >-
+      The prompt orders the calls (new candidate first) and tool_result reads the last password
+      call, so the 0/4 line is pinned from the old password - 'horse' is a top dictionary word
+      and scores 0 with or without the dictionary. The card never echoes the password in its
+      output (and oracle-mode answer checks read the oracle's own result text), so the answer
+      check pins the 0/4 score the reply must carry; the candidate's own score is not pinned -
+      any rating above 0 makes the comparison answerable.
+
+  - id: nettools-06-password-strong
+    split: train
+    title: "Score a strong random password"
+    prompt: >-
+      Rate this new password for me before I roll it out to the team: xk9$Tq2!mW7#vB4z. Run the
+      local strength check on it and report the score out of four in your reply, so I know
+      whether it clears our bar for team passwords.
+    oracle:
+      - { tool: nettools.password_strength, text: 'xk9$Tq2!mW7#vB4z' }
+    checks:
+      - tool_result: { tool: nettools.password_strength, path: result, contains: 'Score: 4/4' }
+    covers: [nettools.password_strength]
+    notes: >-
+      A 16 character mixed-class string with no dictionary pattern scores 4 in zxcvbn; pinned
+      from the app's own output line.
+
+  - id: nettools-07-prework-bundle
+    split: train
+    title: "Pre-work bundle: resolve, register, compute"
+    prompt: >-
+      Before the migration call I want a quick pre-work bundle from the network tools. First
+      confirm that example.com still resolves with a normal A record lookup, then compute the
+      details of our office block 192.168.50.0/24 in the subnet calculator, and finally fetch
+      the RDAP record for example.com and tell me the registration date the registry lists, so
+      I can cite it in the call notes.
+    oracle:
+      - { tool: nettools.dns_lookup, name: 'example.com', type: 'A' }
+      - { tool: nettools.subnet, cidr: '192.168.50.0/24' }
+      - { tool: nettools.rdap, query: 'example.com' }
+    checks:
+      - tool_result: { tool: nettools.dns_lookup, path: result, contains: 'NOERROR' }
+      - tool_result: { tool: nettools.rdap, path: result, contains: 'registration: 1995' }
+      - tool_result: { tool: nettools.subnet, path: result, contains: 'Addresses: 256' }
+      - answer_contains: '1995'
+    covers: [nettools.dns_lookup, nettools.rdap, nettools.subnet]
+    notes: >-
+      The long workflow of the file: three different cards in one ask, each pinned on a proven
+      contract fact (NOERROR, the stable 1995 registration date, the local 256-address /24).
+      The oracle ends on the RDAP read so its result holds the registration date the answer
+      check pins (oracle mode reads the oracle's own result text); tool_result reads each
+      tool's own last result, so those checks hold whatever order the model takes the steps in.
+
+  - id: nettools-08-age-encrypt
+    split: holdout
+    title: "Encrypt a file with age and name the result"
+    prompt: >-
+      I have a notes file called secret-notes.txt in my files that I want to hand off to a
+      colleague, and it needs to travel encrypted. Encrypt the file with age using the
+      passphrase pine-apple-42, and tell me in your reply what the resulting file is called and
+      where it ended up.
+    setup:
+      - close_all: true
+      - open_app: nettools
+      - seed_file: { path: '/secret-notes.txt', text: "Launch code: BLUE 7. Do not share.\n" }
+    oracle:
+      - { tool: nettools.age_encrypt, path: '/secret-notes.txt', passphrase: 'pine-apple-42' }
+    checks:
+      - tool_result: { tool: nettools.age_encrypt, path: result, contains: 'downloaded secret-notes.txt.age' }
+      - answer_contains: 'secret-notes.txt.age'
+    covers: [nettools.age_encrypt]
+    notes: >-
+      Holdout: age processes the file locally and downloads the result to the browser (it does
+      not land in the Files app), so the end state is pinned by the tool result text and the
+      reply naming the .age file. A decrypt round trip is not checkable end-to-end because the
+      encrypted file is outside the Files area.

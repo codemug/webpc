@@ -3,7 +3,7 @@
 // desktop and Files hosts that record what Buddy asked them to do.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { AgentSession, repeatNote } from '../src/apps/ai-agent/session.js';
+import { AgentSession, repeatNote, searchLoopNote, stopMessage, windowsLine, metaAlias } from '../src/apps/ai-agent/session.js';
 import { createAgent, META_TOOL_NAMES } from '../src/apps/ai-agent/runtime/index.mjs';
 
 const call = (name, args) => `<tool_call><function=${name}>${Object.entries(args).map(([k, v]) => `<parameter=${k}>${v}</parameter>`).join('')}</function></tool_call>`;
@@ -20,6 +20,8 @@ function setup(outputs) {
   return { session, seen };
 }
 const toolMessages = session => session.history.filter(m => m.role === 'tool').map(m => JSON.parse(m.content));
+// Host actions the tools took; the turn's own read of the open windows (context for the note) is left out.
+const actions = seen => seen.host.filter(h => h[0] !== 'windows');
 
 test('the model sees only the six meta tools and an agent system prompt with the app list', async () => {
   const { session, seen } = setup(['Hello!']);
@@ -37,7 +39,7 @@ test('prefetch puts the best skill in the prompt but never in the saved history'
   const user = seen.prompts[0].at(-1).content;
   assert.match(user, /Note: matching skill .* Steps \(fill each <placeholder> with the user's own values\):\n1\. call_tool tool=desktop\.open_app app=<app>/);
   assert.doesNotMatch(session.history.find(m => m.role === 'user').content, /Note:/);
-  assert.deepEqual(seen.host[0], ['open', 'gridcraft']);
+  assert.deepEqual(actions(seen)[0], ['open', 'gridcraft']);
   assert.equal(toolMessages(session)[0].ok, true);
 });
 
@@ -50,7 +52,7 @@ test('repairs: signature text in the tool name, an app title, and a directly cal
   ]);
   await session.send('Make a Reports folder, open GridCraft and close Docs');
   assert.deepEqual(seen.files[0], ['mkdir', '/Reports']);
-  assert.deepEqual(seen.host.map(h => h.slice(0, 2)), [['open', 'gridcraft'], ['close', 'docs']]);
+  assert.deepEqual(actions(seen).map(h => h.slice(0, 2)), [['open', 'gridcraft'], ['close', 'docs']]);
   const results = toolMessages(session);
   assert.ok(results.every(r => r.ok), JSON.stringify(results));
   assert.ok(results[0].repaired?.length, 'the model is told what was repaired');
@@ -83,7 +85,8 @@ test('without a desktop host the desktop tools say they are not available', asyn
 
 test('prefetch skips skills that only share filler words with the request', async () => {
   const agent = createAgent();
-  assert.match(agent.prefetch('What is 6 times 7?'), /system\.calculate|Work out a sum/);
+  // The sum skill itself, not a tool list where effectcraft.keyframe_add ("key times") ranked first.
+  assert.match(agent.prefetch('What is 6 times 7?'), /matching skill "Work out a sum exactly"/);
   assert.doesNotMatch(agent.prefetch('What is 6 times 7?'), /see-what-is-open/);
   assert.equal(agent.prefetch('zzz qqq'), '');
 });
@@ -176,3 +179,57 @@ test('a truncated final answer emits reply-cut once; an untruncated answer emits
   assert.ok(!none.includes('reply-cut'), `events: ${none.join(', ')}`);
 });
 
+
+/** The J2 search loop: the right tool topped find_tool, the model kept searching. */
+test('searchLoopNote says to call a tool that topped find_tool twice and was never called', () => {
+  const tops = new Map(); const called = new Set();
+  const hit = { hits: [{ tool: 'cyberchef.bake', call: 'call_tool tool=cyberchef.bake recipe=<recipe> input=<input>' }] };
+  assert.equal(searchLoopNote(tops, called, 'find_tool', hit), null, 'first time: no nudge');
+  assert.match(searchLoopNote(tops, called, 'find_tool', hit), /found cyberchef\.bake 2 times.*call_tool tool=cyberchef\.bake recipe=<recipe>/);
+  called.add('cyberchef.bake');
+  assert.equal(searchLoopNote(tops, called, 'find_tool', hit), null, 'once called: no nudge');
+  assert.equal(searchLoopNote(new Map(), new Set(), 'lookup_skill_index', hit), null);
+  assert.equal(searchLoopNote(new Map(), new Set(), 'find_tool', { hits: [] }), null);
+});
+
+test('stopMessage names the earlier error and its fix when a failing call is repeated', () => {
+  assert.equal(stopMessage({ ok: true }), 'Repeated tool call stopped. Answer from the available information.');
+  const failed = { ok: false, error: { type: 'unknown_argument', message: 'deckcraft.add_slide has no parameter title', fix: 'call_tool tool=deckcraft.add_slide layout=<layout>' } };
+  assert.equal(stopMessage(failed), 'Stopped: this exact call already failed twice (deckcraft.add_slide has no parameter title). Change it: call_tool tool=deckcraft.add_slide layout=<layout>');
+  assert.match(stopMessage({ error: 'Unknown tool x' }), /failed twice \(Unknown tool x\)\. Change the arguments/);
+});
+
+/** beepbox-03: the agent opened Media while BeepBox was the only window on screen. */
+test('windowsLine lists the visible windows, active first, and is empty with none', () => {
+  const wins = [{ id: 'files', title: 'Files', state: 'normal', active: false }, { id: 'beepbox', title: 'BeepBox', state: 'normal', active: true }, { id: 'media', title: 'Media Player', state: 'minimized', active: false }];
+  assert.equal(windowsLine(wins), 'On screen: BeepBox (beepbox, active), Files (files). A request that names no app is about these.');
+  assert.equal(windowsLine([]), '');
+  assert.equal(windowsLine(null), '');
+});
+
+test('the turn note names the windows on screen, so an unnamed request acts on the open app', async () => {
+  const { session, seen } = setup(['Playing it now.']);
+  session.host = () => ({ windows: async () => [{ id: 'beepbox', title: 'BeepBox', state: 'normal', active: true }] });
+  await session.send('Play the song in my editor');
+  assert.match(seen.prompts[0].at(-1).content, /On screen: BeepBox \(beepbox, active\)/);
+  assert.doesNotMatch(session.history.find(m => m.role === 'user').content, /On screen/, 'the note is never stored');
+});
+
+/** gridcraft-01: lfm3-1.7b invented find_skill and find_skill_index and lost a round on each. */
+test('metaAlias maps an invented meta tool name to the one it means, and nothing else', () => {
+  assert.equal(metaAlias('find_skill'), 'lookup_skill_index');
+  assert.equal(metaAlias('find_skill_index'), 'lookup_skill_index');
+  assert.equal(metaAlias('read_skill_text'), 'read_skill');
+  assert.equal(metaAlias('search_tools'), 'find_tool');
+  assert.equal(metaAlias('tool_info'), 'describe_tool');
+  assert.equal(metaAlias('run_tool'), 'call_tool');
+  assert.equal(metaAlias('open_app'), null);
+});
+
+test('an invented meta tool name runs the meant meta tool and says so', async () => {
+  const { session } = setup([call('find_skill', { query: 'open an app' }), 'Done.']);
+  await session.send('Open GridCraft');
+  const first = toolMessages(session)[0];
+  assert.ok(Array.isArray(first.hits), JSON.stringify(first));
+  assert.match(first.note, /There is no find_skill; this ran lookup_skill_index/);
+});

@@ -24,7 +24,8 @@ const coerce = raw => (/^(true|false)$/i.test(raw) ? raw.toLowerCase() === 'true
 // run_command params: key=value lines -> object (plan 9, the generic long-tail tool).
 const parseParams = text => {
   const out = {};
-  for (const line of String(text ?? '').split('\n')) {
+  // A literal backslash-n counts as a line break too: small models often write \n in the text.
+  for (const line of String(text ?? '').split(/\n|\\n/)) {
     const row = line.trim();
     if (!row) continue;
     const eq = row.indexOf('=');
@@ -51,6 +52,31 @@ const parseStep = line => {
 
 // tools.rs add_shape/add_text_box: follow-up calls that fail do not fail the tool.
 const silently = promise => promise.catch(() => {});
+
+// The engine's name-rejection texts (wasm strings): 'no layout "x"', 'unknown layout `x`',
+// 'no theme `x`', 'unknown theme `x`', 'unknown preset `x`', and 'no such shape' for a bad
+// shape id (lfm3 deckcraft-12 passed the slide id). Each names the bad value but not the
+// valid ones (deckcraft-05: layout "first" was rejected and the model spent its remaining
+// rounds hunting for valid names). Re-throw as invalid_argument that names the valid values
+// the deck defines - layouts live from document.inspect (layouts[].name), shape ids live
+// from slide.inspect of the current slide (shapes[].id), themes and presets from the
+// engine's fixed lists - with the closest match filled into the call as the fix line.
+const NAME_REJECT = { layout: /(?:no|unknown) layout/i, theme: /(?:no|unknown) theme/i, preset: /unknown preset/i, shape: /no such shape/i };
+const STATIC_NAMES = {
+  theme: ['DeckCraft', 'Harbor', 'Ember', 'Meadow', 'Nocturne', 'Paper', 'Coral Reef', 'Slate'],
+  preset: ['rect', 'roundRect', 'ellipse', 'triangle', 'diamond', 'rightArrow', 'chevron', 'star5', 'heart', 'cloud', 'line'],
+};
+const namedReject = async (kind, given, tool, fixArgs, craft) => {
+  const valid =
+    kind === 'layout' ? ((await craft.inspect()).layouts ?? []).map(entry => entry.name)
+    : kind === 'shape' ? ((await craft.execute('slide.inspect', {})).shapes ?? []).map(entry => entry.id)
+    : STATIC_NAMES[kind];
+  const near = closest(String(given), valid.map(String), 1)[0];
+  const param = kind === 'shape' ? 'id' : kind;
+  const label = kind === 'shape' ? 'shape id' : kind;
+  const defined = valid.length ? `; the ${kind === 'shape' ? 'current slide has' : 'deck defines'}: ${valid.join(', ')}` : '';
+  throw new ToolError('invalid_argument', `${given} is not a ${label}${defined}${near ? `; closest: ${near}` : ''}`, near ? callLine(tool, { ...fixArgs, [param]: near }) : '');
+};
 
 export const pack = { id: APP, title: 'DeckCraft' };
 
@@ -89,7 +115,15 @@ export const tools = [
     needs: NEEDS,
     examples: [{ args: { theme: 'Harbor' }, says: 'Start a new deck with the Harbor theme' }],
     // tools.rs:395 file.new. Destructive: the web app holds one presentation, so this replaces the open one.
-    run: async (args, ctx) => (await ctx.craft(APP)).execute('file.new', pick(args, ['theme', 'blank'])),
+    run: async (args, ctx) => {
+      const app = await ctx.craft(APP);
+      try {
+        return await app.execute('file.new', pick(args, ['theme', 'blank']));
+      } catch (error) {
+        if (args.theme !== undefined && NAME_REJECT.theme.test(String(error?.message ?? error))) await namedReject('theme', args.theme, 'deckcraft.new_presentation', pick(args, ['blank']), app);
+        throw error;
+      }
+    },
   },
   {
     name: 'deckcraft.add_slide',
@@ -104,7 +138,15 @@ export const tools = [
     needs: NEEDS,
     examples: [{ args: { layout: 'titleAndContent', title: 'Q1 Plan' }, says: 'Add a slide titled Q1 Plan' }],
     // tools.rs:410 slide.new
-    run: async (args, ctx) => (await ctx.craft(APP)).execute('slide.new', pick(args, ['layout', 'title', 'body'])),
+    run: async (args, ctx) => {
+      const app = await ctx.craft(APP);
+      try {
+        return await app.execute('slide.new', pick(args, ['layout', 'title', 'body']));
+      } catch (error) {
+        if (args.layout !== undefined && NAME_REJECT.layout.test(String(error?.message ?? error))) await namedReject('layout', args.layout, 'deckcraft.add_slide', pick(args, ['title', 'body']), app);
+        throw error;
+      }
+    },
   },
   {
     name: 'deckcraft.go_to_slide',
@@ -137,7 +179,13 @@ export const tools = [
     // tools.rs:412-432 shape.insert, then optional shape.fill and shape.line on the new id
     run: async (args, ctx) => {
       const app = await ctx.craft(APP);
-      const result = await app.execute('shape.insert', pick({ preset: args.preset, rect: [args.x, args.y, args.w, args.h], text: args.text }, ['preset', 'rect', 'text']));
+      let result;
+      try {
+        result = await app.execute('shape.insert', pick({ preset: args.preset, rect: [args.x, args.y, args.w, args.h], text: args.text }, ['preset', 'rect', 'text']));
+      } catch (error) {
+        if (NAME_REJECT.preset.test(String(error?.message ?? error))) await namedReject('preset', args.preset, 'deckcraft.add_shape', { x: args.x, y: args.y, w: args.w, h: args.h }, app);
+        throw error;
+      }
       if (args.fill !== undefined) await app.execute('shape.fill', { id: result.id, color: args.fill });
       if (args.line !== undefined) await app.execute('shape.line', args.line === 'none' ? { id: result.id, none: true } : { id: result.id, color: args.line });
       return result;
@@ -178,14 +226,22 @@ export const tools = [
     purpose: "Replace a shape's text, keeping its first run's formatting.",
     when: 'Use when the user wants to change the text of a shape on the current slide.',
     params: {
-      id: { type: 'integer', required: true, description: 'Shape id from deckcraft.inspect_slide' },
+      id: { type: 'integer', required: true, description: 'Shape id from deckcraft.inspect_slide (not the slide id; the slide id from add_slide or inspect is not a shape)' },
       text: { type: 'string', required: true, description: 'New text; leading tabs set bullet levels' },
     },
     effect: 'change',
     needs: NEEDS,
     examples: [{ args: { id: 7, text: 'Updated title' }, says: 'Change the title text' }],
     // tools.rs:451 text.set
-    run: async (args, ctx) => (await ctx.craft(APP)).execute('text.set', pick(args, ['id', 'text'])),
+    run: async (args, ctx) => {
+      const app = await ctx.craft(APP);
+      try {
+        return await app.execute('text.set', pick(args, ['id', 'text']));
+      } catch (error) {
+        if (NAME_REJECT.shape.test(String(error?.message ?? error))) await namedReject('shape', args.id, 'deckcraft.set_text', { text: args.text }, app);
+        throw error;
+      }
+    },
   },
   {
     name: 'deckcraft.insert_table',

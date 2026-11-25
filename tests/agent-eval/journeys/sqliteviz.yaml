@@ -1,0 +1,231 @@
+# SqliteViz journeys (8). train 6, holdout 2 (sqliteviz-03, sqliteviz-06).
+# Rewritten for the round 2 rules and the fixture oracle (2026-11-25): every setup is
+# close_all, open_app, reset_app, then seed_fixture shop.db; oracles are written (no
+# more needs:), edits are checked in the database with read_tool on sqliteviz.run_query,
+# and answer checks pin exact facts with word-boundary patterns. Seven of eight
+# journeys have three or more actions, with the long one at four (sqliteviz-04).
+# Fixture facts verified live against tests/agent-eval/fixtures/shop.db (2026-11-25):
+#   customers(id, name): 42 rows; products(id, name, price): 8 rows, Widget 4.50;
+#   orders(id, customer_id, product_id, amount): 156 rows, total 15600.00, average 100.00.
+#   Ana (id 7) has the most orders, 12 (next Ben with 11); per-product order counts are
+#   Widget 64, Gadget 41, Gizmo 31, Sprocket 20; Cog, Bolt, Nut and Bearing have no
+#   orders; Widget orders total 6318.11.
+# NOTE to the lead: the fixtures README describes a different shop.db (107 orders,
+# total 5180.97, a city column, units and dates); the binary in the worktree is the
+# spec above. These journeys are written against the binary the runner actually loads;
+# if the README's database is the intended one, drop it into the worktree and the
+# pinned values to change are exactly the numbers in this header.
+app: sqliteviz
+journeys:
+  - id: sqliteviz-01-tables-and-rows
+    split: train
+    title: "Open the shop database and report its tables with row counts"
+    prompt: >-
+      My shop database is in my files at /data/shop.db and I just loaded it fresh, so I
+      want to see that everything made it through. Open it and tell me which tables it
+      has and how many rows are in each one, so I can check the data landed properly.
+    setup:
+      - close_all: true
+      - open_app: sqliteviz
+      - reset_app: sqliteviz
+      - seed_fixture: { path: /data/shop.db, fixture: shop.db }
+    oracle:
+      - tool: sqliteviz.open_db
+        path: /data/shop.db
+      - tool: sqliteviz.list_tables
+      - tool: sqliteviz.run_query
+        sql: "SELECT 'customers' AS table_name, COUNT(*) AS row_count FROM customers UNION ALL SELECT 'products', COUNT(*) FROM products UNION ALL SELECT 'orders', COUNT(*) FROM orders"
+    checks:
+      - read_tool: { tool: sqliteviz.list_tables, contains: "orders" }
+      - answer_matches: "(?<!\\d)42(?!\\d)"
+      - answer_matches: "(?<!\\d)8(?!\\d)"
+      - answer_matches: "(?<!\\d)156(?!\\d)"
+    covers: [sqliteviz.open_db, sqliteviz.list_tables, sqliteviz.run_query]
+    notes: "The long read journey: open, list the tables, count the rows of each; every count is pinned with a word boundary so 8 cannot match inside 156."
+    check_gap: "the list_tables result shape is unverified; if it names views or the open database instead of tables, the contains pin needs a different phrase."
+
+  - id: sqliteviz-02-total-and-average
+    split: train
+    title: "Total and average order amount"
+    prompt: >-
+      Open my shop database at /data/shop.db and look at the orders table. I want two
+      numbers for the review: the total amount across every single order, and the average
+      order amount, both as plain numbers.
+    setup:
+      - close_all: true
+      - open_app: sqliteviz
+      - reset_app: sqliteviz
+      - seed_fixture: { path: /data/shop.db, fixture: shop.db }
+    oracle:
+      - tool: sqliteviz.open_db
+        path: /data/shop.db
+      - tool: sqliteviz.list_tables
+      - tool: sqliteviz.run_query
+        sql: "SELECT SUM(amount) AS total, AVG(amount) AS average FROM orders"
+    checks:
+      - read_tool: { tool: sqliteviz.run_query, args: { sql: "SELECT SUM(amount) FROM orders" }, contains: "15600" }
+      - answer_matches: "(?<!\\d)15600(?!\\d)"
+      - answer_matches: "(?<!\\d)100(?!\\d)"
+    covers: [sqliteviz.open_db, sqliteviz.list_tables, sqliteviz.run_query]
+    notes: "The 156 fixture orders total exactly 15600.00, so the average is exactly 100.00; the read_tool re-runs the sum against the live database to pin the state."
+
+  - id: sqliteviz-03-top-customer
+    split: holdout
+    title: "Find the customer with the most orders"
+    prompt: >-
+      Open my shop database at /data/shop.db and work out which customer has the most
+      orders in the orders table. I want the name of that customer and how many orders
+      they have, because I am thinking of giving them a loyalty discount.
+    setup:
+      - close_all: true
+      - open_app: sqliteviz
+      - reset_app: sqliteviz
+      - seed_fixture: { path: /data/shop.db, fixture: shop.db }
+    oracle:
+      - tool: sqliteviz.open_db
+        path: /data/shop.db
+      - tool: sqliteviz.run_query
+        sql: "SELECT c.name, COUNT(o.id) AS order_count FROM customers c JOIN orders o ON o.customer_id = c.id GROUP BY c.id ORDER BY order_count DESC LIMIT 1"
+    checks:
+      - answer_contains: "Ana"
+      - answer_matches: "(?<!\\d)12(?!\\d)"
+    covers: [sqliteviz.open_db, sqliteviz.run_query]
+    notes: "Read-then-decide: the join must single out Ana, who holds 12 orders, one more than Ben with 11."
+    check_gap: "the answer may lowercase Ana; the lead confirms the phrasing in the agent run."
+
+  - id: sqliteviz-04-top-customer-new-order
+    split: train
+    title: "Add an order for the top customer and recount their orders"
+    prompt: >-
+      Open my shop database at /data/shop.db. First find the customer with the most
+      orders, then add a new order for that customer: three Widgets at 4.50 each, so the
+      order amount is 13.50. Once it is in, tell me how many orders that customer has in
+      total now.
+    setup:
+      - close_all: true
+      - open_app: sqliteviz
+      - reset_app: sqliteviz
+      - seed_fixture: { path: /data/shop.db, fixture: shop.db }
+    oracle:
+      - tool: sqliteviz.open_db
+        path: /data/shop.db
+      - tool: sqliteviz.run_query
+        sql: "SELECT c.id, c.name FROM customers c JOIN orders o ON o.customer_id = c.id GROUP BY c.id ORDER BY COUNT(o.id) DESC LIMIT 1"
+      - tool: sqliteviz.run_query
+        sql: "INSERT INTO orders (customer_id, product_id, amount) VALUES (7, 1, 13.50)"
+      - tool: sqliteviz.run_query
+        sql: "SELECT COUNT(*) AS order_count FROM orders WHERE customer_id = 7"
+    checks:
+      - read_tool: { tool: sqliteviz.run_query, args: { sql: "SELECT COUNT(*) FROM orders WHERE customer_id = 7" }, contains: "13" }
+      - answer_matches: "(?<!\\d)13(?!\\d)"
+      - answer_contains: "Ana"
+    covers: [sqliteviz.open_db, sqliteviz.run_query]
+    notes: "The long mutation journey: Ana holds 12 orders in the fixture, so the new order brings her to 13; the edit is pinned in the database itself by re-running the count, not by the answer. The count read right after the INSERT is the run's own result: run_query waits for the new run's terminal state (the pre-run panel fingerprint must change or the run marker be seen), so the write's empty preview is never read as the count."
+    check_gap: "the answer may phrase 13 as 'thirteen'; the count pin is the state check."
+
+  - id: sqliteviz-05-raise-widget-price
+    split: train
+    title: "Raise the Widget price by ten percent and list the Widget orders"
+    prompt: >-
+      Open my shop database at /data/shop.db. Widgets went up in price, so raise the
+      price of the product Widget in the products table by ten percent (it is 4.50
+      now). Then tell me the new price, and how many orders in the orders table are for
+      Widgets, so I know how much of the book the change affects going forward.
+    setup:
+      - close_all: true
+      - open_app: sqliteviz
+      - reset_app: sqliteviz
+      - seed_fixture: { path: /data/shop.db, fixture: shop.db }
+    oracle:
+      - tool: sqliteviz.open_db
+        path: /data/shop.db
+      - tool: sqliteviz.run_query
+        sql: "UPDATE products SET price = 4.95 WHERE name = 'Widget'"
+      - tool: sqliteviz.run_query
+        sql: "SELECT price FROM products WHERE name = 'Widget'"
+      - tool: sqliteviz.run_query
+        sql: "SELECT COUNT(*) AS widget_orders FROM orders WHERE product_id = 1"
+    checks:
+      - read_tool: { tool: sqliteviz.run_query, args: { sql: "SELECT price FROM products WHERE name = 'Widget'" }, contains: "4.95" }
+      - answer_matches: "(?<!\\d)4\\.95(?!\\d)"
+      - answer_contains: "64"
+    covers: [sqliteviz.open_db, sqliteviz.run_query]
+    notes: "Widget is 4.50 in the fixture; ten percent more is exactly 4.95, and the edit is pinned by re-reading the price from the live database. The fixture has 64 Widget orders. The price read right after the UPDATE is the run's own result: run_query waits for the new run's terminal state (the pre-run panel fingerprint must change or the run marker be seen), so the write's empty preview is never read as the price."
+
+  - id: sqliteviz-06-products-without-orders
+    split: holdout
+    title: "Name the products that have no orders"
+    prompt: >-
+      Open my shop database at /data/shop.db and find the products that have never been
+      ordered at all. I want to know which products in the products table have no rows
+      for them in the orders table: name every one of them and tell me how many there
+      are, because I want to know if I am stocking dead lines.
+    setup:
+      - close_all: true
+      - open_app: sqliteviz
+      - reset_app: sqliteviz
+      - seed_fixture: { path: /data/shop.db, fixture: shop.db }
+    oracle:
+      - tool: sqliteviz.open_db
+        path: /data/shop.db
+      - tool: sqliteviz.list_tables
+      - tool: sqliteviz.run_query
+        sql: "SELECT p.name FROM products p LEFT JOIN orders o ON o.product_id = p.id WHERE o.id IS NULL"
+    checks:
+      - answer_contains: "Bolt"
+      - answer_contains: "Cog"
+      - answer_matches: "(?<!\\d)4(?!\\d)"
+    covers: [sqliteviz.open_db, sqliteviz.list_tables, sqliteviz.run_query]
+    notes: "The fixture leaves Cog, Bolt, Nut and Bearing without orders; two of the four names plus the exact count are pinned."
+    check_gap: "the answer may list the names in any order; a stricter check would pin all four names."
+
+  - id: sqliteviz-07-widget-order-total
+    split: train
+    title: "Total the amount of every Widget order"
+    prompt: >-
+      Open my shop database at /data/shop.db and work out how much revenue the Widgets
+      actually brought in: the total amount across every order in the orders table that
+      is for the product Widget. Give me the number to two decimal places.
+    setup:
+      - close_all: true
+      - open_app: sqliteviz
+      - reset_app: sqliteviz
+      - seed_fixture: { path: /data/shop.db, fixture: shop.db }
+    oracle:
+      - tool: sqliteviz.open_db
+        path: /data/shop.db
+      - tool: sqliteviz.list_tables
+      - tool: sqliteviz.run_query
+        sql: "SELECT SUM(o.amount) AS widget_revenue FROM orders o JOIN products p ON p.id = o.product_id WHERE p.name = 'Widget'"
+    checks:
+      - read_tool: { tool: sqliteviz.run_query, args: { sql: "SELECT SUM(o.amount) FROM orders o JOIN products p ON p.id = o.product_id WHERE p.name = 'Widget'" }, contains: "6318.11" }
+      - answer_matches: "(?<!\\d)6318\\.11(?!\\d)"
+    covers: [sqliteviz.open_db, sqliteviz.list_tables, sqliteviz.run_query]
+    notes: "Computed straight from the fixture: the 64 Widget orders sum to 6318.11; the read_tool re-runs the join against the live database."
+
+  - id: sqliteviz-08-summary-to-files
+    split: train
+    title: "Count the database and save a one-line summary to Files"
+    prompt: >-
+      Open my shop database at /data/shop.db, count how many customers, products and
+      orders it holds, and write those three numbers as a short one-line summary into a
+      new note in my files at /reports/shop-summary.txt so I have the headline numbers
+      where I can find them.
+    setup:
+      - close_all: true
+      - open_app: sqliteviz
+      - reset_app: sqliteviz
+      - seed_fixture: { path: /data/shop.db, fixture: shop.db }
+    oracle:
+      - tool: sqliteviz.open_db
+        path: /data/shop.db
+      - tool: sqliteviz.run_query
+        sql: "SELECT 'customers' AS table_name, COUNT(*) AS row_count FROM customers UNION ALL SELECT 'products', COUNT(*) FROM products UNION ALL SELECT 'orders', COUNT(*) FROM orders"
+      - tool: files.write
+        path: /reports/shop-summary.txt
+        text: "Shop: 42 customers, 8 products, 156 orders."
+    checks:
+      - file_contains: { path: /reports/shop-summary.txt, text: "42 customers" }
+      - file_contains: { path: /reports/shop-summary.txt, text: "156 orders" }
+    covers: [sqliteviz.open_db, sqliteviz.run_query, files.write]
+    notes: "The export journey: the counts come from the database and the end state is the note in Files, pinned on the two numbers a wrong count would break."

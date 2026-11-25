@@ -1,0 +1,384 @@
+# DeckCraft journeys (12). train 9, holdout 3 (deckcraft-03, deckcraft-07, deckcraft-11).
+# Revised after the lead's gate review (2026-11-25): ids are deckcraft-NN-slug, prompts are
+# unquoted folded blocks, and every check reads state itself through craft_request on the
+# app's read methods (document.inspect for the deck, slide.inspect for a slide) instead of
+# tool_result, so it never depends on which tools the agent chose. The web app keeps one
+# presentation, so every oracle starts with deckcraft.new_presentation (self-resetting),
+# and deckcraft-11 seeds its assumed deck with setup run steps.
+app: deckcraft
+journeys:
+  - id: deckcraft-01-quarterly-review
+    split: train
+    title: "Two-slide quarterly review deck with a theme"
+    prompt: >-
+      I need a short deck for the quarterly review. Start a new presentation with the
+      Harbor theme, add a slide titled Q1 Review with the body lines Revenue up 12
+      percent, Churn down to 3 percent and Hiring two engineers, then a second slide
+      titled Q2 Plan with the lines Ship the billing redesign and Open the beta to 500
+      users.
+    setup:
+      - close_all: true
+      - open_app: deckcraft
+      - reset_app: deckcraft
+    oracle:
+      - tool: deckcraft.new_presentation
+        theme: Harbor
+      - tool: deckcraft.add_slide
+        layout: titleAndContent
+        title: "Q1 Review"
+        body: "Revenue up 12 percent\nChurn down to 3 percent\nHiring two engineers"
+      - tool: deckcraft.add_slide
+        layout: titleAndContent
+        title: "Q2 Plan"
+        body: "Ship the billing redesign\nOpen the beta to 500 users"
+    checks:
+      - craft_request: { app: deckcraft, method: "document.inspect", params: {}, expect: { path: ".", contains: "Q1 Review" } }
+      - craft_request: { app: deckcraft, method: "document.inspect", params: {}, expect: { path: ".", contains: "Q2 Plan" } }
+    covers: [deckcraft.new_presentation, deckcraft.add_slide]
+    notes: "Create with theme and two content slides; both titles are pinned through document.inspect, which reads the deck no matter what the agent did."
+
+  - id: deckcraft-02-title-slide-graphics
+    split: train
+    title: "A heading text box and a filled shape on the first slide"
+    prompt: >-
+      Build me a title slide the way I like it. Start a new presentation with the
+      Nocturne theme, put a text box with the words Key numbers on the first slide, big
+      and centred, and below it add a blue filled rectangle that says KPI.
+    setup:
+      - close_all: true
+      - open_app: deckcraft
+      - reset_app: deckcraft
+    oracle:
+      - tool: deckcraft.new_presentation
+        theme: Nocturne
+      - tool: deckcraft.add_text_box
+        x: 40
+        y: 260
+        w: 500
+        text: Key numbers
+        size: 24
+        align: center
+      - tool: deckcraft.add_shape
+        preset: rect
+        x: 40
+        y: 420
+        w: 300
+        h: 80
+        fill: "#3B5BDB"
+        text: KPI
+      - tool: deckcraft.add_text_box
+        x: 40
+        y: 100
+        w: 400
+        text: Title placeholder
+    checks:
+      - craft_request: { app: deckcraft, method: "slide.inspect", params: {}, expect: { path: ".", contains: "Key numbers" } }
+      - craft_request: { app: deckcraft, method: "slide.inspect", params: {}, expect: { path: ".", contains: "KPI" } }
+    covers: [deckcraft.new_presentation, deckcraft.add_text_box, deckcraft.add_shape]
+    notes: "Graphics on the first slide; both texts are pinned through slide.inspect, which reads the slide state itself."
+    check_gap: "the fill colour and the font size are not readable by any current check kind."
+
+  - id: deckcraft-03-cost-table
+    split: holdout
+    title: "A costs slide with a positioned table"
+    prompt: >-
+      Put my costs on a slide. Start a fresh deck, add a slide titled Costs, and on it
+      insert a table with two columns and four rows, header Item and Cost, then Rent
+      1200, Food 400 and Transit 150, placed at 100 by 200 with a width of 400 and a
+      height of 200.
+    setup:
+      - close_all: true
+      - open_app: deckcraft
+      - reset_app: deckcraft
+    oracle:
+      - tool: deckcraft.new_presentation
+      - tool: deckcraft.add_slide
+        layout: titleAndContent
+        title: "Costs"
+      - tool: deckcraft.insert_table
+        rows: 4
+        cols: 2
+        data:
+          - [Item, Cost]
+          - [Rent, 1200]
+          - [Food, 400]
+          - [Transit, 150]
+        x: 100
+        y: 200
+        w: 400
+        h: 200
+    checks:
+      - craft_request: { app: deckcraft, method: "slide.inspect", params: {}, expect: { path: ".", contains: "Costs" } }
+      - craft_request: { app: deckcraft, method: "slide.inspect", params: {}, expect: { path: ".", contains: "Rent" } }
+    covers: [deckcraft.new_presentation, deckcraft.add_slide, deckcraft.insert_table]
+    notes: "Table journey; the slide title and a data cell are pinned through slide.inspect."
+
+  - id: deckcraft-04-column-chart
+    split: train
+    title: "Quarterly sales as a column chart"
+    prompt: >-
+      I want the sales numbers visualised. Start a new deck, add a slide titled Sales,
+      and on it add a column chart titled Sales by quarter with the categories Q1, Q2,
+      Q3 and Q4 and one series called Sales with the values 12, 18, 9 and 15.
+    setup:
+      - close_all: true
+      - open_app: deckcraft
+      - reset_app: deckcraft
+    oracle:
+      - tool: deckcraft.new_presentation
+      - tool: deckcraft.add_slide
+        layout: titleAndContent
+        title: "Sales"
+      - tool: deckcraft.insert_chart
+        type: column
+        title: "Sales by quarter"
+        categories: [Q1, Q2, Q3, Q4]
+        series:
+          - [Sales, 12, 18, 9, 15]
+    checks:
+      - craft_request: { app: deckcraft, method: "slide.inspect", params: {}, expect: { path: ".", contains: "Sales by quarter" } }
+    covers: [deckcraft.new_presentation, deckcraft.add_slide, deckcraft.insert_chart]
+    notes: "Chart journey; the chart title is pinned through slide.inspect."
+
+  - id: deckcraft-05-navigate-and-add
+    split: train
+    title: "Add to the first slide after working on the second"
+    prompt: >-
+      Small task with a bit of navigation. Start a new deck, add a text box on the first
+      slide that says Welcome, then add a slide titled Agenda, and finally go back to
+      the first slide and add another text box at the bottom that says Thanks for
+      coming.
+    setup:
+      - close_all: true
+      - open_app: deckcraft
+      - reset_app: deckcraft
+    oracle:
+      - tool: deckcraft.new_presentation
+      - tool: deckcraft.add_text_box
+        x: 40
+        y: 100
+        w: 400
+        text: Welcome
+      - tool: deckcraft.add_slide
+        layout: title
+        title: "Agenda"
+      - tool: deckcraft.go_to_slide
+        index: 0
+      - tool: deckcraft.add_text_box
+        x: 40
+        y: 400
+        w: 400
+        text: Thanks for coming
+    checks:
+      - craft_request: { app: deckcraft, method: "slide.inspect", params: { index: 0 }, expect: { path: ".", contains: "Thanks for coming" } }
+      - craft_request: { app: deckcraft, method: "slide.inspect", params: { index: 0 }, expect: { path: ".", contains: "Welcome" } }
+    covers: [deckcraft.new_presentation, deckcraft.add_text_box, deckcraft.add_slide, deckcraft.go_to_slide]
+    notes: "Navigation journey: the closing line must land on slide one, not on the slide that was current when it was added."
+
+  - id: deckcraft-06-budget-pie
+    split: train
+    title: "Budget breakdown as a pie chart"
+    prompt: >-
+      Show me where the money goes. Start a new deck, add a slide titled Budget, and put
+      a pie chart on it titled Where the money goes with the categories Rent, Food and
+      Transport and a series called Share with the values 55, 25 and 20.
+    setup:
+      - close_all: true
+      - open_app: deckcraft
+      - reset_app: deckcraft
+    oracle:
+      - tool: deckcraft.new_presentation
+      - tool: deckcraft.add_slide
+        layout: titleAndContent
+        title: "Budget"
+      - tool: deckcraft.insert_chart
+        type: pie
+        title: "Where the money goes"
+        categories: [Rent, Food, Transport]
+        series:
+          - [Share, 55, 25, 20]
+    checks:
+      - craft_request: { app: deckcraft, method: "slide.inspect", params: {}, expect: { path: ".", contains: "Where the money goes" } }
+    covers: [deckcraft.new_presentation, deckcraft.add_slide, deckcraft.insert_chart]
+    notes: "Pie chart variant so the chart journey is not a copy of the column one."
+
+  - id: deckcraft-07-batch-build
+    split: holdout
+    title: "Build two slides at once and jump to the last one"
+    prompt: >-
+      Start a fresh deck and add two slides at once: a title slide saying Agenda, then
+      a content slide titled Roadmap, and when they are in, jump the deck to the new
+      content slide at index 2.
+    setup:
+      - close_all: true
+      - open_app: deckcraft
+      - reset_app: deckcraft
+    oracle:
+      - tool: deckcraft.new_presentation
+      - tool: deckcraft.batch
+        commands:
+          - "slide.new layout=title title=Agenda"
+          - "slide.new layout=titleAndContent title=Roadmap"
+          - "go_to_slide index=2"
+    checks:
+      - craft_request: { app: deckcraft, method: "document.inspect", params: {}, expect: { path: ".", contains: "Agenda" } }
+      - craft_request: { app: deckcraft, method: "document.inspect", params: {}, expect: { path: ".", contains: "Roadmap" } }
+    covers: [deckcraft.new_presentation, deckcraft.batch]
+    notes: "Batch journey: three slide commands in one call, both slide titles pinned through document.inspect."
+
+  - id: deckcraft-08-launch-day-deck
+    split: train
+    title: "Five-slide launch deck with sections and a checklist"
+    prompt: >-
+      Build the launch day deck for me. Start fresh, then add these slides in order: a
+      title slide Launch day, a section header Before, a content slide Checklist with
+      the lines Freeze the build and Verify the status page, a content slide During with
+      the lines Watch the error rate and Keep the war room open, and a closing title
+      slide Wrap up.
+    setup:
+      - close_all: true
+      - open_app: deckcraft
+      - reset_app: deckcraft
+    oracle:
+      - tool: deckcraft.new_presentation
+      - tool: deckcraft.add_slide
+        layout: title
+        title: "Launch day"
+      - tool: deckcraft.add_slide
+        layout: sectionHeader
+        title: "Before"
+      - tool: deckcraft.add_slide
+        layout: titleAndContent
+        title: "Checklist"
+        body: "Freeze the build\nVerify the status page"
+      - tool: deckcraft.add_slide
+        layout: titleAndContent
+        title: "During"
+        body: "Watch the error rate\nKeep the war room open"
+      - tool: deckcraft.add_slide
+        layout: title
+        title: "Wrap up"
+    checks:
+      - craft_request: { app: deckcraft, method: "document.inspect", params: {}, expect: { path: ".", contains: "Launch day" } }
+      - craft_request: { app: deckcraft, method: "document.inspect", params: {}, expect: { path: ".", contains: "Checklist" } }
+      - craft_request: { app: deckcraft, method: "slide.inspect", params: { index: 4 }, expect: { path: ".", contains: "war room" } }
+    covers: [deckcraft.new_presentation, deckcraft.add_slide]
+    notes: "Longer deck with mixed layouts; three pins across the five slides, the third on the During slide, which sits at index 4 (0-based; the add_slide results number slides 1 to 5)."
+
+  - id: deckcraft-09-save-deck
+    split: train
+    title: "Build a two-slide deck and keep a copy in Files"
+    prompt: >-
+      Start a new deck with the Paper theme, add a slide titled Talk and one titled
+      Backup, and when that is done save a copy of the deck to /Decks/talk.deckcraft so
+      I have it in my files.
+    setup:
+      - close_all: true
+      - open_app: deckcraft
+      - reset_app: deckcraft
+    oracle:
+      - tool: deckcraft.new_presentation
+        theme: Paper
+      - tool: deckcraft.add_slide
+        layout: title
+        title: "Talk"
+      - tool: deckcraft.add_slide
+        layout: title
+        title: "Backup"
+      - tool: deckcraft.save_copy
+        path: /Decks/talk.deckcraft
+    checks:
+      - file_exists: /Decks/talk.deckcraft
+      - craft_request: { app: deckcraft, method: "document.inspect", params: {}, expect: { path: ".", contains: "Backup" } }
+    covers: [deckcraft.new_presentation, deckcraft.add_slide, deckcraft.save_copy]
+    notes: "Export journey; the file landing in Files is the pinned end state."
+
+  - id: deckcraft-10-open-outline
+    split: train
+    title: "Import a markdown outline as a deck"
+    prompt: >-
+      I wrote my talk as an outline in my files at /Decks/outline.md. Open it in the
+      presentation app so it becomes my deck, and check it loaded.
+    setup:
+      - close_all: true
+      - open_app: deckcraft
+      - reset_app: deckcraft
+      - seed_file: { path: /Decks/outline.md, text: "# Roadmap\nFirst the data pipeline\nThen the dashboard\nFinally the public API" }
+    oracle:
+      - tool: deckcraft.open_file
+        path: /Decks/outline.md
+    checks:
+      - craft_request: { app: deckcraft, method: "slide.inspect", params: { index: 0 }, expect: { path: ".", contains: "data pipeline" } }
+    covers: [deckcraft.open_file]
+    notes: "Import journey; the outline is plain text, so seed_file can carry it. document.inspect only lists layouts and theme, so the loaded line is pinned through slide.inspect on the single slide the outline became."
+    check_gap: "how the outline maps to slides (heading to title, lines to body) is app-internal; the oracle run showed the file opening as one slide."
+
+  - id: deckcraft-11-fix-slide-title
+    split: holdout
+    title: "Change the title text on the second slide"
+    prompt: >-
+      The title on my second slide is wrong. It says Q1 Plan but the plan changed, so it
+      should say Q2 Plan. Fix the text on that slide so it reads Q2 Plan.
+    setup:
+      - close_all: true
+      - open_app: deckcraft
+      - reset_app: deckcraft
+      - run: { tool: deckcraft.new_presentation }
+      - run: { tool: deckcraft.add_slide, layout: titleAndContent, title: "Q1 Plan" }
+    oracle:
+      - tool: deckcraft.inspect_slide
+        index: 1
+      - tool: deckcraft.set_text
+        id: "${0.shapes[0].id}"
+        text: "Q2 Plan"
+    checks:
+      - craft_request: { app: deckcraft, method: "slide.inspect", params: { index: 1 }, expect: { path: ".", contains: "Q2 Plan" } }
+    covers: [deckcraft.inspect_slide, deckcraft.set_text]
+    notes: "Read-then-edit journey; setup seeds the deck with the wrong title and the oracle takes the shape id from its own inspect result (${0.shapes[0].id})."
+
+  - id: deckcraft-12-meeting-notes-slide
+    split: train
+    title: "Meeting notes slide with a text box, an arrow and an action table"
+    prompt: >-
+      Make a meeting notes slide I can present. Start a new deck with the Ember theme,
+      add a slide titled Meeting notes with the body lines Agenda, Decisions and Action
+      items, then put a text box saying Next steps on the slide, a right-pointing arrow
+      shape next to it with the word Go, and a small two-column, three-row table with
+      the header Owner and Task and the rows Sam, Ship the fix and Priya, Write the
+      notes.
+    setup:
+      - close_all: true
+      - open_app: deckcraft
+      - reset_app: deckcraft
+    oracle:
+      - tool: deckcraft.new_presentation
+        theme: Ember
+      - tool: deckcraft.add_slide
+        layout: titleAndContent
+        title: "Meeting notes"
+        body: "Agenda\nDecisions\nAction items"
+      - tool: deckcraft.add_text_box
+        x: 40
+        y: 200
+        w: 500
+        text: Next steps
+      - tool: deckcraft.add_shape
+        preset: rightArrow
+        x: 560
+        y: 200
+        w: 120
+        h: 60
+        text: Go
+      - tool: deckcraft.insert_table
+        rows: 3
+        cols: 2
+        data:
+          - [Owner, Task]
+          - [Sam, Ship the fix]
+          - [Priya, Write the notes]
+    checks:
+      - craft_request: { app: deckcraft, method: "slide.inspect", params: {}, expect: { path: ".", contains: "Meeting notes" } }
+      - craft_request: { app: deckcraft, method: "slide.inspect", params: {}, expect: { path: ".", contains: "Next steps" } }
+      - craft_request: { app: deckcraft, method: "slide.inspect", params: {}, expect: { path: ".", contains: "Priya" } }
+    covers: [deckcraft.new_presentation, deckcraft.add_slide, deckcraft.add_text_box, deckcraft.add_shape, deckcraft.insert_table]
+    notes: "Mixed-content slide: text box, shape and table on one slide, three pins through slide.inspect."

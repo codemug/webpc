@@ -24,7 +24,8 @@ const pick = (args, keys) => {
 // coercion (plan 9, the generic long-tail tool).
 const parseParams = text => {
   const out = {};
-  for (const line of String(text ?? '').split('\n')) {
+  // A literal backslash-n counts as a line break too: small models often write \n in the text.
+  for (const line of String(text ?? '').split(/\n|\\n/)) {
     const row = line.trim();
     if (!row) continue;
     const eq = row.indexOf('=');
@@ -314,6 +315,10 @@ export const tools = [
     name: 'gridcraft.list_functions',
     purpose: 'List spreadsheet functions with signature and description.',
     when: 'Use when the user asks which formula function to use, e.g. for a lookup or a date.',
+    // A4: function names live in the app's function registry, not the tool text, so an inner
+    // name (find_tool "vlookup") would not match. The common function names index this tool so
+    // the app's own registry is the first hop (its search param then narrows it).
+    keywords: ['sum', 'average', 'vlookup', 'hlookup', 'xlookup', 'if', 'iferror', 'index', 'match', 'countif', 'sumif', 'counta', 'count', 'min', 'max', 'round', 'roundup', 'rounddown', 'text', 'left', 'right', 'mid', 'concatenate', 'substitute', 'trim', 'date', 'today', 'now', 'datedif', 'eomonth', 'networkdays', 'pi', 'sqrt', 'abs', 'log', 'power', 'mod', 'int', 'ceiling', 'floor', 'rand', 'randbetween', 'and', 'or', 'not', 'isblank', 'isnumber'],
     params: {
       search: { type: 'string', description: 'Substring of the function name or description' },
       category: { type: 'string', description: 'Category, e.g. Math & Trig, Lookup & Reference' },

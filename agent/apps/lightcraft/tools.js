@@ -85,11 +85,31 @@ const parseCommandParams = text => {
 };
 
 // commands.rs pick(): copy the listed keys (when present) into a params object.
+// checkArgs keeps list items as text ("3", "7"); the engine wants photo ids as whole numbers.
 const pick = (args, keys) => {
   const out = {};
-  for (const key of keys) if (args[key] !== undefined) out[key] = args[key];
+  for (const key of keys) if (args[key] !== undefined) out[key] = key === 'ids' ? args[key].map(Number) : args[key];
   return out;
 };
+
+// T10: the host bridge adds a dropped file to the library asynchronously, so openFromBytes
+// acks the file hand-off before the catalog has the photo (measured: a catalog.stats or
+// catalog.query read a call or two after an import misses the new record, and settles a
+// few calls later). Read the count before the open and wait for the imported photo to be
+// counted, so the tool - and any "how many photos now" right after it - never reads stale.
+const IMPORT_COUNT_TIMEOUT_MS = 20000;
+export async function waitUntilCounted(host, before, timeoutMs = IMPORT_COUNT_TIMEOUT_MS, pollMs = 250) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    let photos;
+    try {
+      photos = (await command(host, 'catalog.stats'))?.photos;
+    } catch { /* the app is still committing the import: not counted yet */ }
+    if (typeof photos === 'number' && (before === undefined || photos > before)) return;
+    if (Date.now() >= deadline) throw new ToolError('app_error', `the photo was delivered but the library did not count it within ${Math.round(timeoutMs / 1000)} s`, '');
+    await sleep(pollMs);
+  }
+}
 
 export const pack = { id: APP, title: 'LightCraft' };
 
@@ -269,7 +289,12 @@ export const tools = [
     run: async (args, ctx) => {
       const file = await readOpenFile(ctx, args.path, { id: APP, title: 'LightCraft' });
       const wrapper = await ctx.host.appWindow(APP);
-      return openFromBytes(wrapper, APP, file.name, file.bytes);
+      // T10: the open ack arrives before the catalog counts the photo, so pin the count
+      // first and wait for the import to be counted before the tool returns.
+      const before = (await command(ctx.host, 'catalog.stats'))?.photos;
+      const result = await openFromBytes(wrapper, APP, file.name, file.bytes);
+      await waitUntilCounted(ctx.host, before);
+      return result;
     },
   },
 ];
@@ -281,6 +306,6 @@ export const tools = [
 export const usesCommands = [
   'library.info', 'library.select', 'library.filter', 'library.sort', 'photo.rate',
   'photo.rotateLeft', 'photo.rotateRight', 'photo.delete', 'photo.restore',
-  'develop.reset', 'edit.undo', 'edit.redo',
+  'develop.reset', 'edit.undo', 'edit.redo', 'catalog.stats',
 ];
 export const usesMethods = []; // the page has no request() surface (no METHODS entry)

@@ -279,6 +279,16 @@ test('repairArgs moves one unknown key into the one missing required text parame
   assert.deepEqual(checkArgs(RUN, { query: 'uname -a' }), { ok: true, args: { code: 'uname -a', lang: 'sh' } });
 });
 
+test('repairArgs unwraps the tool own args sent as a JSON object under an unknown key', () => {
+  // lfm3-1.7b on journey cadcraft-01: params="{\"text\": \"line 0,0 10,0\"}" to a tool with no params param.
+  assert.deepEqual(checkArgs(RUN, { params: '{"code": "uname -a", "lang": "sh"}' }), { ok: true, args: { code: 'uname -a', lang: 'sh' } });
+  assert.deepEqual(checkArgs(RUN, { args: { code: 'ls' } }), { ok: true, args: { code: 'ls', lang: 'sh' } });
+  // Wrong inner keys are unwrapped too: one stray key fills the one missing required param,
+  assert.deepEqual(checkArgs(RUN, { params: '{"cmd": "ls"}' }), { ok: true, args: { code: 'ls', lang: 'sh' } });
+  // and otherwise the error names the wrong inner key, not the wrapper.
+  assert.match(checkArgs(RUN, { parameters: '{"code": "ls", "title": "x"}' }).error.message, /no parameter title/);
+});
+
 test('repairArgs leaves calls alone when no rule applies', () => {
   const ok = { lang: 'sh', code: 'ls' };
   assert.deepEqual(repairArgs(RUN, ok), ok);
@@ -293,4 +303,12 @@ test('repairArgs leaves calls alone when no rule applies', () => {
 test('a copied placeholder on a parameter with a default takes the default; without one it is an error', () => {
   assert.deepEqual(checkArgs(RUN, { lang: '<lang>', code: 'ls' }), { ok: true, args: { code: 'ls', lang: 'sh' } });
   assert.equal(checkArgs(RUN, { code: '<code>' }).error.type, 'placeholder');
+});
+
+/** lfm3-1.7b copied a generic slot word into a value (cyberchef-01: input=<text>). */
+test('a generic slot word like <text> is a placeholder error, real angle-bracket input is not', () => {
+  const BAKE = { name: 'cyberchef.bake', params: { recipe: { type: 'text', required: true, description: 'Ops' }, input: { type: 'text', required: true, description: 'Text' } } };
+  assert.equal(checkArgs(BAKE, { recipe: 'To Base64', input: '<text>' }).error.type, 'placeholder');
+  assert.equal(checkArgs(BAKE, { recipe: 'To Base64', input: '<b>' }).ok, true);
+  assert.equal(checkArgs(BAKE, { recipe: 'To Base64', input: '<div>' }).ok, true);
 });

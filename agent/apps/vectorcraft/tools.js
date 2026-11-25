@@ -48,7 +48,8 @@ const parseValue = raw => {
 // key=value lines -> object (the generic long-tail form for params).
 const parseParams = text => {
   const out = {};
-  for (const line of String(text ?? '').split('\n')) {
+  // A literal backslash-n counts as a line break too: small models often write \n in the text.
+  for (const line of String(text ?? '').split(/\n|\\n/)) {
     const row = line.trim();
     if (!row) continue;
     const eq = row.indexOf('=');
@@ -59,7 +60,9 @@ const parseParams = text => {
 };
 
 // A batch step "id k=v k2=v2": the id, then space-separated key=value tokens (no spaces in values).
-const parseStep = line => {
+// Exported for the pack test that checks the batch and run_command examples against the
+// live command list's param names (small models copy examples verbatim).
+export const parseStep = line => {
   const text = String(line ?? '').trim();
   const out = { command: '', params: {} };
   if (!text) return null;
@@ -517,7 +520,7 @@ export const tools = [
     effect: 'change',
     effectFor: args => (DESTRUCTIVE.some(id => (args.commands ?? []).some(line => String(line ?? '').trim().startsWith(id))) ? 'destructive' : 'change'),
     needs: NEEDS,
-    examples: [{ args: { commands: ['shape.ellipse cx=100 cy=100 radius=50', 'paint.setFill fill=#3B5BDB'] }, says: 'Draw a circle and paint it blue' }],
+    examples: [{ args: { commands: ['shape.ellipse x=100 y=100 width=100 height=100', 'paint.setFill color=#3B5BDB'] }, says: 'Draw a circle and paint it blue' }],
     // dispatch.rs:327-410: one engine.execute per step, in order, stop on error by default;
     // the atomic/label undo grouping and the $N / $last result references are dropped (report)
     run: async (args, ctx) => {
