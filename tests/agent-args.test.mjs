@@ -177,6 +177,14 @@ test('a single-line comma string is refused for a flat:false table with the rows
   assert.deepEqual(checkArgs(strict, { name: 'n', grid: 'hello' }).args.grid, [['hello']]);
   // Without flat:false the CSV string keeps the old behaviour (vectorcraft.rows relies on it).
   assert.deepEqual(checkArgs(tool, { name: 'n', grid: 'a,b' }).args.grid, [['a', 'b']]);
+  // gridcraft-04 (sweep b20): a 2D array string truncated mid-way (it ends with a literal
+  // "...") fails the JSON parse, so it must not be re-rendered as a comma-split row of
+  // garbage - it is refused as unparseable with a clean 2D example as the fix.
+  const broken = checkArgs(strict, { name: 'n', grid: '[["Widget North 1250", "North", "1250"], ["Gadget South 300", "South", "300"],...]' });
+  assert.ok(!broken.ok, 'the truncated 2D string is refused');
+  assert.match(broken.error.message, /^grid: looks like a 2D JSON array but does not parse/);
+  assert.match(broken.error.fix, /grid=\[\["a","b"\],\["c","d"\]\]/);
+  assert.deepEqual(checkArgs(strict, { name: 'n', grid: '[["a","b"],["c","d"]]' }).args.grid, [['a', 'b'], ['c', 'd']], 'the fix line round-trips as two rows');
 });
 
 test('list and table accept a string that parses as a JSON array', () => {

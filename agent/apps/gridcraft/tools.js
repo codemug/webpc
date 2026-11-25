@@ -26,6 +26,12 @@ const pick = (args, keys) => {
 // guessed open_file paths after). Re-throw with the real sheet names and the
 // active-sheet form, which is what a data range usually should be.
 const NO_SHEET = /no sheet named `([^`]+)`/;
+// Sweep b20 gridcraft-02: the engine's "A table can't overlap another table." teaches nothing,
+// and lfm3 had already created the table (the first attempt succeeded) and then looped 13
+// rounds over style variants - A23's identical-fail stop cannot catch it, because the style
+// changes each time. Same enrichment as NO_SHEET: read the real tables and say the range is
+// already one.
+const TABLE_OVERLAP = /table can'?t overlap another table/i;
 const rangeExecute = async (app, command, params) => {
   try {
     return await app.execute(command, params);
@@ -35,6 +41,12 @@ const rangeExecute = async (app, command, params) => {
       const state = await app.inspect().catch(() => null);
       const names = (state?.sheets ?? []).map(sheet => (sheet && typeof sheet === 'object' ? sheet.name : sheet)).filter(Boolean).join(', ');
       throw new ToolError('app_error', `no sheet named "${m[1]}"${names ? `; the sheets are: ${names}` : ''}. Omit the sheet name to use the active sheet, e.g. range=A1:B5`, 'call_tool tool=gridcraft.inspect');
+    }
+    if (error?.code === 'app_error' && TABLE_OVERLAP.test(error.message ?? '')) {
+      const state = await app.inspect().catch(() => null);
+      const tables = (state?.sheets ?? []).flatMap(sheet => (sheet && typeof sheet === 'object' && Array.isArray(sheet.tables) ? sheet.tables : [])).filter(t => t?.name || t?.range);
+      const list = tables.map(t => `${t.name ?? 'table'} (${t.range ?? '?'})`).join(', ');
+      throw new ToolError('app_error', `a table already overlaps ${params?.range ?? 'this range'}${list ? `: ${list}` : ''}. Do not create it again - the cells are already inside that table. Continue with the table as it is, or pick a range that does not touch it`, 'call_tool tool=gridcraft.inspect');
     }
     throw error;
   }

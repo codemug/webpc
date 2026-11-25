@@ -243,6 +243,20 @@ test('saveBytesCopy decodes the deckcraft data shape and names the copy from the
   assert.deepEqual(out.bytes, SAVE_BYTES);
 });
 
+test('saveBytesCopy bounds a save execute that never settles (T18 follow-up)', async () => {
+  // The same mechanism as the open path: while the app's event loop is blocked the
+  // save execute's promise (and its 30 s page-side reject) never settle. The bound
+  // must answer with the honest app_error, not let the save outlive the turn timer.
+  const wrapper = fakeWrapper();
+  const craft = fakeCraft([{ id: 'file.saveBytes' }], {
+    execute: () => new Promise(() => {}),
+  });
+  const started = Date.now();
+  const error = await toolError(saveBytesCopy(craft, { id: 'deckcraft', title: 'DeckCraft', wrapperWindow: wrapper, target: '/DeckCraft/q1.deckcraft', tool: 'deckcraft.save_copy', nativeExt: '.deckcraft', saveTimeoutMs: 500 }), 'app_error');
+  assert.ok(Date.now() - started < 15000, 'the save bound held, not the turn timer');
+  assert.match(error.message, /DeckCraft stopped answering during the save/);
+});
+
 test('saveBytesCopy rejects when the reported byte count does not match the decoded length', async () => {
   const craft = fakeCraft([{ id: 'file.saveBytes' }], {
     execute: async () => ({ name: 'x.xlsx', bytes: 99, base64: SAVE_B64 }),
@@ -442,6 +456,43 @@ test('openAndAwait times out with the accept list when the app state never chang
   const craft = fakeCraft([], { inspect: () => ({ sheets: ['Sheet1'] }) });
   const error = await toolError(openAndAwait(craft, { id: 'cadcraft', title: 'CadCraft', wrapperWindow: wrapper, name: 'plan.dxf', bytes: new Uint8Array([1]), accept: '.dxf,.dwg,.shx', timeoutMs: 50, intervalMs: 10 }), 'app_error');
   assert.match(error.message, /CadCraft did not open plan\.dxf\. It accepts: \.dxf,\.dwg,\.shx\./);
+  assert.doesNotMatch(error.message, /stopped answering/); // the inspect answered; only the state never changed
+});
+
+// deckcraft b19: the model's first open_file died at the 240 s turn timer with an empty
+// trace - the page API's inspect promise can stay unsettled while the app's event loop is
+// busy (a conversion or a dialog). The poll must bound every inspect, so the cap holds
+// and the tool answers with the honest error instead of outliving the turn.
+test('openAndAwait bounds an inspect that never settles and reports the silence', async () => {
+  const wrapper = fakeWrapper();
+  const never = () => new Promise(() => {});
+  const craft = fakeCraft([], { inspect: never });
+  const started = Date.now();
+  const error = await toolError(openAndAwait(craft, { id: 'deckcraft', title: 'DeckCraft', wrapperWindow: wrapper, name: 'outline.md', bytes: new Uint8Array([1]), accept: '.deckcraft,.md', timeoutMs: 120, intervalMs: 10 }), 'app_error');
+  assert.ok(Date.now() - started < 15000, 'the bounded inspect kept the wait near the cap, not the turn timer');
+  assert.match(error.message, /DeckCraft did not open outline\.md\. Its inspect stopped answering during the wait/);
+  assert.match(error.message, /It accepts: \.deckcraft,\.md\./);
+});
+
+// deckcraft-10 (b19/b20): the open path's last unbounded await. A Files-store read that
+// never settles must not push the open past the turn timer either - the read is bounded
+// with the honest error, and a healthy read is untouched (the default 30 s timer is
+// cleared on the fast path).
+test('readOpenFile bounds a Files read that never settles', async () => {
+  const ctx = { files: { readBytes: () => new Promise(() => {}) } };
+  const started = Date.now();
+  const error = await toolError(readOpenFile(ctx, '/Decks/outline.md', { id: 'deckcraft', title: 'DeckCraft', readTimeoutMs: 500 }), 'app_error');
+  assert.ok(Date.now() - started < 15000, 'the read bound held, not the turn timer');
+  assert.match(error.message, /DeckCraft did not answer the Files read within 1 s/);
+});
+
+test('readOpenFile still hands a healthy read straight through and keeps the teaching not_found', async () => {
+  const ctx = { files: { readBytes: path => Promise.resolve({ path, name: 'outline.md', bytes: new Uint8Array([1]), size: 1 }) } };
+  const out = await readOpenFile(ctx, '/Decks/outline.md', { id: 'deckcraft', title: 'DeckCraft', readTimeoutMs: 500 });
+  assert.equal(out.name, 'outline.md');
+  const missing = { files: { readBytes: () => Promise.reject(Object.assign(new Error('/missing.md is not a file.'), { code: 'not_found' })) } };
+  const error = await toolError(readOpenFile(missing, '/Decks/missing.md', { id: 'deckcraft', title: 'DeckCraft', readTimeoutMs: 500 }), 'not_found');
+  assert.match(error.fix, /files\.find query=missing\.md/);
 });
 
 // The b14 trap (pdfcraft-05, gridcraft-12, desktop-13): a re-open of an open file

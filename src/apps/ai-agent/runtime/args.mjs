@@ -263,7 +263,16 @@ function coerce(spec, value, values, aliases, key = 'value') {
         // string and it was accepted as one row of six cells (silent wrong success). Strings
         // with newlines keep the string form: one row per line, cells by comma/tab.
         if (spec.flat === false && !source.includes('\n')) {
-          const cells = splitRow(source.trim(), source.includes('\t') ? '\t' : ',');
+          const text = source.trim();
+          // A complete 2D array string never reaches here (jsonArray at the top of the case
+          // parses it). A string that starts with [[ and gets here failed the JSON parse:
+          // a truncated or malformed 2D array (sweep b20 gridcraft-04 ended one with a
+          // literal "..."). Its comma split is a row of garbage, so teach the shape with a
+          // clean two-row example instead of re-rendering the garbage as "a row".
+          if (/^\s*\[\[/.test(text)) {
+            return { ok: false, message: `looks like a 2D JSON array but does not parse (truncated or malformed). Send the complete array with every row in full - no "..." placeholder - or the rows one per line`, fixRows: [['a', 'b'], ['c', 'd']] };
+          }
+          const cells = splitRow(text, text.includes('\t') ? '\t' : ',');
           if (cells.length > 1) {
             return { ok: false, message: `a single-line comma string is ambiguous: ${key}=${JSON.stringify([cells])} writes a row; ${key}=${JSON.stringify(cells.map(cell => [cell]))} writes a column`, fixRows: cells };
           }
@@ -301,8 +310,9 @@ function fixLine(tool, param, replacement, liveApp) {
     const placeholder = spec?.type === 'enum' ? (enumValues(spec, () => []))[0] ?? '' : spec?.type === 'boolean' ? 'true' : spec && ['integer', 'number'].includes(spec.type) ? (spec.min ?? 0) : spec?.type === 'path' ? '/' : spec && ['list', 'table'].includes(spec.type) ? 'a' : '';
     // A29: for a flat:false table the copyable retry must be the JSON rows form - a single-line
     // CSV string is refused by the table coercion as ambiguous (it is the flat list's twin).
+    // A 2D replacement (array of rows) renders as-is; a flat one is wrapped as a single row.
     const isStrictTable = spec?.type === 'table' && spec.flat === false;
-    args[param] = replacement !== undefined ? (isStrictTable && Array.isArray(replacement) ? JSON.stringify([replacement]) : replacement) : isPath(param) ? `<${param}>` : isLiveEnum ? (liveApp ?? `<${param}>`) : example[param] ?? placeholder;
+    args[param] = replacement !== undefined ? (isStrictTable && Array.isArray(replacement) ? (Array.isArray(replacement[0]) ? JSON.stringify(replacement) : JSON.stringify([replacement])) : replacement) : isPath(param) ? `<${param}>` : isLiveEnum ? (liveApp ?? `<${param}>`) : example[param] ?? placeholder;
   }
   return callLine(tool.name, args);
 }

@@ -79,13 +79,29 @@ export const filesCall = (ctx, fn, fixFor) => {
  * files.find on the file's own name: the app is already open, so desktop.open_app is a dead
  * end, and files.find recovers the real path (soundcraft-05 trace: /soundCraft/ vs the seeded
  * /SoundCraft/). Small models copy fix lines, so the fix line is the recovery.
+ *
+ * The read is bounded (readTimeoutMs, default 30 s): a Files-store promise that never
+ * settles would stall the open the same way a silent app inspect does (deckcraft-10,
+ * b19/b20: the model's first open_file outlived the 240 s turn timer with an empty trace).
+ * A healthy read is milliseconds; 30 s leaves room for a file at the 256 MB wrapper cap,
+ * and with this + appWindow (30 s) + craftApi (30 s) + openAndAwait (30 s) the whole open
+ * path answers well inside the turn timer.
  */
-export const readOpenFile = async (ctx, path, { id, title, missingHint }) => {
+export const READ_TIMEOUT_MS = 30000;
+
+export const readOpenFile = async (ctx, path, { id, title, missingHint, readTimeoutMs = READ_TIMEOUT_MS }) => {
   const openAppFix = `call_tool tool=desktop.open_app app=${id}`;
   if (typeof path !== 'string' || path.length === 0) {
     throw new ToolError('missing_argument', `Give the Files path of the file to open. To open ${title} itself, use desktop.open_app.`, openAppFix);
   }
-  return filesCall(ctx, files => files.readBytes(path))
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new ToolError('app_error', `${title} did not answer the Files read within ${Math.max(1, Math.round(readTimeoutMs / 1000))} s (the Files store may be busy). Retry the open, or check the file in the Files app.`, '')), readTimeoutMs);
+  });
+  return Promise.race([
+    filesCall(ctx, files => files.readBytes(path)),
+    deadline,
+  ])
     .catch(error => {
       if (error instanceof ToolError && error.type === 'not_found') {
         // The model supplied a path but it is wrong (wrong case, typo, or not seeded). The app
@@ -98,7 +114,8 @@ export const readOpenFile = async (ctx, path, { id, title, missingHint }) => {
         throw new ToolError('not_found', `${path} is not in Files. The path may be wrong - find the file with files.find, then open that path.${hint}`, `call_tool tool=files.find query=${name}`);
       }
       throw error;
-    });
+    })
+    .finally(() => clearTimeout(timer));
 };
 
 /**
@@ -247,11 +264,29 @@ const openedSummary = info => {
   return parts.length > 0 ? parts.join(' ') : 'the app state changed';
 };
 
+// The cross-frame awaits of the save path (T18 follow-up, lead ruling): the same mechanism
+// as the open path - while the app's event loop is blocked (a waiting dialog, a conversion),
+// the page API's promises, including their 30 s reject, stay unsettled. Bound every craft
+// call the save makes; a stuck call rejects with the honest app_error instead of hanging
+// the turn. saveCopy (the capture path) is already bounded by its own capture timeout.
+export const SAVE_TIMEOUT_MS = 30000;
+
+const boundedCraftCall = (call, title, boundMs) => {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new ToolError('app_error', `${title} stopped answering during the save (it may be showing a dialog); it did not finish within ${Math.max(1, Math.round(boundMs / 1000))} s.`, '')), boundMs);
+  });
+  return Promise.race([
+    Promise.resolve().then(() => call()),
+    deadline,
+  ]).finally(() => clearTimeout(timer));
+};
+
 // The produced save name when the saveBytes result carries none: the inspect path's
 // base name when it has an extension, else the inspect title, else the display name.
-const producedName = async (craft, title) => {
+const producedName = async (craft, title, boundMs = SAVE_TIMEOUT_MS) => {
   try {
-    const info = await craft.inspect({});
+    const info = await boundedCraftCall(() => craft.inspect({}), title, boundMs);
     if (typeof info?.path === 'string') {
       const base = info.path.split('/').filter(Boolean).pop();
       if (base && extOf(base) !== '') return base;
@@ -271,7 +306,7 @@ const producedName = async (craft, title) => {
 // corrupt save. When r.bytes is a number the decoded length must equal it. The produced
 // name is r.name, else the inspect title/path; a name without an extension gets the
 // app's native extension appended.
-const inlineSave = async (r, craft, title, nativeExt, source) => {
+const inlineSave = async (r, craft, title, nativeExt, source, boundMs = SAVE_TIMEOUT_MS) => {
   const encoded = r?.base64 ?? r?.data ?? r?.dataBase64;
   const bytes = typeof encoded === 'string' ? base64ToBytes(encoded)
     : typeof r?.text === 'string' ? new TextEncoder().encode(r.text)
@@ -282,7 +317,7 @@ const inlineSave = async (r, craft, title, nativeExt, source) => {
     throw new ToolError('app_error', `${title} reported ${r.bytes} bytes but returned ${bytes.byteLength}; the save is corrupt.`, '');
   }
   let name = r.name;
-  if (typeof name !== 'string' || name.length === 0) name = await producedName(craft, title);
+  if (typeof name !== 'string' || name.length === 0) name = await producedName(craft, title, boundMs);
   if (extOf(name) === '') name += nativeExt;
   return { name, bytes };
 };
@@ -312,11 +347,14 @@ const inlineSave = async (r, craft, title, nativeExt, source) => {
  * capture; the default is execute('file.save', {}), which retries once with
  * execute('file.saveAs', { path: '<title><native ext>' }) when the app refuses the
  * no-path save for a missing file name), guard (false skips the extension guard),
- * timeoutMs (capture timeout, default 60000).
+ * timeoutMs (capture timeout, default 60000), saveTimeoutMs (the bound for the craft
+ * calls the save makes - commands, the save execute, the no-path trigger and the
+ * produced-name inspect; a stuck call answers with the honest app_error, default
+ * SAVE_TIMEOUT_MS).
  * Returns { name, bytes, note }; note is '' except on the capture path, which says the
  * app also downloaded the file in the browser.
  */
-export async function saveBytesCopy(craft, { id, title = id, wrapperWindow, target = '', tool, nativeExt = '', fallbackTrigger = null, inlineCommand = null, guard = true, timeoutMs = 60000 } = {}) {
+export async function saveBytesCopy(craft, { id, title = id, wrapperWindow, target = '', tool, nativeExt = '', fallbackTrigger = null, inlineCommand = null, guard = true, timeoutMs = 60000, saveTimeoutMs = SAVE_TIMEOUT_MS } = {}) {
   // The extension guard, before the save starts when the native extension is known: a
   // rejected target must not start a save (the capture would wait out its timeout, and in
   // host mode the wrapper would download a file nobody asked for). With nativeExt '' (the
@@ -334,11 +372,11 @@ export async function saveBytesCopy(craft, { id, title = id, wrapperWindow, targ
   let save;
   let note = '';
   if (inlineCommand) {
-    save = await inlineSave(await craft.execute(inlineCommand.command, inlineCommand.params ?? {}), craft, title, nativeExt, inlineCommand.command);
+    save = await inlineSave(await boundedCraftCall(() => craft.execute(inlineCommand.command, inlineCommand.params ?? {}), title, saveTimeoutMs), craft, title, nativeExt, inlineCommand.command, saveTimeoutMs);
   } else {
-    const ids = craft ? (await craft.commands()).map(command => command.id ?? command) : [];
+    const ids = craft ? (await boundedCraftCall(() => craft.commands(), title, saveTimeoutMs)).map(command => command.id ?? command) : [];
     if (ids.includes('file.saveBytes')) {
-      save = await inlineSave(await craft.execute('file.saveBytes', {}), craft, title, nativeExt, 'file.saveBytes');
+      save = await inlineSave(await boundedCraftCall(() => craft.execute('file.saveBytes', {}), title, saveTimeoutMs), craft, title, nativeExt, 'file.saveBytes', saveTimeoutMs);
     } else {
       // The default no-path trigger with the untitled-document retry (lead live check): a
       // fresh document can refuse file.save {} ("no file name yet; use saveas {path}"),
@@ -347,12 +385,12 @@ export async function saveBytesCopy(craft, { id, title = id, wrapperWindow, targ
       // effectcraft (the packs that still use the capture path).
       const startSave = async () => {
         try {
-          await craft.execute('file.save', {});
+          await boundedCraftCall(() => craft.execute('file.save', {}), title, saveTimeoutMs);
         } catch (error) {
           if (error instanceof Error && /no (file )?(name|path)/i.test(String(error.message))) {
-            let name = await producedName(craft, title);
+            let name = await producedName(craft, title, saveTimeoutMs);
             if (extOf(name) === '') name += nativeExt;
-            return craft.execute('file.saveAs', { path: name });
+            return boundedCraftCall(() => craft.execute('file.saveAs', { path: name }), title, saveTimeoutMs);
           }
           throw error;
         }
@@ -365,13 +403,25 @@ export async function saveBytesCopy(craft, { id, title = id, wrapperWindow, targ
   return { name: save.name, bytes: save.bytes, note };
 }
 
+// The page API's promises can stay unsettled while the app's event loop is busy (deckcraft
+// b19: a .md open left the model's first call in flight until the 240 s turn timer; the
+// 30 s page-side reject is only as reliable as the app's own event loop, which a WASM
+// conversion or a waiting dialog can block). Bound every inspect with a race so the
+// deadline check in openAndAwait always runs: { value }, { threw } or { hung }.
+const boundedInspect = (craft, boundMs) => Promise.race([
+  Promise.resolve().then(() => craft.inspect({})).then(value => ({ value })),
+  new Promise(resolve => setTimeout(() => resolve({ hung: true }), boundMs)),
+]).catch(() => ({ threw: true }));
+
 /**
  * Open a file from Files in the app and wait until the app has actually loaded it.
  * Snapshots craft.inspect() before the open, drives the wrapper's own #file input
  * (openFromBytes), then polls craft.inspect() every intervalMs (default 250 ms,
  * timeoutMs cap, default 30 s) until the result JSON differs from the snapshot; an
  * inspect that threw before and succeeds after also counts as changed (cadcraft:
- * "no drawing open" while no drawing is open).
+ * "no drawing open" while no drawing is open). Every inspect is bounded (boundedInspect):
+ * a promise that never settles counts as "not loaded yet" (or "unknown" before the open),
+ * so the cap always holds and the tool cannot outlive the turn timer.
  *
  * craft: the craftApi result (or teachApp-wrapped; an inspect rejection is read as
  * "not loaded yet" and swallowed). options: id (app id), title (display name, for the
@@ -386,12 +436,13 @@ export async function saveBytesCopy(craft, { id, title = id, wrapperWindow, targ
  * driving the input.
  * Throws ToolError('invalid_argument') for a bad name or non-binary bytes,
  * ('not_available') when the wrapper has no #file input, ('app_error') above 256 MB or
- * when the app state never changes within the cap.
+ * when the app state never changes within the cap (the message then notes when the
+ * inspect stopped answering, so a waiting dialog reads as such).
  */
 export async function openAndAwait(craft, { id, title = id, wrapperWindow, name, bytes, accept = '', timeoutMs = 30000, intervalMs = 250, sleep = ms => new Promise(done => setTimeout(done, ms)), checkAlreadyOpen = true } = {}) {
-  let before = null;
-  let beforeThrew = false;
-  try { before = JSON.stringify(await craft.inspect({})); } catch { beforeThrew = true; }
+  const beforeOut = await boundedInspect(craft, timeoutMs);
+  const beforeThrew = beforeOut.threw || beforeOut.hung;
+  const before = beforeThrew ? null : JSON.stringify(beforeOut.value);
   // A re-open of an open file changes nothing in the app state, so the poll below would
   // burn the full timeout, then misreport "did not open ... It accepts: <ext>." (the
   // open actually happened - or never needed to; the state already shows the file).
@@ -403,12 +454,18 @@ export async function openAndAwait(craft, { id, title = id, wrapperWindow, name,
   }
   const driven = await openFromBytes(wrapperWindow, id, name, bytes);
   const deadline = Date.now() + timeoutMs;
+  let hungPolls = 0;
   for (;;) {
+    const out = await boundedInspect(craft, Math.max(1, deadline - Date.now()));
     let after = null;
     let afterThrew = false;
-    try { after = JSON.stringify(await craft.inspect({})); } catch { afterThrew = true; }
+    if (out.threw || out.hung) { afterThrew = true; if (out.hung) hungPolls += 1; }
+    else after = JSON.stringify(out.value);
     if (!afterThrew && (beforeThrew || after !== before)) return { ...driven, opened: openedSummary(JSON.parse(after)) };
-    if (Date.now() >= deadline) throw new ToolError('app_error', `${title} did not open ${name}. It accepts: ${accept}.`, '');
+    if (Date.now() >= deadline) {
+      const hung = hungPolls > 0 ? ' Its inspect stopped answering during the wait (a dialog may be waiting for input).' : '';
+      throw new ToolError('app_error', `${title} did not open ${name}.${hung} It accepts: ${accept}.`, '');
+    }
     await sleep(intervalMs);
   }
 }

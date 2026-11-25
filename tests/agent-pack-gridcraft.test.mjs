@@ -465,6 +465,24 @@ test('an unknown sheet prefix in a range rethrows with the real sheet names (swe
   });
 });
 
+// Sweep b20 gridcraft-02: the first create_table succeeded, and the model's re-create burned
+// 13 rounds on the bare engine overlap error (style variants dodge A23). The overlap now
+// names the existing table and says the cells are already inside it.
+test('gridcraft.create_table over an existing table rethrows with the real tables (sweep b20 gridcraft-02 loop)', async () => {
+  const craft = {
+    request: () => Promise.resolve({ values: [['Product', 'Stock', 'Unit cost'], ['Widget', 40, 1.2]] }),
+    execute: () => Promise.reject(Object.assign(new Error("A table can't overlap another table."), { code: 'app_error' })),
+    inspect: () => Promise.resolve({ sheets: [{ name: 'Sheet1', tables: [{ name: 'Inventory', range: 'A1:C4' }] }] }),
+  };
+  await assert.rejects(runTool('gridcraft.create_table', { range: 'A1:C4', name: 'Inventory' }, craft), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'app_error');
+    assert.equal(error.message, 'a table already overlaps A1:C4: Inventory (A1:C4). Do not create it again - the cells are already inside that table. Continue with the table as it is, or pick a range that does not touch it');
+    assert.equal(error.fix, 'call_tool tool=gridcraft.inspect');
+    return true;
+  });
+});
+
 // Sweep b17 gridcraft-01: the run typed the header cells one set_cell at a time after the
 // first set_cells row. Every set_cell result now carries the one-call note.
 test('gridcraft.set_cell results carry the one-set_cells-call note (sweep b17 gridcraft-01)', async () => {
