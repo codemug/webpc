@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { pack, tools, usesCommands, usesMethods, parseStep } from '../agent/apps/vectorcraft/tools.js';
 import { tools as desktopTools } from '../agent/desktop/tools.js';
 import { ToolError, specErrors, checkArgs, callLine } from '../src/apps/ai-agent/runtime/args.mjs';
+import { templateKeys } from '../src/apps/ai-agent/runtime/catalog.mjs';
 import { parseSkills, checkSkills } from '../src/apps/ai-agent/runtime/skills.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -229,7 +230,14 @@ test('add_text sends text.create, area text, or text.createInPath', async () => 
   ]);
   await assert.rejects(runTool('vectorcraft.add_text', { text: 'No position' }, craft), error => {
     assert.ok(error instanceof ToolError);
-    assert.match(error.message, /give x and y \(or a path\)/);
+    assert.match(error.message, /x= and y= are their own arguments/);
+    assert.equal(error.fix, 'call_tool tool=vectorcraft.add_text text=No position x=<x> y=<y>');
+    return true;
+  });
+  // j3 b14 (02): the crammed pairs come back out as their own arguments in the fix line.
+  await assert.rejects(runTool('vectorcraft.add_text', { text: 'Quarterly report\nx=40\ny=80\nsize=24\ncolor=#E8590C' }, craft), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.fix, 'call_tool tool=vectorcraft.add_text text=Quarterly report x=40 y=80 size=24 color=#E8590C');
     return true;
   });
 });
@@ -350,7 +358,9 @@ test('a no-document rejection (either engine wording, or the exact live probe me
       assert.ok(error instanceof ToolError);
       assert.equal(error.type, 'not_available');
       assert.equal(error.message, 'VectorCraft has no document open.');
-      assert.equal(error.fix, callLine('vectorcraft.new_document'));
+      // sweep b17 08: the fix must offer opening the user's file, not only creating a
+      // document - the new-document-only fix steered the model to a fresh document.
+      assert.equal(error.fix, 'call_tool tool=vectorcraft.new_document name=<name>, or open an existing document from Files: call_tool tool=vectorcraft.open_file path=<path>');
       return true;
     });
     await assert.rejects(runTool('vectorcraft.press_key', { key: 'Delete' }, failing(message)), error => {
@@ -482,9 +492,9 @@ test('vectorcraft.save_copy refuses an extension the app cannot serialize, with 
 
 const { skills, errors: skillErrors } = parseSkills(SKILLS_MD, 'vectorcraft');
 
-test('skills.md parses with the runtime parser without errors and has 10 skills', () => {
+test('skills.md parses with the runtime parser without errors and has 11 skills', () => {
   assert.deepEqual(skillErrors, []);
-  assert.equal(skills.length, 10);
+  assert.equal(skills.length, 11);
   for (const skill of skills) {
     assert.ok(skill.slug && skill.summary, `skill ${skill.slug} slug/summary`);
     assert.ok(skill.summary.length <= 160, `skill ${skill.slug} summary is ${skill.summary.length} chars`);
@@ -507,7 +517,7 @@ test('every skill opens by launching VectorCraft, then uses numbered vectorcraft
 test('content skills create or check the document in step 2, so a missing one is fixed before edits', () => {
   const bySlug = Object.fromEntries(skills.map(skill => [skill.slug, skill]));
   for (const slug of ['draw-a-rectangle', 'draw-a-path']) {
-    assert.equal(bySlug[slug].steps[1].line, '2. call_tool tool=vectorcraft.new_document', `skill ${slug}`);
+    assert.ok(bySlug[slug].steps[1].line.startsWith('2. call_tool tool=vectorcraft.new_document'), `skill ${slug} step 2: ${bySlug[slug].steps[1].line}`);
   }
   for (const slug of ['paint-the-selection', 'add-drawing-text', 'move-or-resize-objects', 'combine-shapes', 'apply-an-effect', 'run-any-drawing-command']) {
     assert.equal(bySlug[slug].steps[1].line, '2. call_tool tool=vectorcraft.inspect', `skill ${slug}`);
@@ -517,4 +527,18 @@ test('content skills create or check the document in step 2, so a missing one is
 test('skill steps and tools lines validate against the runtime checkArgs', () => {
   const errors = checkSkills(skills, byName, { checkArgs: (tool, args) => checkArgs(tool, args, { choices }) });
   assert.deepEqual(errors, []);
+});
+
+test('add-drawing-text is one add_text step: a second call creates a shadowing object (sweep b17 02)', () => {
+  const skill = skills.find(s => s.slug === 'add-drawing-text');
+  const addTextSteps = skill.steps.filter(step => step.tool === 'vectorcraft.add_text');
+  assert.equal(addTextSteps.length, 1, 'one add_text call per text layer');
+  assert.match(skill.gotchas, /second call/i, 'the gotcha names the shadowing second object');
+  assert.match(skill.gotchas, /area type with a frame/, 'the area variant stays, gated on the user asking');
+});
+
+test('new_document offers the artboard size slots in its call template (sweep b17 01)', () => {
+  const tool = byName('vectorcraft.new_document');
+  const keys = templateKeys(tool);
+  assert.deepEqual(keys, ['name', 'width', 'height'], 'the template shows all three slots, not name alone');
 });

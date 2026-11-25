@@ -7,15 +7,22 @@ const NOT_HERE = 'The desktop is not available here (WebPC Agent is not running 
 
 // Gate on ctx.host (needs: ['host']), then turn host rejections, which carry a code
 // (unknown_app, not_open, not_iframe, timeout, invalid_argument), into a ToolError.
-const call = (ctx, fn) => {
+// fixFor (optional) returns a corrected call line for fixable errors.
+const call = (ctx, fn, fixFor) => {
   if (!ctx.host) throw new ToolError('not_available', NOT_HERE, '');
   return Promise.resolve()
     .then(() => fn(ctx.host))
     .catch(error => {
       if (error instanceof ToolError) throw error;
-      throw new ToolError(typeof error.code === 'string' ? error.code : 'app_error', error.message, '');
+      throw new ToolError(typeof error.code === 'string' ? error.code : 'app_error', error.message, fixFor ? fixFor(error) : '');
     });
 };
+
+// Window verbs fail with not_open until the app is open; the fix line names
+// desktop.open_app so the model copies a window-open, not a tab-open (b14 desktop-04:
+// open_in_tab satisfied "open" in the model's head, the window still was not open, and
+// the empty fix line let it loop 15 rounds).
+const notOpenFix = app => error => (error.code === 'not_open' ? `call_tool tool=desktop.open_app app=${app}` : '');
 
 // Shared spec for the app id parameter: a live enum over the registry apps.
 const APP = { type: 'enum', required: true, values: 'apps', description: 'The app id, from desktop.list_apps' };
@@ -64,7 +71,7 @@ export const tools = [
     effect: 'change',
     needs: ['host'],
     examples: [{ args: { app: 'docs' }, says: 'Switch to Docs' }],
-    run: async (args, ctx) => call(ctx, host => host.focus(args.app)),
+    run: async (args, ctx) => call(ctx, host => host.focus(args.app), notOpenFix(args.app)),
   },
   {
     name: 'desktop.minimize',
@@ -74,7 +81,7 @@ export const tools = [
     effect: 'change',
     needs: ['host'],
     examples: [{ args: { app: 'files' }, says: 'Hide Files' }],
-    run: async (args, ctx) => call(ctx, host => host.minimize(args.app)),
+    run: async (args, ctx) => call(ctx, host => host.minimize(args.app), notOpenFix(args.app)),
   },
   {
     name: 'desktop.maximize',
@@ -84,7 +91,7 @@ export const tools = [
     effect: 'change',
     needs: ['host'],
     examples: [{ args: { app: 'gridcraft' }, says: 'Maximize the spreadsheet' }],
-    run: async (args, ctx) => call(ctx, host => host.maximize(args.app)),
+    run: async (args, ctx) => call(ctx, host => host.maximize(args.app), notOpenFix(args.app)),
   },
   {
     name: 'desktop.restore',
@@ -94,7 +101,7 @@ export const tools = [
     effect: 'change',
     needs: ['host'],
     examples: [{ args: { app: 'files' }, says: 'Bring Files back' }],
-    run: async (args, ctx) => call(ctx, host => host.restore(args.app)),
+    run: async (args, ctx) => call(ctx, host => host.restore(args.app), notOpenFix(args.app)),
   },
   {
     name: 'desktop.close',
@@ -127,8 +134,8 @@ export const tools = [
     },
     effect: 'change',
     needs: ['host'],
-    examples: [{ args: { app: 'terminal', x: 40, y: 60 }, says: 'Move the terminal to the top left' }],
-    run: async (args, ctx) => call(ctx, host => host.move(args.app, args.x, args.y)),
+    examples: [{ args: { app: 'terminal', x: 36, y: 32 }, says: 'Move the terminal to the top left' }],
+    run: async (args, ctx) => call(ctx, host => host.move(args.app, args.x, args.y), notOpenFix(args.app)),
   },
   {
     name: 'desktop.resize',
@@ -141,8 +148,8 @@ export const tools = [
     },
     effect: 'change',
     needs: ['host'],
-    examples: [{ args: { app: 'docs', width: 800, height: 500 }, says: 'Make Docs a smaller window' }],
-    run: async (args, ctx) => call(ctx, host => host.resize(args.app, args.width, args.height)),
+    examples: [{ args: { app: 'docs', width: 760, height: 480 }, says: 'Make Docs a smaller window' }],
+    run: async (args, ctx) => call(ctx, host => host.resize(args.app, args.width, args.height), notOpenFix(args.app)),
   },
   {
     name: 'desktop.tile',

@@ -51,7 +51,14 @@ export const tools = [
     run: async (args, ctx) => call(ctx, async host => {
       const read = ctx.files?.readBytes;
       if (typeof read !== 'function') throw new ToolError('not_available', 'the Files tools are not enabled here, so no file can be played', '');
-      const file = await read(args.path);
+      let file;
+      try { file = await read(args.path); }
+      catch (error) {
+        // A wrong path (the model guesses /tmp/tune.wav for /music/tone-440hz-2s.wav) points at
+        // files.find instead of dead-ending (lfm3-1.7b media-05/08).
+        if (error?.code === 'not_found' || error?.code === 'not_a_file' || /does not exist|not a file/i.test(error?.message ?? '')) throw new ToolError('not_found', String(error?.message ?? 'the file was not found'), 'call_tool tool=files.find query=<query>');
+        throw error;
+      }
       const kind = mediaKind(file.name);
       if (!kind) throw new ToolError('invalid_argument', `"${file.name}" is not an audio or video file`, '');
       const win = await page(host);
@@ -109,7 +116,7 @@ export const tools = [
     params: { percent: { type: 'integer', required: true, min: 0, max: 100, description: 'The volume in percent' } },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { percent: 50 }, says: 'Half volume' }],
+    examples: [{ args: { percent: 35 }, says: 'Set the volume to 35 percent' }],
     // Drive the app's own volume input (0..1, media.mjs:87): set its value and fire input, so
     // the app's setVolume clamps and saves the volume to localStorage the way a user's slider
     // would.

@@ -181,7 +181,7 @@ export const tools = [
     params: { text: { type: 'string', required: true, description: 'The password to check (it is evaluated in the app and not stored or sent)' } },
     effect: 'read',
     needs: NEEDS,
-    examples: [{ args: { text: 'correct-horse-battery-staple' }, says: 'How strong is this password?' }],
+    examples: [{ args: { text: 'sunny-meadow-42' }, says: 'How strong is this password?' }],
     // The password card (security.mjs:27-54) is fully local and synchronous: zxcvbn-ts scores the
     // value on click and the result lands in #nt-password-out (or the error in .nt-err).
     run: async (args, ctx) => call(ctx, async host => {

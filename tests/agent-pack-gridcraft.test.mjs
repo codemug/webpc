@@ -145,6 +145,7 @@ test('gridcraft.format_range flattens to one home.* command per style, tools.rs 
   const craft = fakeCraft();
   const out = await runTool('gridcraft.format_range', { range: 'A1:C1', bold: true, fill: '#FF0000', align: 'right' }, craft);
   assert.deepEqual(craft.calls, [
+    ['request', 'sheet.read', { range: 'A1:C1' }],
     ['execute', 'home.bold', { range: 'A1:C1', on: true }],
     ['execute', 'home.fillColor', { range: 'A1:C1', color: '#FF0000' }],
     ['execute', 'home.alignRight', { range: 'A1:C1' }],
@@ -163,21 +164,26 @@ test('gridcraft.insert_chart and gridcraft.create_table send insert.chart and in
   await runTool('gridcraft.insert_chart', { range: 'A1:C6', type: 'column', subtype: 'stacked', title: 'Sales', at: 'E1' }, craft);
   await runTool('gridcraft.insert_chart', { range: 'A1:C6', type: 'pie' }, craft);
   await runTool('gridcraft.create_table', { range: 'A1:D20', style: 'TableStyleLight9', header: true, name: 'T1' }, craft);
-  assert.deepEqual(craft.calls[0], ['execute', 'insert.chart', { range: 'A1:C6', type: 'column', subtype: 'stacked', title: 'Sales', at: 'E1' }]);
-  assert.deepEqual(craft.calls[1], ['execute', 'insert.chart', { range: 'A1:C6', type: 'pie' }]);
-  assert.deepEqual(craft.calls[2], ['execute', 'insert.table', { range: 'A1:D20', style: 'TableStyleLight9', header: true, name: 'T1' }]);
+  // Each range op now reads the range first (the empty-range guard), so the execute calls sit at odd indices.
+  assert.deepEqual(craft.calls[1], ['execute', 'insert.chart', { range: 'A1:C6', type: 'column', subtype: 'stacked', title: 'Sales', at: 'E1' }]);
+  assert.deepEqual(craft.calls[3], ['execute', 'insert.chart', { range: 'A1:C6', type: 'pie' }]);
+  assert.deepEqual(craft.calls[5], ['execute', 'insert.table', { range: 'A1:D20', style: 'TableStyleLight9', header: true, name: 'T1' }]);
 });
 
 test('gridcraft.sort_range normalizes keys the way tools.rs does, then data.sort', async () => {
   const craft = fakeCraft();
   await runTool('gridcraft.sort_range', { keys: ['B', 'A desc'], range: 'A1:D20', header: true }, craft);
-  assert.deepEqual(craft.calls, [['execute', 'data.sort', { keys: [{ column: 'B', order: 'asc' }, { column: 'A', order: 'desc' }], range: 'A1:D20', header: true }]]);
+  assert.deepEqual(craft.calls, [
+    ['request', 'sheet.read', { range: 'A1:D20' }],
+    ['execute', 'data.sort', { keys: [{ column: 'B', order: 'asc' }, { column: 'A', order: 'desc' }], range: 'A1:D20', header: true }],
+  ]);
 });
 
 test('gridcraft.filter sends selection.set for range, then data.filterBy with nested custom and top', async () => {
   const craft = fakeCraft();
   await runTool('gridcraft.filter', { column: 'C', range: 'A1:D10', values: ['North', 'South'], custom_op: '>', custom_value: '100', top_count: 3, top_bottom: true, blanks: true }, craft);
   assert.deepEqual(craft.calls, [
+    ['request', 'sheet.read', { range: 'A1:D10' }],
     ['execute', 'selection.set', { range: 'A1:D10' }],
     ['execute', 'data.filterBy', { column: 'C', values: ['North', 'South'], custom: { op: '>', value: '100' }, top: { count: 3, bottom: true }, blanks: true }],
   ]);
@@ -249,6 +255,60 @@ test('gridcraft.run_command rejects a bad params line with invalid_argument', as
     assert.match(error.message, /bad params line "nonsense"/);
     return true;
   });
+});
+
+test('gridcraft.run_command parses space-separated pairs and a JSON object params (small models write them)', async () => {
+  const craft = fakeCraft();
+  await runTool('gridcraft.run_command', { command: 'cell.set', params: 'cell=B2 input=Hello' }, craft);
+  assert.deepEqual(craft.calls.at(-1), ['execute', 'cell.set', { cell: 'B2', input: 'Hello' }]);
+  await runTool('gridcraft.run_command', { command: 'cell.set', params: '{"cell": "C3", "input": "42"}' }, craft);
+  assert.deepEqual(craft.calls.at(-1), ['execute', 'cell.set', { cell: 'C3', input: '42' }]);
+  // One pair with spaces in the value keeps its spaces: only 2+ pairs split.
+  await runTool('gridcraft.run_command', { command: 'cell.set', params: 'input=Hello World' }, craft);
+  assert.deepEqual(craft.calls.at(-1), ['execute', 'cell.set', { input: 'Hello World' }]);
+});
+
+test('gridcraft.set_cells reports the written shape: a column of one-cell rows says rows=3 cols=1', async () => {
+  const craft = fakeCraft();
+  const out = await runTool('gridcraft.set_cells', { start: 'A1', values: [['Product', 'Stock'], ['Widget', 40]] }, craft);
+  assert.deepEqual(out, { command: 'range.setValues', params: { range: 'A1', values: [['Product', 'Stock'], ['Widget', 40]] }, rows: 2, cols: 2 });
+  // An explicit column (one-cell rows) is legal and must report rows=3 cols=1 so the model
+  // sees the shape that landed.
+  const column = await runTool('gridcraft.set_cells', { start: 'A1', values: [['Product'], ['Widget'], ['Gadget']] }, craft);
+  assert.equal(column.rows, 3);
+  assert.equal(column.cols, 1);
+});
+
+test('gridcraft.set_cells refuses a flat list of more than one value with both forms', () => {
+  const tool = byName('gridcraft.set_cells');
+  const flat = checkArgs(tool, { start: 'A1', values: ['Date', 'Income', 'Expense'] });
+  assert.equal(flat.ok, false);
+  assert.equal(flat.error.type, 'invalid_argument');
+  assert.match(flat.error.message, /^values: a flat list of 3 values is ambiguous: /);
+  assert.ok(flat.error.message.includes('values=[["Date","Income","Expense"]] writes a row'), flat.error.message);
+  assert.ok(flat.error.message.includes('values=[["Date"],["Income"],["Expense"]] writes a column'), flat.error.message);
+  // The JSON string form a local model sends is refused the same way.
+  const asString = checkArgs(tool, { start: 'A1', values: '["Date","Income","Expense"]' });
+  assert.equal(asString.ok, false);
+  assert.ok(asString.error.message.includes('values=[["Date"],["Income"],["Expense"]] writes a column'), asString.error.message);
+  // A flat list of numbers is refused too (it previously failed with a generic error).
+  const nums = checkArgs(tool, { start: 'A1', values: [12, 8, 20] });
+  assert.equal(nums.ok, false);
+  assert.ok(nums.error.message.includes('values=[[12],[8],[20]] writes a column'), nums.error.message);
+});
+
+test('gridcraft.set_cells accepts a single-value flat list and both nested forms', () => {
+  const tool = byName('gridcraft.set_cells');
+  // One value is unambiguous (a row and a column of one cell are the same cell).
+  const single = checkArgs(tool, { start: 'A1', values: ['Only'] });
+  assert.equal(single.ok, true);
+  assert.deepEqual(single.args.values, [['Only']]);
+  const row = checkArgs(tool, { start: 'A1', values: [['Date', 'Income'], ['2026-01', 100]] });
+  assert.equal(row.ok, true);
+  assert.deepEqual(row.args.values, [['Date', 'Income'], ['2026-01', '100']]);
+  const column = checkArgs(tool, { start: 'A1', values: [['12'], ['8'], ['20']] });
+  assert.equal(column.ok, true);
+  assert.deepEqual(column.args.values, [['12'], ['8'], ['20']]);
 });
 
 // A fake wrapper window for the file tools: the #file input records the change dispatch
@@ -338,11 +398,92 @@ test('gridcraft.open_file turns a store not_found into a teaching ToolError', as
   await assert.rejects(byName('gridcraft.open_file').run({ path: '/missing.xlsx' }, ctx), error => {
     assert.ok(error instanceof ToolError);
     assert.equal(error.type, 'not_found');
-    assert.equal(error.message, '/missing.xlsx is not in Files. To open GridCraft itself, use desktop.open_app; to open a file, find it first with files.find.');
-    assert.equal(error.fix, 'call_tool tool=desktop.open_app app=gridcraft');
+    assert.equal(error.message, '/missing.xlsx is not in Files. The path may be wrong - find the file with files.find, then open that path. If the data comes from the user message, nothing needs opening: type it with set_cells into the active sheet.');
+    assert.equal(error.fix, 'call_tool tool=files.find query=missing.xlsx');
     return true;
   });
   assert.equal(wrapper.opened.length, 0);
+});
+
+// Sweep b16: a range op on an empty range must fail with the set_cells fix instead of the
+// bare engine error that sends the model hunting for a file to open.
+test('gridcraft.insert_chart on an empty range fails with the set_cells fix (sweep b16 gridcraft-05)', async () => {
+  const craft = {
+    request: (method, params) => { assert.deepEqual([method, params], ['sheet.read', { range: 'A1:E5' }]); return Promise.resolve({ values: [[null, null, null, null, null]] }); },
+    execute: () => Promise.reject(new Error('insert.chart must not run on an empty range')),
+  };
+  await assert.rejects(runTool('gridcraft.insert_chart', { range: 'A1:E5', type: 'column' }, craft), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.equal(error.message, 'the sheet has no data in A1:E5; type the values first');
+    assert.equal(error.fix, 'call_tool tool=gridcraft.set_cells start=A1 values=[["header1","header2"],["value1","value2"]]');
+    return true;
+  });
+});
+
+test('gridcraft.format_range on an empty range fails with the set_cells fix (sweep b16 gridcraft-06)', async () => {
+  const craft = {
+    request: () => Promise.resolve({ values: [[null, null]] }),
+    execute: () => Promise.reject(new Error('home.bold must not run on an empty range')),
+  };
+  await assert.rejects(runTool('gridcraft.format_range', { range: 'B2:B4', bold: true, number_format: 'Currency' }, craft), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.equal(error.message, 'the sheet has no data in B2:B4; type the values first');
+    assert.match(error.fix, /^call_tool tool=gridcraft\.set_cells start=B2 /);
+    return true;
+  });
+});
+
+test('gridcraft.sort_range with an explicit empty range fails with the set_cells fix', async () => {
+  const craft = {
+    request: () => Promise.resolve({ values: [[null]] }),
+    execute: () => Promise.reject(new Error('data.sort must not run on an empty range')),
+  };
+  await assert.rejects(runTool('gridcraft.sort_range', { range: 'A1:D5', keys: ['B desc'] }, craft), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.equal(error.message, 'the sheet has no data in A1:D5; type the values first');
+    return true;
+  });
+});
+
+test('an unknown sheet prefix in a range rethrows with the real sheet names (sweep b16 gridcraft-05 loop)', async () => {
+  const craft = {
+    // The engine rejects the prefixed range on the read too, so the guard skips and the
+    // execute error carries the hint.
+    request: () => Promise.reject(Object.assign(new Error('invalid parameters for `range`'), { code: 'app_error' })),
+    execute: () => Promise.reject(Object.assign(new Error('invalid parameters for `range`: no sheet named `Quarter`'), { code: 'app_error' })),
+    inspect: () => Promise.resolve({ sheets: ['Sheet1'] }),
+  };
+  await assert.rejects(runTool('gridcraft.insert_chart', { range: 'Quarter!A1:E5', type: 'column' }, craft), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'app_error');
+    assert.equal(error.message, 'no sheet named "Quarter"; the sheets are: Sheet1. Omit the sheet name to use the active sheet, e.g. range=A1:B5');
+    assert.equal(error.fix, 'call_tool tool=gridcraft.inspect');
+    return true;
+  });
+});
+
+// Sweep b17 gridcraft-01: the run typed the header cells one set_cell at a time after the
+// first set_cells row. Every set_cell result now carries the one-call note.
+test('gridcraft.set_cell results carry the one-set_cells-call note (sweep b17 gridcraft-01)', async () => {
+  const craft = { execute: (command, params) => Promise.resolve({ cell: params.cell, value: String(params.input) }) };
+  const out = await runTool('gridcraft.set_cell', { cell: 'B1', input: '3800' }, craft);
+  assert.deepEqual(out, { cell: 'B1', value: '3800', note: 'typing several rows? one gridcraft.set_cells call with values=[[...],[...]] writes them all at once' });
+});
+
+// Sweep b17 gridcraft-08: the model used the skill's slug as the command id and the closest
+// id (formulas.useInFormula) pointed at an unrelated command. Dash ids get the list pointer.
+test('gridcraft.run_command on a dash id (a skill slug) points at the command list', async () => {
+  const craft = fakeCraft();
+  await assert.rejects(runTool('gridcraft.run_command', { command: 'add-a-sheet-and-use-it-in-a-formula' }, craft), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.equal(error.message, 'unknown command "add-a-sheet-and-use-it-in-a-formula": command ids have no dashes (e.g. home.insertSheet) - copy an id from the command list');
+    assert.equal(error.fix, 'call_tool tool=gridcraft.list_commands');
+    return true;
+  });
 });
 
 test('gridcraft.save_copy takes the bytes from file.saveBytes (no path, no download) and writes them', async () => {
@@ -418,9 +559,9 @@ test('gridcraft.save_copy without file.saveBytes falls back to the no-path captu
 
 const { skills, errors: skillErrors } = parseSkills(SKILLS_MD, 'gridcraft');
 
-test('skills.md parses with the runtime parser without errors and has 12 skills', () => {
+test('skills.md parses with the runtime parser without errors and has 17 skills', () => {
   assert.deepEqual(skillErrors, []);
-  assert.equal(skills.length, 12);
+  assert.equal(skills.length, 17);
   for (const skill of skills) {
     assert.ok(skill.slug && skill.summary, `skill ${skill.slug} slug/summary`);
     assert.ok(skill.summary.length <= 160, `skill ${skill.slug} summary is ${skill.summary.length} chars`);

@@ -184,7 +184,14 @@ export const tools = [
     // button#create-btn with the text "Create"; live-confirmed): the tool creates the
     // inquiry the app's own way, waits for the SQL editor to mount (10 s cap) and then
     // proceeds; a second run_query reuses the open tab.
-    run: async (args, ctx) => call(ctx, async host => {
+    run: async (args, ctx) => {
+      // Small models bring parameterised placeholders (lfm3-1.7b sent VALUES (7,?, 13.50) on
+      // sqliteviz-04): a ? outside string literals has no bind value here and corrupts the
+      // row, so refuse it with the inline fix before touching the app.
+      if (String(args.sql).replace(/'(?:[^']|'')*'/g, '').includes('?')) {
+        throw new ToolError('invalid_argument', 'no ? placeholders here: write the values inline in the SQL, e.g. VALUES (7, 2, 9.99)', '');
+      }
+      return call(ctx, async host => {
       const win = await app(host, ctx);
       const sleep = sleepOf(ctx);
       const taOf = c => (c?.querySelector('.CodeMirror textarea') ?? null);
@@ -275,11 +282,18 @@ export const tools = [
           // The app's own error text minus the "Error:" prefix (live: "Error: no such table: nope.")
           throw new ToolError('app_error', `the query failed: ${msgText.replace(/^Error:\s*/, '')}`, '');
         }
-        if (footerCount(resultEl) !== null && resultText !== before.result) return readResult(panel);
+        if (footerCount(resultEl) !== null && resultText !== before.result) {
+          const result = readResult(panel);
+          // b17 sqliteviz-04: lfm3 read the whole (capped) orders table and counted by
+          // hand, one customer at a time, for twenty rounds: point at SQL aggregation.
+          if (result.truncated) result.note = 'rowCount is the total but only 200 rows are shown: do not count rows by hand - aggregate in SQL (COUNT(*), GROUP BY customer, ORDER BY n DESC LIMIT 1)';
+          return result;
+        }
         if (emptyNow && started) return { columns: [], rows: [], rowCount: 0, truncated: false };
         await sleep(100);
       }
       throw new ToolError('app_error', 'the query did not finish within 60 s; it may still be running, so wait and run a lighter query', '');
-    }),
+      });
+    },
   },
 ];

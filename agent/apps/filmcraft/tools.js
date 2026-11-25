@@ -30,6 +30,44 @@ const pick = (args, keys) => {
   return out;
 };
 
+// file.newProject starts a project without a sequence, so timeline commands and
+// sequence.inspect fail until one exists. Teach the exact call that creates one instead of
+// the bare engine error (measured on build 14: the model hammered sequence.inspect 15
+// times straight) - the fix names the tool.
+const NEW_SEQUENCE_CALL = 'call_tool tool=filmcraft.new_sequence name=<name>';
+// Build 16 sweep (04/06/07): the model reads the display names "Video 1"/"Audio 1" from
+// sequence_inspect and hands them to place/razor, but the engine resolves the place names
+// V1..Vn / A1..An, and the "no track X in this sequence" error lists none of them. Teach
+// the names from the sequence's own track arrays.
+async function trackNameTeaching(app) {
+  try {
+    const seq = await app.execute('sequence.inspect', {});
+    const names = [
+      ...Array.from({ length: seq?.video?.length ?? 0 }, (_, i) => `V${i + 1}`),
+      ...Array.from({ length: seq?.audio?.length ?? 0 }, (_, i) => `A${i + 1}`),
+    ];
+    return names.length ? `track names are ${names.join(', ')} - the "Video 1"/"Audio 1" display names sequence_inspect shows are not the place/razor names` : null;
+  } catch {
+    return null;
+  }
+}
+async function executeWithSequenceTeaching(app, id, params, trackFix) {
+  try {
+    return await app.execute(id, params);
+  } catch (error) {
+    const message = String(error?.message ?? error);
+    if (/no sequence is open|no active sequence/.test(message)) {
+      throw new ToolError('app_error', message, NEW_SEQUENCE_CALL);
+    }
+    if (/no track .+ in this sequence/.test(message)) {
+      const names = await trackNameTeaching(app);
+      throw new ToolError('app_error', names ? `${message} (${names})` : message,
+        trackFix ?? 'call_tool tool=filmcraft.place item=<id> track=V1 seconds=<n>');
+    }
+    throw error;
+  }
+}
+
 // A key=value value: booleans, numbers, a [ ... ] or { ... } JSON value, else a string.
 const parseValue = raw => {
   if (/^(true|false)$/i.test(raw)) return raw.toLowerCase() === 'true';
@@ -126,7 +164,7 @@ export const tools = [
     needs: NEEDS,
     examples: [{ args: {}, says: 'What is on the timeline?' }],
     // server.rs:429 sequence.inspect (the engine reads the active sequence when item is absent)
-    run: async (args, ctx) => (await ctx.craft(APP)).execute('sequence.inspect', pick(args, ['item'])),
+    run: async (args, ctx) => executeWithSequenceTeaching(await ctx.craft(APP), 'sequence.inspect', pick(args, ['item'])),
   },
   {
     name: 'filmcraft.ui_inspect',
@@ -157,9 +195,9 @@ export const tools = [
     // seconds, frame or timecode (raw ticks are not exposed)
     run: async (args, ctx) => {
       if (args.seconds === undefined && args.frame === undefined && args.timecode === undefined) {
-        throw new ToolError('invalid_argument', 'give one of seconds, frame or timecode', '');
+        throw new ToolError('invalid_argument', 'give one of seconds, frame or timecode', 'call_tool tool=filmcraft.playhead seconds=<n>');
       }
-      return (await ctx.craft(APP)).execute('playhead.set', timeArgs(args));
+      return executeWithSequenceTeaching(await ctx.craft(APP), 'playhead.set', timeArgs(args));
     },
   },
   {
@@ -178,12 +216,12 @@ export const tools = [
     examples: [{ args: {}, says: 'Cut at the playhead' }],
     // commands.rs:3604 timeline.razor {time (default: playhead), track?, clip?}; the clip wins
     // over the track when both are given (upstream run body)
-    run: async (args, ctx) => (await ctx.craft(APP)).execute('timeline.razor', { ...timeArgs(args), ...pick(args, ['track', 'clip']) }),
+    run: async (args, ctx) => executeWithSequenceTeaching(await ctx.craft(APP), 'timeline.razor', { ...timeArgs(args), ...pick(args, ['track', 'clip']) }, 'call_tool tool=filmcraft.razor track=V1 seconds=<n>'),
   },
   {
     name: 'filmcraft.add_edit',
-    purpose: 'Add an edit point (marker) at the playhead or a given time.',
-    when: 'Use when the user wants an edit marked on the timeline.',
+    purpose: 'Cut the sequence at the playhead or a given time (a cut, not a mark).',
+    when: 'Use when the user wants the timeline cut at the playhead or a time; not for in and out marks.',
     params: {
       seconds: { type: 'number', description: 'Edit time in seconds; the playhead when omitted' },
       frame: { type: 'integer', description: 'Edit frame; the playhead when omitted' },
@@ -191,16 +229,18 @@ export const tools = [
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: {}, says: 'Mark an edit here' }],
-    // commands.rs:2708 sequence.addEdit {time (default: playhead)}
-    run: async (args, ctx) => (await ctx.craft(APP)).execute('sequence.addEdit', timeArgs(args)),
+    examples: [{ args: {}, says: 'Cut here at the playhead' }],
+    // commands.rs:2708 sequence.addEdit {time (default: playhead)}. sweep b19 06: the old
+    // "(marker)" wording sent the model here for in/out marks (27 rounds of cuts=0) - the
+    // marks live on the sequence (markers.markIn/markOut), see the set-in-and-out-marks skill.
+    run: async (args, ctx) => executeWithSequenceTeaching(await ctx.craft(APP), 'sequence.addEdit', timeArgs(args)),
   },
   {
     name: 'filmcraft.place',
     purpose: 'Place a media item from the project onto a track at a time.',
     when: 'Use when the user wants a clip from a bin put on the timeline.',
     params: {
-      item: { type: 'integer', required: true, description: 'Project item id (from filmcraft.project_inspect)' },
+      item: { type: 'string', required: true, description: 'Project item id (from filmcraft.project_inspect), or the item name or its Files path - resolved to the id' },
       track: { type: 'string', description: 'Video track, e.g. V1, or new to add one' },
       audioTrack: { type: 'string', description: 'Audio track for the sound, e.g. A1, or new' },
       seconds: { type: 'number', description: 'Placement time in seconds; the playhead when omitted' },
@@ -213,15 +253,42 @@ export const tools = [
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { item: 3, track: 'V1', seconds: 5 }, says: 'Put item 3 on V1 at 5 seconds' }],
+    examples: [{ args: { item: '3', track: 'V1', seconds: 8 }, says: 'Put item 3 on V1 at 8 seconds' }],
     // commands.rs place_one :1230+: timeline.place {item, track?, audioTrack?, time?, sourceIn?,
     // duration?, video?, audio?}. timeline.place is an internal command: it is not in the
     // command.list registry, so this tool runs it directly (run_command cannot reach it)
     run: async (args, ctx) => {
-      const params = { item: args.item, ...timeArgs(args), ...pick(args, ['track', 'audioTrack', 'video', 'audio']) };
+      const app = await ctx.craft(APP);
+      // item: an integer id, or a name / Files path resolved to the id from the project
+      // tree (measured: the model hands over the Files path or the bare file name).
+      let item = args.item;
+      // Build 16 sweep (03): the model crams the whole call into the one argument
+      // (args="{ item: \"beach-sunset.jpg\", track: \"V1\", seconds: 0 }") and the runtime
+      // hands the blob to the required item= string. Split the pairs back out and spell
+      // the fixed call instead of "item <blob> is not in the project" (looped 20+ rounds).
+      if (typeof item === 'string' && /^\s*\{/.test(item) && /\b(item|track|audioTrack|seconds|frame|timecode|source_in|duration)\s*:/.test(item)) {
+        const keys = ['item', 'track', 'audioTrack', 'seconds', 'frame', 'timecode', 'source_in', 'duration'];
+        const pairs = [...item.matchAll(/\b(\w+)\s*:\s*("([^"]*)"|[\w./-]+)/g)]
+          .map(m => ({ key: m[1], value: m[3] ?? m[2] }))
+          .filter(p => keys.includes(p.key));
+        throw new ToolError('invalid_argument',
+          'item= takes just the item name or id, not the whole call - the pairs inside were read as the name',
+          pairs.length ? `call_tool tool=filmcraft.place ${pairs.map(p => `${p.key}=${p.value}`).join(' ')}` : 'call_tool tool=filmcraft.place item=<id> track=V1 seconds=<n>');
+      }
+      if (typeof item === 'string' && !/^-?\d+$/.test(item.trim())) {
+        const wanted = item.split('/').pop();
+        const tree = (await app.execute('project.inspect', {})) ?? {};
+        const items = [];
+        const walk = node => { for (const child of node?.children ?? []) { if (typeof child?.item === 'number') items.push({ item: child.item, name: child.name }); walk(child); } };
+        walk(tree.root ?? tree);
+        const hit = items.find(x => x.name === wanted || x.name === item);
+        if (!hit) throw new ToolError('invalid_argument', `item "${item}" is not in the project. The items are: ${items.map(x => `${x.name} (id ${x.item})`).join(', ') || 'none'}`, 'call_tool tool=filmcraft.place item=<id> track=V1 seconds=<n>');
+        item = hit.item;
+      }
+      const params = { item: typeof item === 'string' ? Number(item) : item, ...timeArgs(args), ...pick(args, ['track', 'audioTrack', 'video', 'audio']) };
       if (args.source_in !== undefined) params.sourceIn = { seconds: args.source_in };
       if (args.duration !== undefined) params.duration = { seconds: args.duration };
-      return (await ctx.craft(APP)).execute('timeline.place', params);
+      return executeWithSequenceTeaching(app, 'timeline.place', params, 'call_tool tool=filmcraft.place item=<id> track=V1 seconds=<n>');
     },
   },
   {
@@ -257,7 +324,7 @@ export const tools = [
         return out;
       });
       const params = { moves, ...pick(args, ['copy', 'linked']) };
-      return (await ctx.craft(APP)).execute('timeline.move', params);
+      return executeWithSequenceTeaching(await ctx.craft(APP), 'timeline.move', params);
     },
   },
   {
@@ -305,6 +372,22 @@ export const tools = [
     run: async (args, ctx) => {
       if (args.name === undefined) throw new ToolError('invalid_argument', 'a new project needs a name', '');
       return (await ctx.craft(APP)).execute('file.newProject', { name: args.name });
+    },
+  },
+  {
+    name: 'filmcraft.new_sequence',
+    purpose: 'Create a new sequence (timeline) and make it active.',
+    when: 'Use when the user wants a new timeline, or before placing media when no sequence is open.',
+    params: { name: { type: 'string', description: 'Sequence name, e.g. Cut' } },
+    effect: 'change',
+    needs: NEEDS,
+    examples: [{ args: { name: 'Scene' }, says: 'Create a sequence called Scene' }],
+    // commands.rs file.newSequence {name?}: the engine makes the new sequence active (the
+    // journeys place onto it right after, with no activation step)
+    run: async (args, ctx) => {
+      const params = {};
+      if (args.name !== undefined) params.name = args.name;
+      return (await ctx.craft(APP)).execute('file.newSequence', params);
     },
   },
   {
@@ -403,7 +486,7 @@ export const tools = [
     effect: 'change',
     effectFor: args => (DESTRUCTIVE.some(prefix => String(args.command ?? '').startsWith(prefix)) ? 'destructive' : 'change'),
     needs: NEEDS,
-    examples: [{ args: { command: 'playhead.set', params: 'seconds=2' }, says: 'Jump the playhead to 2 seconds' }],
+    examples: [{ args: { command: 'playhead.set', params: 'seconds=6' }, says: 'Jump the playhead to 6 seconds' }],
     // server.rs:366 command_run: run(id, params) against the live command list; unknown ids get
     // invalid_argument with the 3 closest
     run: async (args, ctx) => {
@@ -421,6 +504,10 @@ export const tools = [
     name: 'filmcraft.open_file',
     purpose: 'Open a project or import media from Files into FilmCraft.',
     when: 'Use when the user wants a project or media from Files. Not for opening the app itself; that is desktop.open_app.',
+    // sweep b19 02: a generic "Files import file" search ranked lightcraft.import_file first
+    // (its name matches) and the model imported into LightCraft - the import vocabulary
+    // must rank this tool into the hits.
+    keywords: ['import', 'import media', 'still', 'photo', 'video', 'audio', 'drop'],
     params: { path: { type: 'path', required: false, description: 'A Files path to a .fcproj project or media (video, audio or still)' } },
     effect: 'destructive',
     needs: ['host', 'app:filmcraft', 'files'],
@@ -482,6 +569,6 @@ export const tools = [
 export const usesCommands = [
   'project.inspect', 'sequence.inspect', 'playhead.set', 'timeline.razor', 'sequence.addEdit',
   'timeline.place', 'timeline.move', 'effects.apply', 'effects.list', 'file.newBin',
-  'file.newProject', 'file.openDemoProject', 'file.save', 'edit.undo', 'edit.redo',
+  'file.newProject', 'file.newSequence', 'file.openDemoProject', 'file.save', 'edit.undo', 'edit.redo',
 ];
 export const usesMethods = []; // nothing goes through request(); ui_inspect uses the adapter inspect()

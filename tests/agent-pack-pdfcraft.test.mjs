@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pack, tools, usesCommands, usesMethods } from '../agent/apps/pdfcraft/tools.js';
+import { pack, tools, usesCommands, usesMethods, labelPdfPages } from '../agent/apps/pdfcraft/tools.js';
 import { tools as desktopTools } from '../agent/desktop/tools.js';
 import { ToolError, specErrors, checkArgs, callLine } from '../src/apps/ai-agent/runtime/args.mjs';
 import { parseSkills, checkSkills } from '../src/apps/ai-agent/runtime/skills.mjs';
@@ -125,7 +125,6 @@ test('the read tools send their engine command ids (doc_info reads the page stat
 
 test('the page tools send their engine command ids', async () => {
   const craft = fakeCraft();
-  await runTool('pdfcraft.text_replace', { find: '2025', replace: '2026' }, craft);
   await runTool('pdfcraft.page_rotate', { degrees: 90 }, craft);
   await runTool('pdfcraft.page_reverse', { pages: '1-5' }, craft);
   await runTool('pdfcraft.page_insert_blank', { at: 2 }, craft);
@@ -136,23 +135,119 @@ test('the page tools send their engine command ids', async () => {
   await runTool('pdfcraft.doc_close', { discard_changes: true }, craft);
   await runTool('pdfcraft.doc_save', { flatten_fill_sign: true }, craft);
   assert.deepEqual(craft.calls, [
-    ['execute', 'edit.replace', { find: '2025', replace: '2026' }],
     ['execute', 'page.rotate', { degrees: 90 }],
     ['execute', 'page.reverse', { pages: '1-5' }],
+    ['inspect'],
     ['execute', 'page.insert_blank', { at: 2 }],
+    ['inspect'],
     ['execute', 'page.duplicate', { pages: '1', at: 3 }],
     ['execute', 'page.delete', { pages: '3' }],
     ['execute', 'edit.undo', {}],
     ['execute', 'edit.redo', {}],
     ['execute', 'file.close', { discard_changes: true }],
+    ['inspect', undefined],
     ['execute', 'file.save', { flatten_fill_sign: true }],
   ]);
 });
 
-test('page_add_text turns x and y into the at point of edit.text', async () => {
+// b14 live (pdfcraft-09, both reps): file.close answered ok, doc_info still showed the
+// document active and page ops kept working. The close cannot be made real from the pack
+// (prebuilt engine), so doc_close verifies the post-condition and fails honestly
+// (lead ruling) instead of reporting a close that did not happen.
+test('pdfcraft.doc_close fails honestly when the document is still open after file.close', async () => {
   const craft = fakeCraft();
-  await runTool('pdfcraft.page_add_text', { page: 1, text: 'CONFIDENTIAL', x: 50, y: 50, size: 24, bold: true }, craft);
-  assert.deepEqual(craft.calls, [['execute', 'edit.text', { page: 1, text: 'CONFIDENTIAL', size: 24, bold: true, at: [50, 50] }]]);
+  craft.inspect = async () => ({ documents: [{ active: true, doc: 1, name: 'report-q3.pdf', pages: 3 }] });
+  await assert.rejects(runTool('pdfcraft.doc_close', { doc: 1, discard_changes: true }, craft), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'app_error');
+    assert.match(error.message, /the app answered ok but the document is still open \("report-q3\.pdf"\)/);
+    assert.match(error.message, /Do not retry doc_close/);
+    return true;
+  });
+  assert.deepEqual(craft.calls.at(-1), ['execute', 'file.close', { doc: 1, discard_changes: true }]);
+});
+
+test('pdfcraft.doc_close returns the result when the document is actually gone', async () => {
+  const craft = fakeCraft();
+  craft.inspect = async () => ({ documents: [] });
+  const out = await runTool('pdfcraft.doc_close', { discard_changes: true }, craft);
+  assert.equal(out.command, 'file.close');
+  // b17 pdfcraft-08: the note says up front what a mid-task close costs.
+  assert.match(out.note, /the document is now closed/);
+  assert.match(out.note, /save a copy with pdfcraft.save_copy before closing/);
+});
+
+// A craft fake for the edit tools' read-after-write: each confirmed export pops the next
+// text from the queue (the read before and after the edit command), so a no-op edit (the
+// same text twice) and a landed edit (different text) are both testable.
+const editCraft = (wrapper, texts) => {
+  const calls = [];
+  const queue = [...texts];
+  let dialogOpen = false;
+  const fireExport = text => wrapper.fire({
+    origin: 'https://pc.example', source: wrapper.frame,
+    data: { type: 'pdfcraft:save', name: 'report-q3.txt', bytes: new TextEncoder().encode(text ?? '') },
+  });
+  const api = {
+    commands: () => Promise.resolve([]),
+    execute: (id, params) => {
+      calls.push(['execute', id, params]);
+      if (id === 'export.text') dialogOpen = true;
+      return Promise.resolve({ ran: id });
+    },
+    request: (method, params) => {
+      calls.push(['request', method, params]);
+      if (method === 'ui.key') { dialogOpen = false; fireExport(queue.shift()); }
+      if (method === 'ui.inspect') return Promise.resolve({ children: [] });
+      return Promise.resolve({ ok: true });
+    },
+    inspect: () => { calls.push(['inspect']); return Promise.resolve({ dialog: dialogOpen ? 'Export(Text)' : null }); },
+  };
+  return { calls, craft: () => Promise.resolve(api) };
+};
+const editCtx = (wrapper, ec) => ({ host: { appWindow: async () => wrapper }, craft: ec.craft });
+
+test('page_add_text turns x and y into the at point of edit.text', async () => {
+  const wrapper = fakeWrapper();
+  const ec = editCraft(wrapper, ['page one text', 'page one text CONFIDENTIAL']);
+  await byName('pdfcraft.page_add_text').run({ page: 1, text: 'CONFIDENTIAL', x: 50, y: 50, size: 24, bold: true }, editCtx(wrapper, ec));
+  const edit = ec.calls.find(c => c[0] === 'execute' && c[1] === 'edit.text');
+  assert.deepEqual(edit[2], { page: 1, text: 'CONFIDENTIAL', size: 24, bold: true, at: [50, 50] });
+});
+
+test('text_replace re-reads the export around the edit and gives a teaching error on a silent no-op', async () => {
+  const wrapper = fakeWrapper();
+  const ec = editCraft(wrapper, ['Quarterly report Q3 2026', 'Quarterly report Q3 2026']);
+  await assert.rejects(byName('pdfcraft.text_replace').run({ find: '2026', replace: '2027' }, editCtx(wrapper, ec)), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'app_error');
+    assert.match(error.message, /exported text is unchanged/);
+    assert.match(error.message, /does not apply find-and-replace/);
+    assert.match(error.message, /instead of retrying/);
+    return true;
+  });
+  // the export-read, the edit, the export-read, in that order
+  assert.deepEqual(ec.calls.filter(c => c[0] === 'execute').map(c => c[1]), ['export.text', 'edit.replace', 'export.text']);
+});
+
+test('page_add_text gives the same teaching error when the added text does not land', async () => {
+  const wrapper = fakeWrapper();
+  const ec = editCraft(wrapper, ['page one text', 'page one text']);
+  await assert.rejects(byName('pdfcraft.page_add_text').run({ page: 1, text: 'CONFIDENTIAL' }, editCtx(wrapper, ec)), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'app_error');
+    assert.match(error.message, /does not apply added page text/);
+    return true;
+  });
+});
+
+test('the edit tools return the ran result when the edit lands in the export', async () => {
+  const wrapper = fakeWrapper();
+  const replace = editCraft(wrapper, ['Quarterly report Q3 2026', 'Quarterly report Q3 2027']);
+  assert.deepEqual(await byName('pdfcraft.text_replace').run({ find: '2026', replace: '2027' }, editCtx(wrapper, replace)), { ran: 'edit.replace' });
+  const wrapper2 = fakeWrapper();
+  const add = editCraft(wrapper2, ['page one text', 'page one text CONFIDENTIAL']);
+  assert.deepEqual(await byName('pdfcraft.page_add_text').run({ page: 1, text: 'CONFIDENTIAL' }, editCtx(wrapper2, add)), { ran: 'edit.text' });
 });
 
 test('link_add coerces the flat rect to numbers and rejects a bad rect', async () => {
@@ -207,7 +302,9 @@ test('a disabled-right-now rejection (the no-document gate) becomes the teaching
     assert.ok(error instanceof ToolError);
     assert.equal(error.type, 'not_available');
     assert.equal(error.message, 'PDFCraft has no document open.');
-    assert.equal(error.fix, 'Open a PDF in PDFCraft first');
+    // The fix is a copyable open_file call (b14 pdfcraft-08: prose advice and the file
+    // never opened before the round cap); the path placeholder is house style for fixes.
+    assert.equal(error.fix, 'call_tool tool=pdfcraft.open_file path=<path>');
     return true;
   });
   const runner = fakeCraft(); // the generic run_command path teaches the same way
@@ -215,7 +312,7 @@ test('a disabled-right-now rejection (the no-document gate) becomes the teaching
   await assert.rejects(runTool('pdfcraft.run_command', { command: 'page.rotate' }, runner), error => {
     assert.ok(error instanceof ToolError);
     assert.equal(error.type, 'not_available');
-    assert.equal(error.fix, 'Open a PDF in PDFCraft first');
+    assert.equal(error.fix, 'call_tool tool=pdfcraft.open_file path=<path>');
     return true;
   });
 });
@@ -322,7 +419,7 @@ test('pdfcraft.save_copy with no document open surfaces the open-a-PDF teaching 
     assert.ok(error instanceof ToolError);
     assert.equal(error.type, 'not_available');
     assert.equal(error.message, 'PDFCraft has no document open.');
-    assert.equal(error.fix, 'Open a PDF in PDFCraft first');
+    assert.equal(error.fix, 'call_tool tool=pdfcraft.open_file path=<path>');
     return true;
   });
 });
@@ -366,7 +463,7 @@ test('pdfcraft.read_text confirms the export dialog with Enter and returns the c
   assert.ok(!rt.calls.some(c => c[0] === 'request' && c[1] === 'ui.click'), 'no click when Enter closed the dialog');
 });
 
-test('pdfcraft.read_text clicks the dialog button from the a11y tree when Enter leaves it open', async () => {
+test('pdfcraft.read_text confirms the open dialog through the channel label lookup when Enter leaves it open', async () => {
   const wrapper = fakeWrapper();
   const tree = { root: { children: [{ role: 'button', label: 'Export', rect: [10, 20, 80, 30] }] } };
   const rt = readTextCraft(wrapper, { enterCloses: false, tree });
@@ -374,7 +471,30 @@ test('pdfcraft.read_text clicks the dialog button from the a11y tree when Enter 
   assert.deepEqual(out, { name: 'report-q3.txt', text: 'Hi' });
   const click = rt.calls.find(c => c[0] === 'request' && c[1] === 'ui.click');
   assert.ok(click, 'the Export button is clicked');
-  assert.deepEqual(click[2], { x: 50, y: 35 }); // the rect [x, y, w, h] centre
+  assert.deepEqual(click[2], { label: 'Export' }, 'the channel resolves the label through AccessKit');
+});
+
+test('pdfcraft.read_text clicks by widget id when the a11y tree carries ids', async () => {
+  const wrapper = fakeWrapper();
+  const tree = { widgets: [{ id: 'w-123', label: 'Export', rect: [10, 20, 80, 30] }] };
+  const rt = readTextCraft(wrapper, { enterCloses: false, tree });
+  await byName('pdfcraft.read_text').run({}, { host: { appWindow: async () => wrapper }, craft: rt.craft });
+  const click = rt.calls.find(c => c[0] === 'request' && c[1] === 'ui.click');
+  assert.deepEqual(click[2], { id: 'w-123' }, 'the exact widget id wins over the label lookup');
+});
+
+test('pdfcraft.read_text with a dialog the tree has no button in fails with the labels it did see', async () => {
+  const wrapper = fakeWrapper();
+  const rt = readTextCraft(wrapper, { enterCloses: false, tree: { children: [{ role: 'label', label: 'Pages', rect: [0, 0, 10, 10] }] } });
+  const orig = await rt.craft();
+  // Make every ui.click fail, as the channel does when no widget matches:
+  const wrapped = { ...orig, request: (method, params) => (method === 'ui.click' ? Promise.reject(new Error(`no widget named ${params.label}`)) : orig.request(method, params)) };
+  await assert.rejects(byName('pdfcraft.read_text').run({}, { host: { appWindow: async () => wrapper }, craft: () => Promise.resolve(wrapped) }), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'app_error');
+    assert.match(error.message, /has no clickable button in its tree \(labels: Pages/);
+    return true;
+  });
 });
 
 test('pdfcraft.read_text on a text-free PDF gives the no-text teaching error', async () => {
@@ -403,7 +523,7 @@ test('pdfcraft.read_text with no document open surfaces the open-a-PDF teaching 
     assert.ok(error instanceof ToolError);
     assert.equal(error.type, 'not_available');
     assert.equal(error.message, 'PDFCraft has no document open.');
-    assert.equal(error.fix, 'Open a PDF in PDFCraft first');
+    assert.equal(error.fix, 'call_tool tool=pdfcraft.open_file path=<path>');
     return true;
   });
 });
@@ -443,4 +563,61 @@ test('the edit skills check the open document in step 2 (doc_info), so a missing
 test('skill steps and tools lines validate against the runtime checkArgs', () => {
   const errors = checkSkills(skills, byName, { checkArgs: (tool, args) => checkArgs(tool, args, { choices }) });
   assert.deepEqual(errors, []);
+});
+
+// b17 sweep (pdfcraft-01/05/08/09): page-labeled reads, the past-the-end insert guard,
+// the held-document no-doc error and the verified close note.
+
+test('labelPdfPages cuts the fixture at the page content streams and labels the pages', () => {
+  const raw = readFileSync(join(HERE, '..', 'tests', 'agent-eval', 'fixtures', 'report-q3.pdf'), 'utf8');
+  assert.equal(labelPdfPages(raw), [
+    '=== page 1 of 2 ===',
+    'Quarterly report Q3 2026',
+    'Revenue grew 14 percent over Q2.',
+    'The North region led with 41 orders.',
+    '=== page 2 of 2 ===',
+    'Appendix',
+    'Returns fell to 2.1 percent.',
+    'Next review: 15 January 2027.',
+  ].join('\n'));
+});
+
+test('labelPdfPages falls back to null for a non-PDF, a compressed stream and a truncated source', () => {
+  assert.equal(labelPdfPages('plain text, no header'), null);
+  const flate = '%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Contents 4 0 R >>\nendobj\n4 0 obj\n<< /Length 10 /Filter /FlateDecode >>\nstream\n0123456789\nendstream\nendobj';
+  assert.equal(labelPdfPages(flate), null);
+  assert.equal(labelPdfPages('%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\ntruncated'), null);
+});
+
+test('page_insert_blank refuses a past-the-end position with the page count, and reports the new count', async () => {
+  const craft = fakeCraft();
+  let pages = 2;
+  craft.inspect = async () => ({ documents: [{ active: true, doc: 1, name: 'report-q3.pdf', pages }] });
+  // b17 pdfcraft-05: lfm3 read "at the end" as at=17 on a 2-page document.
+  await assert.rejects(runTool('pdfcraft.page_insert_blank', { at: 17 }, craft), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.match(error.message, /position 17 is past the end: the document has 2 pages/);
+    assert.match(error.message, /at is 1\.\.3 \(3 appends the page at the end\)/);
+    return true;
+  });
+  assert.equal(craft.calls.length, 0, 'the guard fires before any engine command');
+  craft.execute = (command, params) => { craft.calls.push(['execute', command, params]); pages += 1; return Promise.resolve({ ran: command }); };
+  const out = await runTool('pdfcraft.page_insert_blank', { at: 3 }, craft);
+  assert.deepEqual(out, { ran: 'page.insert_blank', pages: 3 }, 'the end position runs and the result carries the new count');
+  assert.deepEqual(craft.calls.at(-1), ['execute', 'page.insert_blank', { at: 3 }]);
+});
+
+test('a no-document refusal names the held documents so the model can pass doc=N', async () => {
+  const craft = fakeCraft();
+  craft.execute = () => Promise.reject(Object.assign(new Error('page.duplicate is disabled right now'), { code: 'app_error' }));
+  craft.inspect = async () => ({ documents: [{ active: false, doc: 2, name: 'report-q3.pdf' }] });
+  await assert.rejects(runTool('pdfcraft.page_duplicate', { pages: '1' }, craft), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'not_available');
+    assert.match(error.message, /no active document, but document 2 \(report-q3\.pdf\) is still in the app/);
+    assert.match(error.message, /pass doc=2/);
+    assert.equal(error.fix, 'call_tool tool=pdfcraft.open_file path=<path>');
+    return true;
+  });
 });

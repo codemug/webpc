@@ -48,7 +48,7 @@ Steps:
 1. call_tool tool=desktop.open_app app=docs
 2. call_tool tool=docs.find_replace find=draft replace=final
 Check: the result counts the replacements applied.
-Gotchas: change find= and replace=; a replace= with no text deletes the phrase; limit= caps how many matches are touched. changing a word in existing text needs docs.find_replace, not docs.insert_text, which only inserts a new paragraph.
+Gotchas: change find= and replace=; a replace= with no text deletes the phrase; limit= caps how many matches are touched. changing a word in existing text needs docs.find_replace, not docs.insert_text, which only inserts a new paragraph. find_replace only edits text that is already in the open document - if the user gave you the sentence to type first, type it with docs.insert_text before replacing (a fresh document is empty, and "no occurrences" means the open document lacks the phrase).
 
 ## Bold the selection
 slug: bold-the-selection
@@ -129,7 +129,7 @@ Steps:
 2. call_tool tool=docs.get_text
 3. call_tool tool=docs.move_section from_text=heading line to_text=last line of the section before_text=the line it goes above
 Check: docs.get_text shows the section in the new place and every other line untouched.
-Gotchas: from_text= and to_text= are the exact text of the first and last line of the section (to_text= omitted moves one line); before_text= is the exact text of the line the section goes above; omit before_text= to move the section to the top of the document.
+Gotchas: from_text= and to_text= are the exact text of the first and last line of the section (to_text= omitted moves one line); before_text= is the exact text of the line the section goes above; omit before_text= to move the section to the top of the document. if to_text= equals from_text= only the heading line moves and the section's lines are left behind - read the section with docs.get_text and name its last line.
 
 ## Save the document to Files
 slug: save-the-document-to-files

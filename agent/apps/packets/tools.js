@@ -61,7 +61,14 @@ export const tools = [
     run: async (args, ctx) => call(ctx, async host => {
       const read = ctx.files?.readBytes;
       if (typeof read !== 'function') throw new ToolError('not_available', 'the Files tools are not enabled here, so no capture can be opened', '');
-      const file = await read(args.path);
+      let file;
+      try { file = await read(args.path); }
+      catch (error) {
+        // A wrong path (the model guesses web-sample.pcap for /captures/web-sample.pcap) points at
+        // files.find instead of dead-ending (lfm3-1.7b packets-01/02/05/07, all four failed here).
+        if (error?.code === 'not_found' || error?.code === 'not_a_file' || /not a file|does not exist/i.test(error?.message ?? '')) throw new ToolError('not_found', String(error?.message ?? 'the file was not found'), 'call_tool tool=files.find query=<query>');
+        throw error;
+      }
       const win = await app(host, ctx);
       openFileInApp(win, file.bytes, file.name);
       const sleep = sleepOf(ctx);
@@ -91,6 +98,18 @@ export const tools = [
     // The pre-click status is remembered so a stale line cannot be reported as this filter.
     run: async (args, ctx) => call(ctx, async host => {
       const win = await app(host, ctx);
+      // A capture is open once #pk-summary holds the load line (main.mjs:47). The app clears
+      // #pk-file after every load (main.mjs:125: e.target.value = ''), so the file input says
+      // nothing about the state - gating on it refused a loaded viewer (oracle packets-02/03/06
+      // on build 15). A fresh viewer never finishes a filter, so wait briefly for a load in
+      // flight, then refuse instead of burning the 15 s timeout (lfm3-1.7b packets-02/05).
+      const summaryEl = win.document.getElementById('pk-summary');
+      const sleep = sleepOf(ctx);
+      for (let i = 0; i < 40; i++) { // 4 s
+        if (summaryEl?.textContent?.trim()) break;
+        await sleep(100);
+      }
+      if (!summaryEl?.textContent?.trim()) throw new ToolError('invalid_argument', 'no capture is open in the viewer; open one first', 'call_tool tool=packets.open_capture path=<path>');
       const filter = win.document.getElementById('pk-filter');
       const apply = win.document.getElementById('pk-filter-apply');
       if (!filter || !apply) throw new ToolError('app_error', 'the filter form was not found in the app', '');
@@ -98,7 +117,6 @@ export const tools = [
       const expr = String(args.expr ?? '').trim();
       filter.value = expr;
       apply.click();
-      const sleep = sleepOf(ctx);
       for (let i = 0; i < 150; i++) { // 15 s
         const error = win.document.getElementById('pk-filter-err')?.textContent?.trim();
         if (error) throw new ToolError('invalid_argument', `the filter was rejected: ${error}`, '');
@@ -122,6 +140,16 @@ export const tools = [
     // the selected row carries class pk-sel.
     run: async (args, ctx) => call(ctx, async host => {
       const win = await app(host, ctx);
+      // Same open gate as packets.filter: a fresh viewer with no load answers the table read
+      // with an empty ok:true table, and the model lists it in a loop (sweep b17 packets-01:
+      // fifteen rounds on packets.list of a viewer that never loaded).
+      const summaryEl = win.document.getElementById('pk-summary');
+      const sleep = sleepOf(ctx);
+      for (let i = 0; i < 40; i++) { // 4 s
+        if (summaryEl?.textContent?.trim()) break;
+        await sleep(100);
+      }
+      if (!summaryEl?.textContent?.trim()) throw new ToolError('invalid_argument', 'no capture is open in the viewer; open one first', 'call_tool tool=packets.open_capture path=<path>');
       const table = win.document.getElementById('pk-table');
       if (!table) throw new ToolError('app_error', 'the packet table was not found in the app (open a capture first)', '');
       const columns = [...table.querySelectorAll('thead th')].map(th => th.textContent.trim());

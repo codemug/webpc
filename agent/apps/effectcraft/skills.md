@@ -9,7 +9,22 @@ Steps:
 1. call_tool tool=desktop.open_app app=effectcraft
 2. call_tool tool=effectcraft.project_open demo=true
 Check: effectcraft.inspect lists the project and the active composition.
-Gotchas: opening the demo or a new project replaces the open one (unsaved edits are lost); new=true starts an empty project instead.
+Gotchas: opening the demo or a new project replaces the open one (unsaved edits are lost); new=true starts an empty project instead; for a fresh project with a comp and layers, use effectcraft.new_project (the start-a-project-with-text-comp skill) instead of the demo.
+
+## Start a project with a text comp
+slug: start-a-project-with-text-comp
+summary: Start a new project, create a named composition and add a text layer to it.
+keywords: new project, start, composition, comp, text layer, titles, title, pulse, fade, background, solid
+tools: desktop.open_app, effectcraft.new_project, effectcraft.new_comp, effectcraft.add_text_layer, effectcraft.comp
+
+When: the user wants a fresh project with a new composition and a text layer to work on.
+Steps:
+1. call_tool tool=desktop.open_app app=effectcraft
+2. call_tool tool=effectcraft.new_project
+3. call_tool tool=effectcraft.new_comp name=Credits duration=8
+4. call_tool tool=effectcraft.add_text_layer text=On schedule
+Check: effectcraft.comp shows the comp with the text layer; the layer name follows the text.
+Gotchas: step 2 replaces the open project (unsaved work is lost) - never edit the demo or the open project for a fresh-project ask; new_comp makes its comp active, takes width= and height= in pixels and snaps duration to whole frames; a solid background is add_solid name=Backdrop width=1280 height=720, an imported still is open_file then add_item item=<name>; after this, keyframe with keyframe_add or assign an expression with property_set expression=.
 
 ## Look at the project and the comps
 slug: look-at-the-project
@@ -48,7 +63,7 @@ tools: desktop.open_app, effectcraft.property_set, effectcraft.property_get
 When: the user wants a property changed, like opacity, position or color.
 Steps:
 1. call_tool tool=desktop.open_app app=effectcraft
-2. call_tool tool=effectcraft.property_set layer=1 path=transform/opacity value=50
+2. call_tool tool=effectcraft.property_set layer=1 path=transform/opacity value=40
 Check: the reply is the property read back with the new value.
 Gotchas: vectors are JSON arrays like value=[960,540]; colors are #rrggbb or [r,g,b,a] 0-1; time= keyframes the value at that time instead of setting it; expression= assigns an expression (empty string removes it).
 
@@ -61,7 +76,7 @@ tools: desktop.open_app, effectcraft.keyframe_add, effectcraft.property_get
 When: the user wants a property animated over time.
 Steps:
 1. call_tool tool=desktop.open_app app=effectcraft
-2. call_tool tool=effectcraft.keyframe_add layer=1 path=transform/opacity keys=[{"time":0,"value":0},{"time":1,"value":100}]
+2. call_tool tool=effectcraft.keyframe_add layer=1 path=transform/opacity keys=[{"time":0,"value":0},{"time":8,"value":75}]
 Check: effectcraft.property_get shows the keys on the property.
 Gotchas: keys= is a JSON array of {time, value?} with time in seconds of layer time; timeBase=comp counts comp time instead; transform paths like transform/scale work the same.
 
@@ -75,22 +90,23 @@ When: the user wants an effect on a layer, or the list of effects.
 Steps:
 1. call_tool tool=desktop.open_app app=effectcraft
 2. call_tool tool=effectcraft.effects_list filter=blur
-3. call_tool tool=effectcraft.effect_add layer=1 effect=Gaussian Blur values={"blurriness":12}
+3. call_tool tool=effectcraft.effect_add layer=1 effect=Gaussian Blur values={"blurriness":8}
 Check: the reply lists the effect index, path, name and its parameters.
 Gotchas: step 2 returns the registry when the model needs an effect id or name; values= is a JSON object of parameter id to value; the whole add is one undo step, so effectcraft.undo removes it cleanly.
 
 ## Build a comp in one step
 slug: build-a-comp
-summary: Run several commands as one undo step with the batch tool.
-keywords: batch, multi step, one go, atomic, build, create
-tools: desktop.open_app, effectcraft.batch, effectcraft.comp
+summary: Create the comp and its layers with the create tools, or as one batch undo step.
+keywords: batch, multi step, one go, atomic, build, create, new comp
+tools: desktop.open_app, effectcraft.new_comp, effectcraft.add_text_layer, effectcraft.add_solid, effectcraft.batch
 
-When: the user wants several edits that should land as one undo step.
+When: the user wants a new comp with its layers ready to work on.
 Steps:
 1. call_tool tool=desktop.open_app app=effectcraft
-2. call_tool tool=effectcraft.batch steps=[{"command":"comp.new","params":{"name":"Titles","width":1920,"height":1080}}]
-Check: effectcraft.comp shows the new comp.
-Gotchas: steps= is a JSON array of {command, params?}; label= names the undo step; atomic=false keeps the steps that ran when one fails; commands that delete data (track.delete, effect.remove, file.newProject, ...) make the call destructive.
+2. call_tool tool=effectcraft.new_comp name=Credits width=1280 height=720 duration=8
+3. call_tool tool=effectcraft.add_text_layer text=On schedule
+Check: effectcraft.comp shows the new comp as the active one with its layers.
+Gotchas: for a fresh project run effectcraft.new_project first (the create tools edit the open project); each create tool is one undo step - for several edits as ONE undo step use effectcraft.batch with steps= a JSON array of {command, params?}; commands that delete data (track.delete, effect.remove, file.newProject, ...) make a batch destructive. Call new_comp once per comp name: a duplicate name is renamed to "Name 2" and the layers you added stay in the first comp - switch back to it with effectcraft.comp_switch instead of creating it again.
 
 ## Find and run any command
 slug: run-any-effectcraft-command
@@ -102,7 +118,7 @@ When: the user wants an action that has no dedicated tool.
 Steps:
 1. call_tool tool=desktop.open_app app=effectcraft
 2. call_tool tool=effectcraft.list_commands query=layer
-3. call_tool tool=effectcraft.run_command command=layer.newText params=name=Title
+3. call_tool tool=effectcraft.run_command command=layer.newText params=text=Title
 Check: effectcraft.comp or effectcraft.inspect shows the action took effect.
 Gotchas: run_command takes key=value lines in params= (a [ ... ] or { ... } value is JSON); command_describe is the registry query command.describe, reachable as run_command command=command.describe; track.delete, edit.purge and file.close are destructive (they delete data or close the project).
 ## Open a project or media from Files

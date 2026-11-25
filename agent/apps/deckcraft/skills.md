@@ -8,7 +8,7 @@ When: the user wants a new presentation or deck to start building.
 Steps:
 1. call_tool tool=desktop.open_app app=deckcraft
 2. call_tool tool=deckcraft.new_presentation theme=Harbor
-3. call_tool tool=deckcraft.add_slide layout=titleAndContent title=Q1 Plan
+3. call_tool tool=deckcraft.add_slide layout=titleAndContent title=Overview
 Check: deckcraft.inspect lists the new slides.
 Gotchas: new_presentation replaces the open presentation (destructive; unsaved work is lost); change theme= and the slide layout and title; the deck's layouts are the names in deckcraft.inspect layouts[] - a title slide is Title Slide, a content slide with a body is Title and Content, a section slide is Section Header, no placeholders is Blank (the short kinds title, titleAndContent, sectionHeader and blank work too); a rejected layout or theme error lists the valid names.
 
@@ -21,11 +21,25 @@ tools: desktop.open_app, deckcraft.add_slide, deckcraft.add_text_box, deckcraft.
 When: the user wants a slide built with a heading and a visual element.
 Steps:
 1. call_tool tool=desktop.open_app app=deckcraft
-2. call_tool tool=deckcraft.add_slide layout=titleAndContent title=Q1 Plan
-3. call_tool tool=deckcraft.add_text_box x=40 y=260 w=500 text=Key numbers size=24
+2. call_tool tool=deckcraft.add_slide layout=titleAndContent title=Overview
+3. call_tool tool=deckcraft.add_text_box x=40 y=260 w=520 text=Headline size=24
 4. call_tool tool=deckcraft.add_shape preset=rect x=40 y=420 w=300 h=80 fill=#3B5BDB
 Check: deckcraft.inspect_slide shows the shapes with their ids.
-Gotchas: change the coordinates and text; layout= is a name from deckcraft.inspect layouts[] (Title and Content for a heading-plus-body slide; a rejected layout error lists the valid names); add_shape fills with fill= and outlines with line= (line=none removes the outline); a rejected preset error lists the valid presets.
+Gotchas: change the coordinates and text; layout= is a name from deckcraft.inspect layouts[] (Title and Content for a heading-plus-body slide; a rejected layout error lists the valid names); add_shape fills with fill= and outlines with line= (line=none removes the outline); a shape that says a word gets it with text= (add_shape preset=rect x=40 y=420 w=300 h=80 text=Done) - without text= the shape is shown with no words; a rejected preset error lists the valid presets.
+
+## Put content on a specific slide
+slug: put-content-on-a-specific-slide
+summary: Content commands act on the current slide; go_to_slide makes the right slide current first.
+keywords: navigate, current slide, go to slide, back, previous slide, first slide
+tools: desktop.open_app, deckcraft.go_to_slide, deckcraft.add_text_box, deckcraft.add_shape, deckcraft.inspect_slide
+
+When: the user wants content on a slide that is not the one just added.
+Steps:
+1. call_tool tool=desktop.open_app app=deckcraft
+2. call_tool tool=deckcraft.go_to_slide index=0
+3. call_tool tool=deckcraft.add_text_box x=40 y=380 w=360 text=See you soon
+Check: deckcraft.inspect_slide index=0 lists the new shape.
+Gotchas: add_text_box, add_shape, insert_table, insert_chart and set_text all act on the current slide - the slide last added or last jumped to - so for a slide added earlier run go_to_slide index= first; the index counts from 0.
 
 ## Change text on a slide
 slug: change-slide-text
@@ -50,7 +64,7 @@ tools: desktop.open_app, deckcraft.insert_table
 When: the user wants a table of values on a slide.
 Steps:
 1. call_tool tool=desktop.open_app app=deckcraft
-2. call_tool tool=deckcraft.insert_table rows=3 cols=2 data=[["Item","Cost"],["Rent","1200"],["Food","400"]]
+2. call_tool tool=deckcraft.insert_table rows=3 cols=2 data=[["Name","Amount"],["Lamp","1850"],["Chair","910"]]
 Check: deckcraft.inspect_slide lists the table on the current slide.
 Gotchas: change rows= and cols=; data= rows must match cols; x, y, w, h place the table when all four are given.
 
@@ -63,9 +77,9 @@ tools: desktop.open_app, deckcraft.insert_chart
 When: the user wants a chart or graph on a slide.
 Steps:
 1. call_tool tool=desktop.open_app app=deckcraft
-2. call_tool tool=deckcraft.insert_chart type=column title=Sales categories=Q1, Q2 series=[["Sales",12,18]]
+2. call_tool tool=deckcraft.insert_chart type=column title=Shipments categories=North, South series=[["Units",71,58]]
 Check: deckcraft.inspect_slide lists the chart on the current slide.
-Gotchas: change type= (column, bar, line, pie, doughnut, area, scatter, stackedColumn); each series row is the name then its values.
+Gotchas: change type= (column, bar, line, pie, doughnut, area, scatter, stackedColumn); each series row is the name then its values; the chart lands on the current slide, so for a chart slide add it first (deckcraft.add_slide layout=titleAndContent title=<title>) and insert after.
 
 ## Select and format shapes
 slug: select-and-format-shapes
@@ -105,7 +119,7 @@ tools: desktop.open_app, deckcraft.batch
 When: the user wants several slide changes applied in one go.
 Steps:
 1. call_tool tool=desktop.open_app app=deckcraft
-2. call_tool tool=deckcraft.batch commands="slide.new layout=title title=Q1, go_to_slide index=1"
+2. call_tool tool=deckcraft.batch commands="slide.new layout=title title=Overview, go_to_slide index=1"
 Check: deckcraft.inspect lists the new slide and the current one.
 Gotchas: each batch item is the command id then key=value tokens without spaces in values; keepGoing=true continues past a failing step.
 
@@ -118,7 +132,7 @@ tools: desktop.open_app, deckcraft.open_file
 When: the user wants to open a presentation that is stored in Files.
 Steps:
 1. call_tool tool=desktop.open_app app=deckcraft
-2. call_tool tool=deckcraft.open_file path=/DeckCraft/talk.pptx
+2. call_tool tool=deckcraft.open_file path=/DeckCraft/brief.pptx
 Check: the result's opened field names the deck and its slide count; deckcraft.inspect shows the opened presentation.
 Gotchas: change path= to the Files path of a deck (.deckcraft, .pptx, .potx, .ppsx, or an outline); the deck opens alongside the open ones; while the open deck has unsaved changes the app asks first whether to keep them.
 
@@ -131,6 +145,6 @@ tools: desktop.open_app, deckcraft.save_copy
 When: the user wants to keep a copy of the active presentation in Files.
 Steps:
 1. call_tool tool=desktop.open_app app=deckcraft
-2. call_tool tool=deckcraft.save_copy path=/DeckCraft/talk.deckcraft
+2. call_tool tool=deckcraft.save_copy path=/DeckCraft/brief.deckcraft
 Check: the result has the saved Files path and size; files.info on that path shows the same size.
 Gotchas: change path=; DeckCraft saves its own .deckcraft format, so a .pptx (or other) target is refused with the .deckcraft path as the fix; if the path exists the tool errors, so choose another name or pass overwrite=true (which is destructive); when the app saves through the capture path it also downloads the file, and the result says so.

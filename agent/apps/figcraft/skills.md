@@ -8,7 +8,7 @@ When: the user wants a mobile app screen designed, e.g. login, settings or an or
 Steps:
 1. call_tool tool=desktop.open_app app=figcraft
 2. call_tool tool=figcraft.new_document
-3. call_tool tool=figcraft.run_command command=frame.create params=preset=iPhone 16\nx=0\ny=0\nname=Login
+3. call_tool tool=figcraft.run_command command=frame.create params=preset=iPhone 16\nx=0\ny=0\nname=Canvas
 4. call_tool tool=figcraft.set_properties ids=1 props=fill=#FFFFFF\nlayout=vertical\npadding=[64,24,32,24]\ngap=16\nsizingV=fixed
 5. call_tool tool=figcraft.create_node parent=1 type=text text=Welcome back props=fontSize=28\nfontStyle=Bold
 6. call_tool tool=figcraft.create_node parent=1 type=frame name=Email props=layout=horizontal\npadding=16\ncornerRadius=12\nstroke=#E0E0E0\nsizingH=fill
@@ -94,11 +94,41 @@ When: the user wants a simple shape added to the design.
 Steps:
 1. call_tool tool=desktop.open_app app=figcraft
 2. call_tool tool=figcraft.inspect_document
-3. call_tool tool=figcraft.create_node type=rectangle x=40 y=40 width=200 height=120 name=Card props=cornerRadius=12
+3. call_tool tool=figcraft.create_node type=rectangle x=40 y=40 width=200 height=120 name=Tile props=cornerRadius=12
 4. call_tool tool=figcraft.set_properties ids=5 props=fill=#3B5BDB\nopacity=0.9
 5. call_tool tool=figcraft.get_node id=5 depth=1
 Check: step 5 shows the fill and corner radius on the new layer.
 Gotchas: change the type, position and size; ids in step 4 is the id from step 3; text= on a text layer types its characters.
+
+## Create a text layer
+slug: create-a-text-layer
+summary: Add a text layer with the characters, position and size the user names.
+keywords: text, label, caption, headline, characters, letters, type, write, proof
+tools: desktop.open_app, figcraft.new_document, figcraft.create_node, figcraft.inspect_document
+
+When: the user wants text added to the design - a label, caption, headline or a proof text layer.
+Steps:
+1. call_tool tool=desktop.open_app app=figcraft
+2. call_tool tool=figcraft.new_document name=Proof
+3. call_tool tool=figcraft.create_node type=text text=Shipped early x=40 y=40
+Check: the result's node carries the characters; figcraft.inspect_document lists the text layer with them.
+Gotchas: the characters go in text= - name= is the layer's name, not the text; position and size are the top-level x= y= width= height=, not inside props=; props= takes key=value lines only (fontSize=24 fill=#3366FF), never a JSON object; step 2 is skipped when a document is already open.
+
+## Undo and redo changes
+slug: undo-and-redo
+summary: Undo a change, then redo it, so the last move in the history is the change.
+keywords: undo, redo, history, take back, practise, last move
+tools: desktop.open_app, figcraft.new_document, figcraft.create_node, figcraft.undo, figcraft.redo, figcraft.inspect_document
+
+When: the user wants to undo the last change or bring it back.
+Steps:
+1. call_tool tool=desktop.open_app app=figcraft
+2. call_tool tool=figcraft.new_document
+3. call_tool tool=figcraft.create_node type=rectangle
+4. call_tool tool=figcraft.undo
+5. call_tool tool=figcraft.redo
+Check: figcraft.inspect_document shows the layer is back after the redo and the page has exactly one child.
+Gotchas: undo and redo take no parameters; step 2 is only needed when no document is open; the history's last move after step 5 is the create.
 
 ## Style the selection
 slug: style-the-selection
@@ -131,16 +161,30 @@ Gotchas: ids= exports those layers composited; scale= multiplies raster output (
 
 ## Open a document from Files
 slug: open-a-document-from-files
-summary: Open a FigCraft document that is stored in Files in the editor.
-keywords: open, load, from files, figcraft, document, import, fig
-tools: desktop.open_app, figcraft.open_file
+summary: Open or import a FigCraft document from Files: .figcraft, .svg, .fig, .json or an image.
+keywords: open, load, from files, figcraft, document, import, svg, logo, fig
+tools: desktop.open_app, figcraft.open_file, figcraft.inspect_document
 
-When: the user wants to open a FigCraft document that is stored in Files.
+When: the user wants to open a FigCraft document or import an SVG/other file stored in Files.
 Steps:
 1. call_tool tool=desktop.open_app app=figcraft
-2. call_tool tool=figcraft.open_file path=/FigCraft/app.figcraft
-Check: the result's opened field names the document; figcraft.inspect_document shows the open document.
-Gotchas: change path= to the Files path of a .figcraft document; the document opens alongside the open ones; while the open document has unsaved changes the app asks first whether to keep them.
+2. call_tool tool=figcraft.open_file path=/FigCraft/sample.svg
+Check: the result's opened field names the pages; figcraft.inspect_document shows the page's children - an empty page (childCount 0) means nothing was imported.
+Gotchas: open_file takes the Files path of any importable format - .figcraft, .svg, .fig, .json or an image, not only .figcraft, so an SVG logo is opened with this same call; the document opens alongside the open ones; while the open document has unsaved changes the app asks first whether to keep them.
+
+## Check what is in the document
+slug: check-document-contents
+summary: Report the document's pages, shapes and counts; the way to confirm an import brought the artwork in.
+keywords: count, how many, shapes, verify, check, what is in, import, artwork, page, layers
+tools: desktop.open_app, figcraft.open_file, figcraft.inspect_document
+
+When: the user asks how many shapes, pages or layers the document has, or wants to confirm an import landed.
+Steps:
+1. call_tool tool=desktop.open_app app=figcraft
+2. call_tool tool=figcraft.open_file path=/FigCraft/sample.svg
+3. call_tool tool=figcraft.inspect_document depth=1
+Check: read childCount from the inspect result and answer with that number, then STOP - the user asked a question, so no create_node, move, style or any other call after the inspect; the page must stay exactly as the import left it.
+Gotchas: the page's child is the imported frame and its childCount is the number of imported shapes; if the document is already open skip step 2 and go straight to the inspect; what an SVG import leaves is one frame named after the file whose children are the imported shapes - that is what you will read, not something to create, so never rebuild or "fix" what the inspect shows (a page with childCount 0 means the import landed nothing, so open the file again).
 
 ## Save a copy of the design to Files
 slug: save-a-design-copy-to-files

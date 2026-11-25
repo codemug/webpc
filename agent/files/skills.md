@@ -119,7 +119,7 @@ Steps:
 2. call_tool tool=files.rename path=/notes/todo.txt to=/notes/2026/todo.txt
 3. call_tool tool=files.rename path=/notes/ideas.md to=/notes/2026/ideas.md
 Check: files.list on /notes/2026 shows the moved files and the old names are gone.
-Gotchas: repeat the rename with each file to move; list the folder first with files.list to see what is there.
+Gotchas: repeat the rename with each file to move; list the folder first with files.list to see what is there; move only the files the user named or that match their pattern, and leave the rest where they are.
 
 ## Copy a file
 slug: copy-a-file

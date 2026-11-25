@@ -9,7 +9,7 @@ Steps:
 1. call_tool tool=desktop.open_app app=packets
 2. call_tool tool=packets.open_capture path=/captures/web.pcapng
 Check: the result has a summary line with the packet count, the file type and the elapsed time.
-Gotchas: change path=; the Wireshark engine (about 21 MB) loads on first use, so the first open of a session can take a while; the format is detected from the file's magic bytes, not its extension; a non-capture file is rejected with the app's error.
+Gotchas: change path= to the full Files path - the capture's real location, not just the filename (a capture saved in the captures folder is /captures/survey.pcap, not survey.pcap; a wrong path is an error that points at files.find); the Wireshark engine (about 21 MB) loads on first use, so the first open of a session can take a while; the format is detected from the file's magic bytes, not its extension; a non-capture file is rejected with the app's error.
 
 ## Filter the packets
 slug: filter-the-packets

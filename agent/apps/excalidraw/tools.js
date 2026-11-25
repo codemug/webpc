@@ -61,7 +61,7 @@ const linear = (type, x1, y1, x2, y2, endArrowhead) => ({ ...base(type), x: x1, 
 const parseSpec = text => {
   const SHAPES = ['rectangle', 'ellipse', 'diamond', 'line', 'arrow', 'text'];
   const spec = String(text ?? '').split('\n').map(line => line.trim()).filter(Boolean);
-  if (spec.length === 0) throw new ToolError('invalid_argument', 'spec is empty; one shape per line, e.g. "rectangle 100 100 200 80 Start"', '');
+  if (spec.length === 0) throw new ToolError('invalid_argument', 'spec is empty; one shape per line, e.g. "rectangle 120 30 160 70 In"', '');
   const built = [];
   const shapes = []; // one entry per shape line (a label never counts); arrow targets
   const errors = [];
@@ -98,13 +98,15 @@ const parseSpec = text => {
     }
     // rectangle, ellipse and diamond: x, y, width, height then an optional label word.
     const nums = words.slice(1, 5).map(Number);
-    const label = words.slice(5).join(' ');
-    if (nums.length < 4 || nums.some(Number.isNaN)) { errors.push(`line ${i + 1}: ${kind} needs x, y, width and height`); return; }
+    const rest = words.slice(5);
+    if (nums.length < 4 || nums.some(Number.isNaN)) { errors.push(`line ${i + 1}: ${kind} takes four positional numbers (x y width height, not k=v), e.g. "rectangle 120 30 160 70 In"`); return; }
+    if (rest.length && rest.every(w => !Number.isNaN(Number(w)))) { errors.push(`line ${i + 1}: ${kind} takes exactly four numbers, got ${words.length - 1} (the extra "${rest.join(' ')}" would become a label)`); return; }
+    const label = rest.join(' ');
     const els = makeLabeled(kind, nums[0], nums[1], nums[2], nums[3], label);
     built.push(...els);
     shapes.push(els[0]);
   });
-  if (errors.length) throw new ToolError('invalid_argument', errors.join('; '), '');
+  if (errors.length) throw new ToolError('invalid_argument', errors.join('; '), 'call_tool tool=excalidraw.add_shapes spec="rectangle 120 30 160 70 In"');
   return built;
 };
 
@@ -115,10 +117,10 @@ export const tools = [
     name: 'excalidraw.add_shapes',
     purpose: 'Add shapes, labels, lines and arrows to the canvas, one per line of a spec.',
     when: 'Use when the user wants a diagram, flowchart or sketch drawn on the canvas.',
-    params: { spec: { type: 'text', required: true, description: 'One shape per line: "rectangle 100 100 200 80 Start", "ellipse 10 20 140 60", "text 5 5 Hello", "line 0 0 200 0", "arrow 1 2" (shape line numbers, 1-based)' } },
+    params: { spec: { type: 'text', required: true, description: 'One shape per line: "rectangle 120 30 160 70 In", "ellipse 60 40 130 55", "diamond 250 55 160 90", "text 5 5 Hello", "line 0 0 150 0", "arrow 1 2" (shape line numbers, 1-based)' } },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { spec: 'rectangle 100 100 200 80 Start\nrectangle 400 100 200 80 End\narrow 1 2' }, says: 'Draw a Start to End flow' }],
+    examples: [{ args: { spec: 'rectangle 120 30 160 70 In\nrectangle 380 30 160 70 Out\narrow 1 2' }, says: 'Draw an In to Out flow' }],
     // getSceneElements + updateScene (types.d.ts:603-611); captureUpdate "IMMEDIATELY" makes the
     // add undoable (store.d.ts:16)
     run: async (args, ctx) => call(ctx, async host => {
@@ -139,7 +141,7 @@ export const tools = [
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { text: 'Q3 roadmap', x: 20, y: 20 }, says: 'Add a title to the drawing' }],
+    examples: [{ args: { text: 'Launch plan', x: 30, y: 30 }, says: 'Add a title to the drawing' }],
     // Same updateScene path as add_shapes, for a single text element
     run: async (args, ctx) => call(ctx, async host => {
       const ex = await getApi(host, ctx);

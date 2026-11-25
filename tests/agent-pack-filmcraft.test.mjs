@@ -50,18 +50,19 @@ test('the pack declares its id, title and live-check exports', () => {
   assert.deepEqual(pack, { id: 'filmcraft', title: 'FilmCraft' });
   assert.deepEqual(usesCommands.sort(), [
     'effects.apply', 'effects.list', 'edit.redo', 'edit.undo', 'file.newBin', 'file.newProject',
-    'file.openDemoProject', 'file.save', 'playhead.set', 'project.inspect', 'sequence.addEdit', 'sequence.inspect',
+    'file.newSequence', 'file.openDemoProject', 'file.save', 'playhead.set', 'project.inspect', 'sequence.addEdit', 'sequence.inspect',
     'timeline.move', 'timeline.place', 'timeline.razor',
   ].sort());
   assert.deepEqual(usesMethods, []);
 });
 
 test('the pack exposes exactly the 20 filmcraft tools', () => {
-  assert.equal(tools.length, 20);
+  assert.equal(tools.length, 21);
   assert.deepEqual(tools.map(tool => tool.name).sort(), [
     'filmcraft.add_edit', 'filmcraft.apply_effect', 'filmcraft.batch', 'filmcraft.inspect',
     'filmcraft.list_commands', 'filmcraft.move', 'filmcraft.new_bin', 'filmcraft.new_project',
-    'filmcraft.open_demo', 'filmcraft.open_file', 'filmcraft.place', 'filmcraft.playhead', 'filmcraft.project_inspect',
+    'filmcraft.new_sequence', 'filmcraft.open_demo', 'filmcraft.open_file', 'filmcraft.place', 'filmcraft.playhead',
+    'filmcraft.project_inspect',
     'filmcraft.razor', 'filmcraft.redo', 'filmcraft.run_command', 'filmcraft.save_copy', 'filmcraft.sequence_inspect',
     'filmcraft.ui_inspect', 'filmcraft.undo',
   ]);
@@ -177,6 +178,112 @@ test('place sends item, time, tracks and the nested sourceIn/duration as seconds
     ['execute', 'timeline.place', { item: 3, seconds: 5, track: 'V1' }],
     ['execute', 'timeline.place', { item: 3, track: 'new', audio: false, sourceIn: { seconds: 1.5 }, duration: { seconds: 4 } }],
   ]);
+});
+
+test('place resolves a numeric-string id straight, and a name or Files path from the project tree', async () => {
+  // The model hands over the id as a string (the runtime coerces the number it sends), the bare
+  // file name, or the full Files path (measured on build 14): all must land on the same item id.
+  const tree = { name: 'Lookbook', activeSequence: null, root: { id: 0, name: 'Lookbook', children: [
+    { children: [], id: 1, name: 'bin' },
+    { children: [], duration: 1270080000000, item: 2, name: 'beach-sunset.jpg', type: 'Still Image' },
+  ] } };
+  const craft = { calls: [], execute: (command, params) => { craft.calls.push([command, params]); return Promise.resolve(command === 'project.inspect' ? tree : { ok: true }); } };
+  await runTool('filmcraft.place', { item: '3', track: 'V1', seconds: 5 }, craft);
+  await runTool('filmcraft.place', { item: 'beach-sunset.jpg', track: 'V1' }, craft);
+  await runTool('filmcraft.place', { item: '/FilmCraft/beach-sunset.jpg', track: 'V1' }, craft);
+  assert.deepEqual(craft.calls, [
+    // The numeric id needs no project read.
+    ['timeline.place', { item: 3, seconds: 5, track: 'V1' }],
+    ['project.inspect', {}],
+    ['timeline.place', { item: 2, track: 'V1' }],
+    ['project.inspect', {}],
+    ['timeline.place', { item: 2, track: 'V1' }],
+  ]);
+});
+
+test('place lists the project items when the name is not in the tree', async () => {
+  const tree = { name: 'Lookbook', root: { id: 0, name: 'Lookbook', children: [
+    { children: [], id: 1, name: 'bin' },
+    { children: [], item: 2, name: 'beach-sunset.jpg', type: 'Still Image' },
+  ] } };
+  const craft = { execute: command => Promise.resolve(command === 'project.inspect' ? tree : { ok: true }) };
+  await assert.rejects(runTool('filmcraft.place', { item: 'missing.jpg', track: 'V1' }, craft), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.match(error.message, /beach-sunset\.jpg \(id 2\)/);
+    return true;
+  });
+});
+
+test('place splits a crammed call blob out of item= and spells the fixed call', async () => {
+  // Build 16 sweep (03): the model wrapped the whole call in one argument and the runtime
+  // handed the blob to the required item=; "item <blob> is not in the project" looped 20+ rounds.
+  const craft = fakeCraft();
+  await assert.rejects(
+    runTool('filmcraft.place', { item: '{ item: "beach-sunset.jpg", track: "V1", seconds: 0 }' }, craft),
+    error => {
+      assert.ok(error instanceof ToolError);
+      assert.equal(error.type, 'invalid_argument');
+      assert.match(error.message, /not the whole call/);
+      assert.equal(error.fix, 'call_tool tool=filmcraft.place item=beach-sunset.jpg track=V1 seconds=0');
+      return true;
+    },
+  );
+});
+
+test('place and razor teach the V1/A1 track names when the engine rejects a display name', async () => {
+  // Build 16 sweep (04/06/07): sequence_inspect shows the display names "Video 1"/"Audio 1"
+  // while timeline.place resolves V1..Vn/A1..An, and the "no track X" error listed none of them.
+  const craft = {
+    execute: (command) => (command === 'sequence.inspect'
+      ? Promise.resolve({ video: [{}, {}, {}], audio: [{}, {}] })
+      : Promise.reject(new Error('Error: invalid parameters for `timeline.place`: no track Video 1 in this sequence (`track`)'))),
+  };
+  await assert.rejects(runTool('filmcraft.place', { item: '1', track: 'Video 1' }, craft), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'app_error');
+    assert.match(error.message, /track names are V1, V2, V3, A1, A2/);
+    assert.match(error.message, /display names/);
+    assert.equal(error.fix, 'call_tool tool=filmcraft.place item=<id> track=V1 seconds=<n>');
+    return true;
+  });
+  await assert.rejects(runTool('filmcraft.razor', { track: '1', seconds: 3 }, craft), error => {
+    assert.ok(error instanceof ToolError);
+    assert.match(error.message, /track names are V1, V2, V3, A1, A2/);
+    assert.equal(error.fix, 'call_tool tool=filmcraft.razor track=V1 seconds=<n>');
+    return true;
+  });
+});
+
+test('sequence-dependent commands teach the new_sequence call when no sequence is open', async () => {
+  // Build 14: a fresh new_project has no sequence, and the bare engine error sent the model to
+  // hammer sequence_inspect for 15 rounds. The same error must now name the creating call.
+  for (const [name, args, engineMessage] of [
+    ['filmcraft.place', { item: '3', track: 'V1' }, 'no sequence is open'],
+    ['filmcraft.sequence_inspect', {}, 'no active sequence'],
+  ]) {
+    const failing = { execute: () => Promise.reject(new Error(`Error: ${engineMessage}`)) };
+    await assert.rejects(runTool(name, args, failing), error => {
+      assert.ok(error instanceof ToolError);
+      assert.equal(error.type, 'app_error');
+      assert.equal(error.fix, 'call_tool tool=filmcraft.new_sequence name=<name>');
+      return true;
+    });
+  }
+  // Any other engine error passes through untouched.
+  const other = { execute: () => Promise.reject(new Error('track V9 does not exist')) };
+  await assert.rejects(runTool('filmcraft.place', { item: '3', track: 'V1' }, other), error => {
+    assert.equal(error.name, 'Error');
+    assert.equal(error.message, 'track V9 does not exist');
+    return true;
+  });
+});
+
+test('new_sequence runs file.newSequence, named or bare', async () => {
+  const craft = fakeCraft();
+  await runTool('filmcraft.new_sequence', { name: 'Cut' }, craft);
+  await runTool('filmcraft.new_sequence', {}, craft);
+  assert.deepEqual(craft.calls, [['execute', 'file.newSequence', { name: 'Cut' }], ['execute', 'file.newSequence', {}]]);
 });
 
 test('move sends the moves with nested time objects, and rejects a move without clip or track', async () => {
@@ -392,9 +499,9 @@ test('filmcraft.save_copy passes overwrite through and refuses a foreign target 
 
 const { skills, errors: skillErrors } = parseSkills(SKILLS_MD, 'filmcraft');
 
-test('skills.md parses with the runtime parser without errors and has 10 skills', () => {
+test('skills.md parses with the runtime parser without errors and has 12 skills', () => {
   assert.deepEqual(skillErrors, []);
-  assert.equal(skills.length, 10);
+  assert.equal(skills.length, 12);
   for (const skill of skills) {
     assert.ok(skill.slug && skill.summary, `skill ${skill.slug} slug/summary`);
     assert.ok(skill.summary.length <= 160, `skill ${skill.slug} summary is ${skill.summary.length} chars`);
@@ -417,4 +524,38 @@ test('every skill opens by launching FilmCraft, then uses numbered filmcraft ste
 test('skill steps and tools lines validate against the runtime checkArgs', () => {
   const errors = checkSkills(skills, byName, { checkArgs: (tool, args) => checkArgs(tool, args, { choices }) });
   assert.deepEqual(errors, []);
+});
+
+test('set-in-and-out-marks routes marks through markers.markIn/markOut, never the cut tools (sweep b19 06)', () => {
+  const skill = skills.find(s => s.slug === 'set-in-and-out-marks');
+  assert.ok(skill, 'the marks skill exists');
+  const runLines = skill.steps.filter(step => step.tool === 'filmcraft.run_command').map(step => step.line);
+  assert.deepEqual(runLines, [
+    '3. call_tool tool=filmcraft.run_command command=markers.markIn',
+    '5. call_tool tool=filmcraft.run_command command=markers.markOut',
+  ], 'the marks are the markers commands, at the playhead set in the step before');
+  assert.match(skill.gotchas, /razor and filmcraft\.add_edit cut the timeline/, 'the gotcha separates marks from cuts');
+  assert.match(skill.summary, /without cutting/i);
+});
+
+test('add_edit is a cut, not a mark: the model-facing wording keeps "marker" out (sweep b19 06)', () => {
+  const edit = byName('filmcraft.add_edit');
+  assert.match(edit.purpose, /a cut, not a mark/);
+  assert.ok(!/marker/i.test(edit.purpose + edit.when + edit.examples[0].says), 'no "marker" wording lures the mark task here');
+});
+
+test('open_file carries the import vocabulary so a generic import search ranks it (sweep b19 02)', () => {
+  const open = byName('filmcraft.open_file');
+  for (const word of ['import', 'still', 'photo', 'video', 'audio']) assert.ok(open.keywords.includes(word), `keyword ${word}`);
+});
+
+test('a no-position playhead rejection carries the seconds fix line', async () => {
+  const craft = fakeCraft();
+  await assert.rejects(runTool('filmcraft.playhead', {}, craft), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.match(error.message, /give one of seconds, frame or timecode/);
+    assert.equal(error.fix, 'call_tool tool=filmcraft.playhead seconds=<n>');
+    return true;
+  });
 });

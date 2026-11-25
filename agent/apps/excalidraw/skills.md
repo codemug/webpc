@@ -1,13 +1,13 @@
 ## Draw a diagram
 slug: draw-a-diagram
 summary: Add shapes, labels, lines and arrows to the canvas from a one-shape-per-line spec.
-keywords: draw, diagram, flowchart, sketch, shapes, boxes, canvas, picture
+keywords: draw, diagram, flowchart, sketch, shapes, boxes, canvas, picture, diamond
 tools: desktop.open_app, excalidraw.add_shapes
 
 When: the user wants a diagram, flowchart or sketch drawn on the canvas.
 Steps:
 1. call_tool tool=desktop.open_app app=excalidraw
-2. call_tool tool=excalidraw.add_shapes spec="rectangle 100 100 200 80 Start\nrectangle 400 100 200 80 End\narrow 1 2"
+2. call_tool tool=excalidraw.add_shapes spec="rectangle 120 30 160 70 In\nrectangle 380 30 160 70 Out\ndiamond 250 55 160 90\narrow 1 2"
 Check: excalidraw.list_elements shows the new shapes; the user sees them on the canvas.
 Gotchas: change the spec; one shape per line (rectangle/ellipse/diamond x y w h [label], text x y label, line x1 y1 x2 y2, arrow A B); arrow numbers are 1-based shape line numbers and must come after the lines they join.
 
@@ -20,7 +20,7 @@ tools: desktop.open_app, excalidraw.add_text
 When: the user wants a caption, note or standalone label on the canvas.
 Steps:
 1. call_tool tool=desktop.open_app app=excalidraw
-2. call_tool tool=excalidraw.add_text text=Q3 roadmap x=20 y=20
+2. call_tool tool=excalidraw.add_text text=Launch plan x=30 y=30
 Check: excalidraw.list_elements shows the new text element.
 Gotchas: change text=, x= and y=; canvas coordinates, not screen pixels; use add_shapes instead when the text should sit inside a shape.
 
@@ -60,7 +60,7 @@ When: the user wants an arrow from one shape to another.
 Steps:
 1. call_tool tool=desktop.open_app app=excalidraw
 2. call_tool tool=excalidraw.list_elements
-3. call_tool tool=excalidraw.add_shapes spec="rectangle 100 100 200 80 First\nrectangle 400 100 200 80 Second\narrow 1 2"
+3. call_tool tool=excalidraw.add_shapes spec="rectangle 120 30 160 70 First\nrectangle 380 30 160 70 Second\narrow 1 2"
 Check: excalidraw.list_elements shows an arrow element whose position runs between the two shapes.
 Gotchas: change the spec; arrow line numbers are 1-based shape line numbers within the same spec, so for shapes already on the canvas draw them in the same spec first.
 

@@ -75,11 +75,12 @@ export const filesCall = (ctx, fn, fixFor) => {
  * from the tool description - and loops). path is not required in the tool specs
  * (the runtime must not emit a missing_argument fix that echoes an example path), so a
  * missing or empty path is the missing_argument pointing at desktop.open_app. A
- * missing file becomes ToolError('not_found') saying the app itself opens with
- * desktop.open_app and a file is found with files.find. Both fixes point at
- * desktop.open_app (small models copy fix lines).
+ * wrong path (a file that is not in Files) becomes ToolError('not_found') whose fix is
+ * files.find on the file's own name: the app is already open, so desktop.open_app is a dead
+ * end, and files.find recovers the real path (soundcraft-05 trace: /soundCraft/ vs the seeded
+ * /SoundCraft/). Small models copy fix lines, so the fix line is the recovery.
  */
-export const readOpenFile = async (ctx, path, { id, title }) => {
+export const readOpenFile = async (ctx, path, { id, title, missingHint }) => {
   const openAppFix = `call_tool tool=desktop.open_app app=${id}`;
   if (typeof path !== 'string' || path.length === 0) {
     throw new ToolError('missing_argument', `Give the Files path of the file to open. To open ${title} itself, use desktop.open_app.`, openAppFix);
@@ -87,7 +88,14 @@ export const readOpenFile = async (ctx, path, { id, title }) => {
   return filesCall(ctx, files => files.readBytes(path))
     .catch(error => {
       if (error instanceof ToolError && error.type === 'not_found') {
-        throw new ToolError('not_found', `${path} is not in Files. To open ${title} itself, use desktop.open_app; to open a file, find it first with files.find.`, openAppFix);
+        // The model supplied a path but it is wrong (wrong case, typo, or not seeded). The app
+        // is already open here, so desktop.open_app is a dead end; files.find on the file's own
+        // name recovers the real path (soundcraft-05 trace: /soundCraft/ vs seeded /SoundCraft/).
+        // missingHint (optional, app-specific) adds the app's own next step when no file is the
+        // point (gridcraft: the data comes from the user message - type it with set_cells).
+        const name = path.split('/').filter(Boolean).pop() || path;
+        const hint = missingHint ? ` ${missingHint}` : '';
+        throw new ToolError('not_found', `${path} is not in Files. The path may be wrong - find the file with files.find, then open that path.${hint}`, `call_tool tool=files.find query=${name}`);
       }
       throw error;
     });
@@ -205,6 +213,28 @@ export const extOf = name => {
 
 // The open result's opened field: a short confirmation the model can read.
 const COUNT_WORDS = { sheets: 'sheet', slides: 'slide', tabs: 'tab', documents: 'document', pages: 'page' };
+
+// The already-open re-open (live b14: pdfcraft-05 guessed a wrong extension after the
+// misreport; gridcraft-12 and desktop-13 looped on it for 15 rounds each). Identity
+// fields only (lead ruling): the name must be the document or sheet the app says it has
+// open - documents[].name (pdfcraft), sheets[].name (gridcraft names the sheet after
+// the file stem) - or the app's own path/file field. A name anywhere else in the state
+// (a photo catalog row, a recent-files list) must not count, or the next import of that
+// file would silently skip. Import tools pass checkAlreadyOpen: false instead.
+const alreadyOpenDoc = (state, name) => {
+  if (!state || typeof state !== 'object' || Array.isArray(state)) return null;
+  const docs = Array.isArray(state.documents) ? state.documents : [];
+  const doc = docs.find(d => d && typeof d.name === 'string' && d.name === name);
+  if (doc) return doc.doc != null ? `already open as document ${doc.doc}` : `already open as ${name}`;
+  const stem = name.replace(/\.[^.]*$/, '');
+  const sheets = Array.isArray(state.sheets) ? state.sheets : [];
+  if (sheets.some(s => s && typeof s.name === 'string' && (s.name === name || (stem.length >= 4 && s.name === stem)))) return `already open as ${name}`;
+  for (const key of ['path', 'file']) {
+    const own = state[key];
+    if (typeof own === 'string' && own.split('/').pop() === name) return `already open as ${name}`;
+  }
+  return null;
+};
 const openedSummary = info => {
   const parts = [];
   if (info && typeof info === 'object' && !Array.isArray(info)) {
@@ -347,17 +377,30 @@ export async function saveBytesCopy(craft, { id, title = id, wrapperWindow, targ
  * "not loaded yet" and swallowed). options: id (app id), title (display name, for the
  * timeout error), wrapperWindow (the appWindow result), name and bytes (the file from
  * files.readBytes), accept (the releases accept list, quoted in the timeout error),
- * timeoutMs, intervalMs, sleep (injectable for tests).
+ * timeoutMs, intervalMs, sleep (injectable for tests), checkAlreadyOpen (default
+ * true; open-or-import tools pass false to skip the pre-open already-open check).
  * Returns { name, bytes: <size>, opened }, opened a short summary of the post-open
- * inspect (title, path, sheet/slide/tab count).
+ * inspect (title, path, sheet/slide/tab count) - or, when the file is already open
+ * (its name in the state's identity fields: documents[].name, sheets[].name, or the
+ * app's path/file field), an immediate "already open as ..." confirmation without
+ * driving the input.
  * Throws ToolError('invalid_argument') for a bad name or non-binary bytes,
  * ('not_available') when the wrapper has no #file input, ('app_error') above 256 MB or
  * when the app state never changes within the cap.
  */
-export async function openAndAwait(craft, { id, title = id, wrapperWindow, name, bytes, accept = '', timeoutMs = 30000, intervalMs = 250, sleep = ms => new Promise(done => setTimeout(done, ms)) } = {}) {
+export async function openAndAwait(craft, { id, title = id, wrapperWindow, name, bytes, accept = '', timeoutMs = 30000, intervalMs = 250, sleep = ms => new Promise(done => setTimeout(done, ms)), checkAlreadyOpen = true } = {}) {
   let before = null;
   let beforeThrew = false;
   try { before = JSON.stringify(await craft.inspect({})); } catch { beforeThrew = true; }
+  // A re-open of an open file changes nothing in the app state, so the poll below would
+  // burn the full timeout, then misreport "did not open ... It accepts: <ext>." (the
+  // open actually happened - or never needed to; the state already shows the file).
+  // checkAlreadyOpen: false for open-or-import tools: their state lists imported files,
+  // so a present name is not proof this file is the open one.
+  if (!beforeThrew && checkAlreadyOpen) {
+    const already = alreadyOpenDoc(JSON.parse(before), name);
+    if (already !== null) return { name, bytes: bytes.byteLength, opened: already };
+  }
   const driven = await openFromBytes(wrapperWindow, id, name, bytes);
   const deadline = Date.now() + timeoutMs;
   for (;;) {

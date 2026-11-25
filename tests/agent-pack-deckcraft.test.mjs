@@ -125,6 +125,40 @@ test('deckcraft.new_presentation, add_slide and go_to_slide send file.new, slide
   ]);
 });
 
+// b14 deckcraft-05: the model added its closing text box right after add_slide believing
+// it was back on slide one; slide.new makes the new slide current, so the box landed on
+// the new slide and the slide-one pin failed. The result now names the navigation call.
+test('deckcraft.add_slide notes the new slide is now the current one with a go_to_slide call', async () => {
+  const craft = fakeCraft();
+  const out = await runTool('deckcraft.add_slide', { layout: 'title', title: 'Agenda' }, craft);
+  assert.deepEqual(out, {
+    command: 'slide.new',
+    params: { layout: 'title', title: 'Agenda' },
+    note: `the new slide is now the current slide; to add content to another one, first run ${callLine('deckcraft.go_to_slide', { index: 0 })}`,
+  });
+});
+
+// b14 desktop-14: lfm3 sent series as the flat JSON string "[23, 27, 33, 17]"; the table
+// coercion refused it with a generic "must be table", and the model gave up on
+// deckcraft.insert_chart and charted in GridCraft instead. A flat series list is refused
+// the way set_cells refuses a flat values list, with both forms and the given values.
+test('deckcraft.insert_chart refuses a flat series list with both forms shown', () => {
+  const tool = byName('deckcraft.insert_chart');
+  const flat = checkArgs(tool, { type: 'column', title: 'Units', categories: ['North', 'South', 'East', 'West'], series: [23, 27, 33, 17] });
+  assert.equal(flat.ok, false);
+  assert.equal(flat.error.type, 'invalid_argument');
+  assert.match(flat.error.message, /^series: a flat list of 4 values is ambiguous: /);
+  assert.ok(flat.error.message.includes('series=[[23,27,33,17]] writes a row'), flat.error.message);
+  // The JSON string form a local model actually sends is refused the same way.
+  const asString = checkArgs(tool, { type: 'column', title: 'Units', series: '[23, 27, 33, 17]' });
+  assert.equal(asString.ok, false);
+  assert.ok(asString.error.message.includes('series=[[23,27,33,17]] writes a row'), asString.error.message);
+  // The nested row form the tool expects still passes.
+  const rows = checkArgs(tool, { type: 'column', title: 'Units', categories: ['North', 'South', 'East', 'West'], series: [['Units', 23, 27, 33, 17]] });
+  assert.equal(rows.ok, true);
+  assert.deepEqual(rows.args.series, [['Units', '23', '27', '33', '17']]);
+});
+
 // The engine name rejections (wasm strings): 'no layout "first"', 'no theme `Ocean`',
 // 'unknown preset `blob`', 'no such shape'. Each must come back as an invalid_argument that
 // names the valid values the deck defines (layouts live from document.inspect layouts[].name,
@@ -154,6 +188,32 @@ test('a rejected layout re-throws with the live layout names and the closest as 
     return true;
   });
   assert.equal(plain.calls.some(entry => entry[0] === 'inspect'), false, 'no inspect on a non-name rejection');
+});
+
+// Upstream slide.new (slide.rs) writes title= and body= only into the layout's title and body
+// placeholders and silently drops them otherwise: live (lfm3 deckcraft-05/12) a title on a
+// Blank slide landed nowhere and the model kept building as if it had. The pack refuses the
+// call before it touches the app.
+test('add_slide with a title or body on a Blank layout is refused with the titleAndContent fix, before the app is touched', async () => {
+  const craft = fakeCraft();
+  await assert.rejects(runTool('deckcraft.add_slide', { layout: 'Blank', title: 'Agenda' }, craft), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.match(error.message, /Blank has no title or body placeholders/);
+    assert.match(error.fix, /layout=titleAndContent\s+title=Agenda/);
+    return true;
+  });
+  assert.deepEqual(craft.calls, [], 'the precheck refuses before any craft call');
+  const bare = fakeCraft();
+  await assert.rejects(runTool('deckcraft.add_slide', { layout: 'blank', body: 'a\nb' }, bare), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    return true;
+  });
+  // A layout with a title placeholder still goes through to the app untouched.
+  const ok = fakeCraft();
+  await runTool('deckcraft.add_slide', { layout: 'titleAndContent', title: 'Q1', body: 'Plan' }, ok);
+  assert.deepEqual(ok.calls, [['execute', 'slide.new', { layout: 'titleAndContent', title: 'Q1', body: 'Plan' }]]);
 });
 
 test('a rejected theme and a rejected preset re-throw with the valid names and the closest as the fix', async () => {
@@ -478,9 +538,9 @@ test('effectFor marks destructive commands for run_command and batch', () => {
 
 const { skills, errors: skillErrors } = parseSkills(SKILLS_MD, 'deckcraft');
 
-test('skills.md parses with the runtime parser without errors and has 10 skills', () => {
+test('skills.md parses with the runtime parser without errors and has 11 skills', () => {
   assert.deepEqual(skillErrors, []);
-  assert.equal(skills.length, 10);
+  assert.equal(skills.length, 11);
   for (const skill of skills) {
     assert.ok(skill.slug && skill.summary, `skill ${skill.slug} slug/summary`);
     assert.ok(skill.summary.length <= 160, `skill ${skill.slug} summary is ${skill.summary.length} chars`);

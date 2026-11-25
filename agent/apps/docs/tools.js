@@ -142,11 +142,11 @@ export const tools = [
   },
   {
     name: 'docs.insert_text',
-    purpose: 'Insert a new paragraph after the cursor, after a paragraph, or at the end.',
+    purpose: 'Insert a new paragraph after a paragraph or at the end of the document.',
     when: 'Use when the user wants to add or type a paragraph of text into the document.',
     params: {
       text: { type: 'text', required: true, description: 'The paragraph text to insert' },
-      para_id: { type: 'string', description: 'Insert after this paragraph (a paraId from docs.get_text); at the cursor or the document end when omitted' },
+      para_id: { type: 'string', description: 'Insert after this paragraph (a paraId from docs.get_text); at the end of the document when omitted' },
     },
     effect: 'change',
     needs: NEEDS,
@@ -154,9 +154,13 @@ export const tools = [
     // insertParagraphAfter (react-ltZBBRVr.d.ts:1407) applies the insertion mark, so the new
     // paragraph is a pending tracked suggestion. Accept it right after (acceptAllChanges) so it
     // lands as accepted document text that docs.get_text and docs.find_replace can read back.
+    // The anchor is the document's LAST paragraph, not the cursor: insertParagraphAfter leaves
+    // the selection where it was (live, docs-05), so cursor-anchored inserts stack in reverse
+    // after the first one; the document end appends in order, and para_id still reaches any
+    // paragraph exactly.
     run: async (args, ctx) => call(ctx, async host => {
       const ed = editor(await host.appWindow(APP));
-      const paraId = args.para_id ?? (ed.getSelection()?.paraId ?? await endParaId(ed));
+      const paraId = args.para_id ?? (await endParaId(ed));
       if (!paraId) {
         if (!typeIntoEmpty(ed, args.text)) throw new ToolError('app_error', 'there is no paragraph to add after; read the paragraphs with docs.get_text and pass one as para_id', 'call_tool tool=docs.get_text');
         acceptAllChanges(ed);
@@ -227,7 +231,7 @@ export const tools = [
           at = lower.indexOf(needle, at + needle.length);
         }
       });
-      if (matches.length === 0) throw new ToolError('app_error', `no occurrences of "${args.find}" in the document`, '');
+      if (matches.length === 0) throw new ToolError('app_error', `no occurrences of "${args.find}" in the open document (it may be empty or not the file you want); type the text with docs.insert_text or open the right file`, 'call_tool tool=docs.get_text');
       const tr = view.state.tr;
       for (let i = matches.length - 1; i >= 0; i--) tr.insertText(String(args.replace), matches[i].from, matches[i].to);
       view.dispatch(tr);
@@ -281,10 +285,12 @@ export const tools = [
     effect: 'change',
     needs: NEEDS,
     examples: [{ args: { kind: 'bullet', from_text: 'freeze the build', to_text: 'have the rollback ready' }, says: 'Make these lines a bulleted list' }],
-    // The list plugin's commands (dist chunk-L6A7PAX6: commands {toggleBulletList,
-    // toggleNumberedList}) act on the view selection, so set a text selection over the range
-    // first, through the app's own TextSelection (the live selection's constructor; a
-    // cross-realm import would not match the app's prosemirror instances).
+    // A list is the paragraph's numPr attr (numId 1 bullet, 2 numbered) and the app's list
+    // command is Hu(numId) (chunk-2RLULOYE): every paragraph in the selection already in that
+    // list removes it, anything else applies numPr to the whole range. executeCommand answers
+    // false for it in the embedded chrome (features.menuBar false puts the menu-only commands
+    // in the disabled set, editor.js gD), so the tool dispatches the command's own
+    // setNodeMarkup on the live view instead of the string command.
     run: async (args, ctx) => call(ctx, async host => {
       const ed = editor(await host.appWindow(APP));
       const view = ed.getEditorRef?.()?.getView?.();
@@ -293,11 +299,28 @@ export const tools = [
       const from = findParagraph(ed, args.from_text);
       const to = args.to_text === undefined ? from : findParagraph(ed, args.to_text);
       if (to.pos < from.pos) throw new ToolError('invalid_argument', 'to_text comes before from_text in the document', '');
-      const TextSelection = state.selection?.constructor;
-      if (typeof TextSelection?.create !== 'function') throw new ToolError('app_error', 'the cursor is not in the text; click into a line first', '');
-      view.dispatch(state.tr.setSelection(TextSelection.create(state.doc, from.pos, to.pos + to.size)));
-      if (!(await ed.executeCommand(args.kind === 'bullet' ? 'toggleBulletList' : 'toggleNumberedList'))) throw new ToolError('app_error', `could not make the lines a ${args.kind} list`, '');
-      return { kind: args.kind, from: String(args.from_text), to: args.to_text === undefined ? String(args.from_text) : String(args.to_text) };
+      const end = to.pos + to.size;
+      const numId = args.kind === 'bullet' ? 1 : 2;
+      let count = 0;
+      let allListed = true;
+      state.doc.nodesBetween(from.pos, end, node => {
+        if (node.type?.name !== 'paragraph') return;
+        count += 1;
+        if (Number(node.attrs?.numPr?.numId) !== numId) allListed = false;
+      });
+      if (!count) throw new ToolError('app_error', 'the range has no text lines', '');
+      const remove = allListed;
+      let tr = state.tr;
+      const seen = new Set();
+      state.doc.nodesBetween(from.pos, end, (node, pos) => {
+        if (node.type?.name !== 'paragraph' || seen.has(pos)) return;
+        seen.add(pos);
+        tr = remove
+          ? tr.setNodeMarkup(pos, null, { ...node.attrs, numPr: null, listIsBullet: null, listNumFmt: null, listMarker: null })
+          : tr.setNodeMarkup(pos, null, { ...node.attrs, numPr: { numId, ilvl: node.attrs?.numPr?.ilvl ?? 0 }, listIsBullet: numId === 1, listNumFmt: numId === 1 ? null : 'decimal', listMarker: null });
+      });
+      view.dispatch(tr);
+      return { kind: args.kind, action: remove ? 'removed' : 'applied', from: String(args.from_text), to: args.to_text === undefined ? String(args.from_text) : String(args.to_text) };
     }),
   },
   {
@@ -382,7 +405,13 @@ export const tools = [
         if (target >= from.pos && target < end) throw new ToolError('invalid_argument', 'before_text is inside the section being moved', '');
       }
       const shifted = target >= from.pos ? target - (end - from.pos) : target;
-      view.dispatch(state.tr.delete(from.pos, end).insert(shifted, state.doc.slice(from.pos, end)));
+      // tr.insert takes a Fragment or nodes, not a Slice: a Slice argument falls into
+      // Fragment.from and throws "Can not convert ... to a Fragment" (docs-11, live). The
+      // section is whole top-level paragraphs, so the slice is closed and .content is the
+      // paragraphs themselves; a non-closed slice means a structure the move would split.
+      const slice = state.doc.slice(from.pos, end);
+      if (slice.openStart || slice.openEnd) throw new ToolError('app_error', 'the section spans a structure the editor will not move whole; try a smaller range', '');
+      view.dispatch(state.tr.delete(from.pos, end).insert(shifted, slice.content));
       return { moved: args.to_text === undefined ? String(args.from_text) : `${args.from_text}..${args.to_text}`, before: args.before_text === undefined ? 'the top of the document' : String(args.before_text) };
     }),
   },
@@ -434,14 +463,16 @@ export const tools = [
       const ext = extOf(args.path);
       if (ext !== '.md' && ext !== '.docx') throw new ToolError('invalid_argument', 'open a .md (markdown) or .docx path', '');
       const file = await filesCall(ctx, files => (ext === '.md' ? files.readText(args.path, { maxChars: 200000 }) : files.readBytes(args.path)), () => '');
+      // readText answers { path, text, truncated } (no name), so the file name comes from the path.
+      const base = String(args.path).split('/').pop() ?? '';
       const ed = editor(await host.appWindow(APP));
       if (ext === '.docx') {
         const docxImport = ed.importDocx ?? ed.import;
         if (typeof docxImport !== 'function') throw new ToolError('app_error', 'the editor has no docx import; save the file as .md and open that', '');
         await docxImport.call(ed, file.bytes);
-        return { path: args.path, opened: file.name.replace(/\.docx$/i, '') };
+        return { path: args.path, opened: base.replace(/\.docx$/i, '') };
       }
-      const title = file.name.replace(/\.md$/i, '');
+      const title = base.replace(/\.md$/i, '');
       if (!ed.createDocument({ title, sections: [] })) throw new ToolError('app_error', 'the editor is not ready; try again shortly', '');
       for (const line of String(file.text ?? '').split('\n')) {
         const trimmed = line.trim();

@@ -154,8 +154,8 @@ test('materialcraft.open_file turns a store not_found into a teaching ToolError'
   await assert.rejects(byName('materialcraft.open_file').run({ path: '/missing.sbs' }, ctx), error => {
     assert.ok(error instanceof ToolError);
     assert.equal(error.type, 'not_found');
-    assert.equal(error.message, '/missing.sbs is not in Files. To open MaterialCraft itself, use desktop.open_app; to open a file, find it first with files.find.');
-    assert.equal(error.fix, 'call_tool tool=desktop.open_app app=materialcraft');
+    assert.equal(error.message, '/missing.sbs is not in Files. The path may be wrong - find the file with files.find, then open that path.');
+    assert.equal(error.fix, 'call_tool tool=files.find query=missing.sbs');
     return true;
   });
   assert.equal(wrapper.opened.length, 0);

@@ -61,7 +61,7 @@ When: the user wants pages rotated to another orientation.
 Steps:
 1. call_tool tool=desktop.open_app app=pdfcraft
 2. call_tool tool=pdfcraft.doc_info
-3. call_tool tool=pdfcraft.page_rotate degrees=90
+3. call_tool tool=pdfcraft.page_rotate degrees=180
 Check: pdfcraft.doc_info still lists the same pages (rotation changes the size, which the state does not report).
 Gotchas: degrees= is a multiple of 90, positive clockwise; undo with pdfcraft.edit_undo.
 
@@ -77,7 +77,7 @@ Steps:
 2. call_tool tool=pdfcraft.doc_info
 3. call_tool tool=pdfcraft.page_duplicate pages=1
 Check: pdfcraft.doc_info shows one more page.
-Gotchas: page_delete is destructive (the pages are removed from the document); pages= takes 1-based numbers or ranges like 2-4; page_insert_blank at=2 puts the blank page before page 2.
+Gotchas: page_delete is destructive (the pages are removed from the document); pages= takes 1-based numbers or ranges like 2-4; page_insert_blank at=2 puts the blank page before page 2 (a position past the end is refused with the page count, and the result reports the new count - stop when it is the count the user asked for); when the user wants the result as a new file, save it with pdfcraft.save_copy (not doc_save, which saves in place) and do not doc_close before the copy exists - after a close the app has no active document and every pdfcraft call fails.
 
 ## Write text onto a page
 slug: write-text-on-a-page
@@ -91,7 +91,7 @@ Steps:
 2. call_tool tool=pdfcraft.doc_info
 3. call_tool tool=pdfcraft.page_add_text page=1 text=CONFIDENTIAL x=50 y=50 size=24 bold=true
 Check: pdfcraft.doc_info still shows the same page count; the text is page content, not a comment.
-Gotchas: x= and y= are points from the top-left of the displayed page; width= sets the wrap width (default 200); font= is helvetica, times or courier.
+Gotchas: x= and y= are points from the top-left of the displayed page; width= sets the wrap width (default 200); font= is helvetica, times or courier; in this PDFCraft build page_add_text fails honestly (the app does not apply added page text), so do the page work, tell the user the line was not written, and do not retry the call.
 
 ## Add a link to a page
 slug: add-a-page-link
@@ -119,7 +119,7 @@ Steps:
 2. call_tool tool=pdfcraft.doc_info
 3. call_tool tool=pdfcraft.doc_save
 Check: doc_save reports the saved file; doc_close fails while changes are unsaved unless discard_changes=true.
-Gotchas: doc_close and doc_save are destructive (close the document / write to disk).
+Gotchas: doc_close and doc_save are destructive (close the document / write to disk); use this only when the task is done - if the user wants a copy under a new name, run pdfcraft.save_copy for it first, and doc_close ends the work on the document (after a close the app has no active document and every pdfcraft call fails).
 
 ## Find and run any menu command
 slug: run-any-menu-command

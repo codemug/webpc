@@ -88,11 +88,11 @@ test('readOpenFile with no path (or an empty one) is the missing_argument teachi
   await toolError(readOpenFile({ files }, '', { id: 'pdfcraft', title: 'PDFCraft' }), 'missing_argument');
 });
 
-test('readOpenFile turns a missing file into the desktop.open_app teaching error (lead model-eval trace A01)', async () => {
+test('readOpenFile turns a wrong path into a files.find teaching error (lead model-eval trace A01; soundcraft-05 dead-end fix)', async () => {
   const files = { readBytes: () => Promise.reject(Object.assign(new Error('no such file /GridCraft/budget.xlsx'), { code: 'not_found' })) };
   const error = await toolError(readOpenFile({ files }, '/GridCraft/budget.xlsx', { id: 'gridcraft', title: 'GridCraft' }), 'not_found');
-  assert.equal(error.message, '/GridCraft/budget.xlsx is not in Files. To open GridCraft itself, use desktop.open_app; to open a file, find it first with files.find.');
-  assert.equal(error.fix, 'call_tool tool=desktop.open_app app=gridcraft');
+  assert.equal(error.message, '/GridCraft/budget.xlsx is not in Files. The path may be wrong - find the file with files.find, then open that path.');
+  assert.equal(error.fix, 'call_tool tool=files.find query=budget.xlsx');
   // Other store codes keep the filesCall mapping (not remapped to the open teaching error).
   const taken = { readBytes: () => Promise.reject(Object.assign(new Error('taken'), { code: 'exists' })) };
   await toolError(readOpenFile({ files: taken }, '/a.xlsx', { id: 'gridcraft', title: 'GridCraft' }), 'exists');
@@ -442,4 +442,45 @@ test('openAndAwait times out with the accept list when the app state never chang
   const craft = fakeCraft([], { inspect: () => ({ sheets: ['Sheet1'] }) });
   const error = await toolError(openAndAwait(craft, { id: 'cadcraft', title: 'CadCraft', wrapperWindow: wrapper, name: 'plan.dxf', bytes: new Uint8Array([1]), accept: '.dxf,.dwg,.shx', timeoutMs: 50, intervalMs: 10 }), 'app_error');
   assert.match(error.message, /CadCraft did not open plan\.dxf\. It accepts: \.dxf,\.dwg,\.shx\./);
+});
+
+// The b14 trap (pdfcraft-05, gridcraft-12, desktop-13): a re-open of an open file
+// changed no state, burned the timeout and misreported "did not open ... It accepts".
+test('openAndAwait returns already open without driving the input when the state names the file', async () => {
+  const wrapper = fakeWrapper();
+  const craft = fakeCraft([], { inspect: () => ({ documents: [{ active: true, doc: 1, name: 'report-q3.pdf', pages: 2 }] }) });
+  const out = await openAndAwait(craft, { id: 'pdfcraft', title: 'PDFCraft', wrapperWindow: wrapper, name: 'report-q3.pdf', bytes: new Uint8Array([1, 2, 3]), accept: '.pdf' });
+  assert.deepEqual(out, { name: 'report-q3.pdf', bytes: 3, opened: 'already open as document 1' });
+  assert.equal(wrapper.changes.length, 0, 'the file input is never driven for a re-open');
+});
+
+test('openAndAwait matches the stem when the app names the document after the sheet', async () => {
+  const wrapper = fakeWrapper();
+  const craft = fakeCraft([], { inspect: () => ({ path: null, sheets: [{ name: 'sales-q3', cells: 45 }] }) });
+  const out = await openAndAwait(craft, { id: 'gridcraft', title: 'GridCraft', wrapperWindow: wrapper, name: 'sales-q3.csv', bytes: new Uint8Array([1]), accept: '.xlsx,.csv' });
+  assert.deepEqual(out, { name: 'sales-q3.csv', bytes: 1, opened: 'already open as sales-q3.csv' });
+  assert.equal(wrapper.changes.length, 0);
+});
+
+// Lead ruling: the name only counts in the identity fields. A photo catalog row or a
+// recent list naming the file does not mean the file is open, and the open still runs.
+test('openAndAwait does not treat a name in a non-identity field as already open', async () => {
+  const wrapper = fakeWrapper();
+  const state = { photos: [{ file: 'beach.jpg', size: 900 }], library: ['beach.jpg'], title: 'beach.jpg' };
+  loadOnOpen(wrapper, state, { current: 1 });
+  const craft = fakeCraft([], { inspect: () => state });
+  const out = await openAndAwait(craft, { id: 'lightcraft', title: 'LightCraft', wrapperWindow: wrapper, name: 'beach.jpg', bytes: new Uint8Array([1, 2]), accept: '.jpg,.png,.cr2' });
+  assert.equal(wrapper.changes.length, 1, 'the catalog listing (and a title named after it) did not stop the open');
+  assert.equal(out.name, 'beach.jpg');
+  assert.equal(out.bytes, 2);
+});
+
+test('openAndAwait with checkAlreadyOpen false runs the open even when the name is already open', async () => {
+  const wrapper = fakeWrapper();
+  const state = { documents: [{ doc: 1, name: 'report-q3.pdf' }] };
+  loadOnOpen(wrapper, state, { documents: [{ doc: 1, name: 'report-q3.pdf' }, { doc: 2, name: 'extra.pdf' }] });
+  const craft = fakeCraft([], { inspect: () => state });
+  const out = await openAndAwait(craft, { id: 'vectorcraft', title: 'VectorCraft', wrapperWindow: wrapper, name: 'report-q3.pdf', bytes: new Uint8Array([1]), accept: '.vectorcraft,.svg', checkAlreadyOpen: false });
+  assert.equal(wrapper.changes.length, 1, 'the import opt-out drives the input even for an open name');
+  assert.equal(out.name, 'report-q3.pdf');
 });

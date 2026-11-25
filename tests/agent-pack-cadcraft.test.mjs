@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pack, tools, usesCommands, usesMethods } from '../agent/apps/cadcraft/tools.js';
+import { parseParams, pack, tools, usesCommands, usesMethods } from '../agent/apps/cadcraft/tools.js';
 import { tools as desktopTools } from '../agent/desktop/tools.js';
 import { ToolError, specErrors, checkArgs, callLine } from '../src/apps/ai-agent/runtime/args.mjs';
 import { parseSkills, checkSkills } from '../src/apps/ai-agent/runtime/skills.mjs';
@@ -45,17 +45,92 @@ const runTool = (name, args, craft) => byName(name).run(args, { host: {}, craft:
 
 test('the pack declares its id, title and live-check exports', () => {
   assert.deepEqual(pack, { id: 'cadcraft', title: 'CADCraft' });
-  assert.deepEqual(usesCommands, ['entities', 'texts', 'new', 'document.bytes']);
+  assert.deepEqual(usesCommands, ['circle', 'line', 'move', 'selectall', 'text', 'entities', 'texts', 'new', 'document.bytes']);
   assert.deepEqual(usesMethods, ['cmdline.input', 'cmdline.script', 'drawing.inspect', 'cmdline.key']);
 });
 
-test('the pack exposes exactly the 11 cadcraft tools', () => {
-  assert.equal(tools.length, 11);
+test('the pack exposes exactly the 15 cadcraft tools', () => {
+  assert.equal(tools.length, 15);
   assert.deepEqual(tools.map(tool => tool.name).sort(), [
-    'cadcraft.cancel', 'cadcraft.command_line', 'cadcraft.find_text', 'cadcraft.inspect',
-    'cadcraft.list_commands', 'cadcraft.new_drawing', 'cadcraft.open_file', 'cadcraft.query_entities',
-    'cadcraft.run_command', 'cadcraft.save_copy', 'cadcraft.script',
+    'cadcraft.cancel', 'cadcraft.circle', 'cadcraft.command_line', 'cadcraft.find_text', 'cadcraft.inspect',
+    'cadcraft.line', 'cadcraft.list_commands', 'cadcraft.move', 'cadcraft.new_drawing', 'cadcraft.open_file',
+    'cadcraft.query_entities', 'cadcraft.run_command', 'cadcraft.save_copy', 'cadcraft.script', 'cadcraft.text',
   ]);
+});
+
+// cadcraft-06 (build 14): the model spelled the engine's [x,y] arrays inside run_command's
+// params text. from=[0,0] stayed a string and the loose JSON "{handles: line, from: [0, 0]}"
+// is not JSON - the engine never saw `from` and every move attempt failed. parseParams now
+// reads [a,b] arrays, loose {k: v} objects, and the params= double-wrap the model adds.
+test('parseParams reads [a,b] arrays, loose unquoted objects and the params= double-wrap', () => {
+  assert.deepEqual(parseParams('handles=line from=[0,0] to=[5,5]'), { handles: 'line', from: [0, 0], to: [5, 5] });
+  assert.deepEqual(parseParams('{handles: line, from: [0, 0], to: [5, 5], delta: [5, 5]}'),
+    { handles: 'line', from: [0, 0], to: [5, 5], delta: [5, 5] });
+  assert.deepEqual(parseParams('params=handles=line from=[0,0]'), { handles: 'line', from: [0, 0] }, 'the params= prefix the model nests inside the params arg unwraps');
+  assert.deepEqual(parseParams('params={handles: line, from: [0, 0]}'), { handles: 'line', from: [0, 0] }, 'the loose JSON double-wrap unwraps too');
+  // Existing behaviour holds: strict JSON passes through, key=value lines coerce, one bare word is an error.
+  assert.deepEqual(parseParams('{"handles": "line", "from": [0, 0]}'), { handles: 'line', from: [0, 0] });
+  assert.deepEqual(parseParams('metric=true\nsize=3'), { metric: true, size: 3 });
+  assert.throws(() => parseParams('not a pair'), /bad params line/);
+  // A command that legitimately takes a params string keeps it (no =, no braces: no unwrap).
+  assert.deepEqual(parseParams('params=plain text value'), { params: 'plain text value' });
+});
+
+test('the flat tools spell the engine params directly (cadcraft-02/04/06, wire shapes from the wasm help)', async () => {
+  // move: the engine's delta form {handles?, from?: [x,y], to?: [x,y] | delta: [dx,dy]}.
+  // Omitted handles move the current selection - live {moved: 0} on the empty selection
+  // (cadcraft-06 on build 15) - so "move everything" selects all first.
+  const move = fakeCraft();
+  await byName('cadcraft.move').run({ dx: 5, dy: 5 }, { host: {}, craft: () => Promise.resolve(move) });
+  assert.deepEqual(move.calls, [['execute', 'selectall', {}], ['execute', 'move', { delta: [5, 5] }]], 'omitted handles selects all, then moves');
+  const moveHandles = fakeCraft();
+  await byName('cadcraft.move').run({ dx: -3, dy: 1, handles: '100,200' }, { host: {}, craft: () => Promise.resolve(moveHandles) });
+  assert.deepEqual(moveHandles.calls, [['execute', 'move', { delta: [-3, 1], handles: '100,200' }]], 'given handles move without a select');
+  // circle {center, radius}: points parse from x,y text.
+  const circle = fakeCraft();
+  await byName('cadcraft.circle').run({ center: '20,0', radius: 5 }, { host: {}, craft: () => Promise.resolve(circle) });
+  assert.deepEqual(circle.calls.at(-1), ['execute', 'circle', { center: [20, 0], radius: 5 }]);
+  const circleSpace = fakeCraft();
+  await byName('cadcraft.circle').run({ center: '12 0', radius: 3 }, { host: {}, craft: () => Promise.resolve(circleSpace) });
+  assert.deepEqual(circleSpace.calls.at(-1), ['execute', 'circle', { center: [12, 0], radius: 3 }], 'a space-separated point parses too');
+  const circleArray = fakeCraft();
+  await byName('cadcraft.circle').run({ center: [20, 0], radius: 5 }, { host: {}, craft: () => Promise.resolve(circleArray) });
+  assert.deepEqual(circleArray.calls.at(-1), ['execute', 'circle', { center: [20, 0], radius: 5 }], 'an array point passes through');
+  // line {points: [[x,y],...]}: the build 15 live run refused {p1, p2} with
+  // "`points` [[x,y],...] (2 or more) is required", so the flat p1/p2 params map to points.
+  const line = fakeCraft();
+  await byName('cadcraft.line').run({ p1: '0,0', p2: '12,0' }, { host: {}, craft: () => Promise.resolve(line) });
+  assert.deepEqual(line.calls.at(-1), ['execute', 'line', { points: [[0, 0], [12, 0]] }]);
+  // text {at, text, height?, rotation?}: the flat label tool (cadcraft-03 on build 15).
+  const text = fakeCraft();
+  await byName('cadcraft.text').run({ at: '0,0', text: 'Room 101', height: 100 }, { host: {}, craft: () => Promise.resolve(text) });
+  assert.deepEqual(text.calls.at(-1), ['execute', 'text', { at: [0, 0], text: 'Room 101', height: 100 }]);
+  const textDefault = fakeCraft();
+  await byName('cadcraft.text').run({ at: '0,300', text: 'Corridor A' }, { host: {}, craft: () => Promise.resolve(textDefault) });
+  assert.deepEqual(textDefault.calls.at(-1), ['execute', 'text', { at: [0, 300], text: 'Corridor A' }], 'omitted height and rotation stay off the wire');
+  // A point that is not two numbers is a teaching error before the engine sees it.
+  await assert.rejects(byName('cadcraft.circle').run({ center: '20', radius: 5 }, { host: {}, craft: () => Promise.resolve(fakeCraft()) }),
+    error => error instanceof ToolError && error.type === 'invalid_argument' && /center is a point/.test(error.message));
+  await assert.rejects(byName('cadcraft.text').run({ at: '0', text: 'x' }, { host: {}, craft: () => Promise.resolve(fakeCraft()) }),
+    error => error instanceof ToolError && error.type === 'invalid_argument' && /at is a point/.test(error.message));
+});
+
+test('a prose-shaped command_line line names the flat tools (cadcraft-02/04)', async () => {
+  // The model typed sentences ("circle center 20,0 radius 5") and looped on the interactive
+  // prompts; the first result must point at the flat tool.
+  const craft = fakeCraft();
+  const prose = await byName('cadcraft.command_line').run({ text: 'circle center 20,0 radius 5' }, { host: {}, craft: () => Promise.resolve(craft) });
+  assert.equal(prose.method, 'cmdline.input', 'the line still reaches the command line');
+  assert.match(prose.note, /cadcraft\.circle/);
+  const sentence = await byName('cadcraft.command_line').run({ text: 'draw a circle at point (20,0) with radius 5' }, { host: {}, craft: () => Promise.resolve(craft) });
+  assert.match(sentence.note, /cadcraft\.circle/);
+  const textProse = await byName('cadcraft.command_line').run({ text: 'add a text label Room 101 at 0,0 with height 100' }, { host: {}, craft: () => Promise.resolve(craft) });
+  assert.match(textProse.note, /cadcraft\.text/);
+  // Exact command shapes (a command word plus points/keywords) get no note.
+  for (const text of ['circle 20,0 5', 'CIRCLE 20 0 5', 'line 0,0 12,0', 'move 20,10 -10,-10']) {
+    const exact = await byName('cadcraft.command_line').run({ text }, { host: {}, craft: () => Promise.resolve(craft) });
+    assert.ok(!exact.note, `${text} must not note`);
+  }
 });
 
 test('every tool has the required text fields, effect, needs and examples', () => {
@@ -103,9 +178,27 @@ test('command_line, script and cancel send the cmdline control methods', async (
   await runTool('cadcraft.cancel', {}, craft);
   assert.deepEqual(craft.calls, [
     ['request', 'cmdline.input', { text: 'circle 0,0 5' }],
-    ['request', 'cmdline.script', { text: 'line\n0,0' }],
+    // T6: the pack appends the terminating blank line, so the still-open LINE commits.
+    ['request', 'cmdline.script', { text: 'line\n0,0\n' }],
     ['request', 'cmdline.key', { key: 'escape' }],
   ]);
+});
+
+test('T6 finish: a script already ending on a blank line is unchanged; empty or omitted command_line text is a bare Enter', async () => {
+  const craft = fakeCraft();
+  await runTool('cadcraft.script', { text: 'line\n0,0\n10,0\n' }, craft);
+  await runTool('cadcraft.script', { text: 'line\\n0,0\\n10,0' }, craft);
+  await runTool('cadcraft.command_line', { text: '' }, craft);
+  await runTool('cadcraft.command_line', {}, craft);
+  assert.deepEqual(craft.calls, [
+    ['request', 'cmdline.script', { text: 'line\n0,0\n10,0\n' }],
+    ['request', 'cmdline.script', { text: 'line\n0,0\n10,0\n' }],
+    ['request', 'cmdline.input', { text: ' ' }],
+    ['request', 'cmdline.input', { text: ' ' }],
+  ]);
+  // Through the real argument check: omitted text takes the Enter default.
+  const out = checkArgs(byName('cadcraft.command_line'), {}, { choices });
+  assert.deepEqual(out, { ok: true, args: { text: ' ' } });
 });
 
 test('cadcraft.inspect sends drawing.inspect with only the given fields', async () => {
@@ -152,7 +245,7 @@ test('cadcraft.list_commands filters by id, label or alias, top 10', async () =>
 test('cadcraft.run_command parses key=value lines with coercion and checks the id', async () => {
   const craft = fakeCraft();
   await runTool('cadcraft.run_command', { command: 'circle', params: 'center=[0,0]\nradius=5' }, craft);
-  assert.deepEqual(craft.calls, [['commands'], ['execute', 'circle', { center: '[0,0]', radius: 5 }]]);
+  assert.deepEqual(craft.calls, [['commands'], ['execute', 'circle', { center: [0, 0], radius: 5 }]]);
 });
 
 test('cadcraft.run_command rejects an unknown id with invalid_argument and the 3 closest', async () => {
@@ -324,9 +417,9 @@ test('cadcraft.save_copy with no drawing open surfaces the new_drawing teaching 
 
 const { skills, errors: skillErrors } = parseSkills(SKILLS_MD, 'cadcraft');
 
-test('skills.md parses with the runtime parser without errors and has 10 skills', () => {
+test('skills.md parses with the runtime parser without errors and has 12 skills', () => {
   assert.deepEqual(skillErrors, []);
-  assert.equal(skills.length, 10);
+  assert.equal(skills.length, 12);
   for (const skill of skills) {
     assert.ok(skill.slug && skill.summary, `skill ${skill.slug} slug/summary`);
     assert.ok(skill.summary.length <= 160, `skill ${skill.slug} summary is ${skill.summary.length} chars`);
@@ -346,11 +439,17 @@ test('every skill opens by launching CADCraft, then uses numbered cadcraft steps
   }
 });
 
-test('the drawing skills check the open drawing first (step 2), so a missing one names the fix', () => {
-  for (const slug of ['draw-a-circle', 'draw-a-line', 'run-a-cad-script']) {
-    const skill = skills.find(s => s.slug === slug);
-    assert.equal(skill.steps[1].line, '2. call_tool tool=cadcraft.inspect', `skill ${slug}`);
-  }
+test('the drawing skills name the open-drawing check, so a missing one names the fix', () => {
+  // draw-a-circle/line step 2 is now the flat tool (its no-drawing error, from teachApp,
+  // names cadcraft.new_drawing); run-a-cad-script still inspects first.
+  const script = skills.find(s => s.slug === 'run-a-cad-script');
+  assert.equal(script.steps[1].line, '2. call_tool tool=cadcraft.inspect', 'run-a-cad-script');
+  const circle = skills.find(s => s.slug === 'draw-a-circle');
+  assert.equal(circle.steps[1].line, '2. call_tool tool=cadcraft.circle center=30,15 radius=8', 'draw-a-circle');
+  const line = skills.find(s => s.slug === 'draw-a-line');
+  assert.equal(line.steps[1].line, '2. call_tool tool=cadcraft.line p1=30,15 p2=40,15', 'draw-a-line');
+  const text = skills.find(s => s.slug === 'add-a-text-label');
+  assert.equal(text.steps[1].line, '2. call_tool tool=cadcraft.text at=30,15 text=Lab 7 height=60', 'add-a-text-label');
 });
 
 test('skill steps and tools lines validate against the runtime checkArgs', () => {

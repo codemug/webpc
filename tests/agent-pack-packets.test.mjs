@@ -131,7 +131,13 @@ const fakePackets = () => {
   };
   const Event = class { constructor(type) { this.type = type; } };
   const fileInput = {
-    files: [], value: '', listeners: {},
+    files: [], listeners: {},
+    // A real file input: value = '' clears the FileList (the app relies on it, main.mjs:125) -
+    // the fake once kept files after the clear, so a gate on the FileList passed unit tests
+    // but refused every loaded viewer live (oracle packets-02/03/06 on build 15).
+    _value: '',
+    get value() { return this._value; },
+    set value(v) { this._value = v; if (v === '') this.files = []; },
     addEventListener(type, fn) { (fileInput.listeners[type] ??= []).push(fn); },
     dispatchEvent(event) { event.target = fileInput; (fileInput.listeners[event.type] ?? []).forEach(fn => fn(event)); return true; },
   };
@@ -234,13 +240,56 @@ test('packets.open_capture rejects a non-capture with the app error', async () =
   assert.equal(pk.openedFiles.length, 0, 'nothing was fed to the engine');
 });
 
-test('packets.open_capture passes the Files error code through for a missing file', async () => {
+test('packets.open_capture passes the Files error code through for a missing file, with the files.find fix', async () => {
   const pk = fakePackets();
   await assert.rejects(pk.runTool('packets.open_capture', { path: '/nope.pcap' }), error => {
     assert.ok(error instanceof ToolError);
     assert.equal(error.type, 'not_found');
+    // A wrong path must point the model at file discovery instead of dead-ending
+    // (lfm3-1.7b packets-01/02/05/07 all failed on the guessed path).
+    assert.equal(error.fix, 'call_tool tool=files.find query=<query>');
     return true;
   });
+});
+
+test('packets.filter fails fast when no capture has been opened', async () => {
+  const pk = fakePackets();
+  await assert.rejects(pk.runTool('packets.filter', { expr: 'icmp' }), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.match(error.message, /no capture is open/);
+    assert.equal(error.fix, 'call_tool tool=packets.open_capture path=<path>');
+    return true;
+  });
+});
+
+test('packets.list refuses a viewer with no capture instead of an empty ok table (sweep b17 packets-01)', async () => {
+  // The empty ok:true table sent lfm3 into a fifteen-round packets.list loop on a viewer that
+  // never loaded; the gate points it at open_capture the way filter does.
+  const pk = fakePackets();
+  await assert.rejects(pk.runTool('packets.list', { limit: 100 }), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.match(error.message, /no capture is open/);
+    assert.equal(error.fix, 'call_tool tool=packets.open_capture path=<path>');
+    return true;
+  });
+});
+
+test('packets.filter waits for a capture that is still loading (oracle packets-02/03/06)', async () => {
+  // The load settles on a microtask after the change event; filter called in the meantime
+  // must wait for the loaded capture instead of refusing a viewer that is about to have one.
+  const pk = fakePackets();
+  const win = pk.win;
+  const dt = new win.DataTransfer();
+  dt.items.add(new win.File([PCAP_BYTES], 'web.pcap'));
+  const input = win.document.getElementById('pk-file');
+  input.files = dt.files;
+  input.dispatchEvent(new win.Event('change'));
+  assert.equal(input.files.length, 0, 'the app clears the file input after feeding it (main.mjs:125)');
+  assert.equal(pk.summary.textContent, '', 'the load is still in flight');
+  const got = await pk.runTool('packets.filter', { expr: 'tcp.port == 443' });
+  assert.deepEqual(got, { matched: 3, filter: 'tcp.port == 443' });
 });
 
 test('packets.open_capture rejects with not_available when the Files tools are off', async () => {
@@ -283,6 +332,7 @@ test('packets.filter clears the filter when expr is empty', async () => {
 
 test('packets.filter does not report a stale status line as the new result', async () => {
   const pk = fakePackets();
+  await pk.runTool('packets.open_capture', { path: '/captures/web.pcap' });
   // The status already holds the exact line clearing the filter would set: only a change
   // counts, so the tool times out instead of a false positive (same guard as terminal save).
   pk.progress.textContent = '4 packets match filter "(all)"';
@@ -311,12 +361,6 @@ test('packets.list caps the rows at the limit and rejects a bad limit', async ()
   assert.equal(got.rows.length, 2);
   assert.equal(checkArgs(byName('packets.list'), { limit: 0 }, { choices }).ok, false, 'limit is at least 1');
   assert.equal(checkArgs(byName('packets.list'), { limit: 501 }, { choices }).ok, false, 'limit is at most 500');
-});
-
-test('packets.list returns empty columns and rows before a capture is open', async () => {
-  const pk = fakePackets();
-  const got = await pk.runTool('packets.list', {});
-  assert.deepEqual(got, { columns: [], rows: [], selected: null });
 });
 
 test('packets.detail selects the row and returns the tree and the hex dump', async () => {
@@ -406,6 +450,13 @@ test('skills.md parses with the runtime parser without errors and has 5 skills',
     assert.ok(skill.tools.length >= 1, `skill ${skill.slug} tools`);
     assert.ok(skill.when && skill.steps.length >= 1 && skill.check, `skill ${skill.slug} body sections`);
   }
+});
+
+test('the open-a-capture skill pins the full Files path (lfm3-1.7b packets-01/02/05/07 guessed the filename)', () => {
+  const open = skills.find(skill => skill.slug === 'open-a-capture');
+  assert.ok(open.gotchas.includes('full Files path'), 'the skill says path= is the full Files path');
+  assert.ok(open.gotchas.includes('/captures/survey.pcap'), 'the skill shows the real fixture location');
+  assert.ok(open.gotchas.includes('files.find'), 'the skill points at file discovery');
 });
 
 test('every skill opens by launching the packets app, then uses numbered packets steps', () => {

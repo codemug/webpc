@@ -263,6 +263,39 @@ test('a host rejection without a code comes back as app_error', async () => {
   });
 });
 
+// b14 desktop-04: minimize on a not-open window gave an empty fix, and the model looped
+// open_in_tab (a tab is not a desktop window) 15 rounds. The window verbs now name the
+// open_app call the fix must copy.
+test('window verbs turn a not_open rejection into the open_app fix line', async () => {
+  const notOpen = id => Object.assign(new Error(`window "${id}" is not open; open it first with open("${id}")`), { code: 'not_open' });
+  for (const [tool, method, args] of [
+    ['desktop.minimize', 'minimize', { app: 'files' }],
+    ['desktop.restore', 'restore', { app: 'files' }],
+    ['desktop.maximize', 'maximize', { app: 'docs' }],
+    ['desktop.focus', 'focus', { app: 'docs' }],
+    ['desktop.move', 'move', { app: 'docs', x: 10, y: 20 }],
+    ['desktop.resize', 'resize', { app: 'docs', width: 800, height: 600 }],
+  ]) {
+    const host = fakeHost();
+    host[method] = () => Promise.reject(notOpen(args.app));
+    await assert.rejects(runTool(tool, args, host), error => {
+      assert.ok(error instanceof ToolError);
+      assert.equal(error.type, 'not_open');
+      assert.equal(error.fix, `call_tool tool=desktop.open_app app=${args.app}`, `${tool} fix line`);
+      return true;
+    });
+  }
+  // close is a window verb too, but its not_open fix must stay empty: opening an app
+  // just to close it is not the lesson.
+  const closing = fakeHost();
+  closing.close = () => Promise.reject(notOpen('docs'));
+  await assert.rejects(runTool('desktop.close', { app: 'docs' }, closing), error => {
+    assert.equal(error.type, 'not_open');
+    assert.equal(error.fix, '');
+    return true;
+  });
+});
+
 const { skills, errors: skillErrors } = parseSkills(SKILLS_MD, 'desktop');
 
 test('skills.md parses with the runtime parser without errors', () => {

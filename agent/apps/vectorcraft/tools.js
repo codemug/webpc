@@ -25,8 +25,10 @@ const DESTRUCTIVE = [
 // The web app can run with no open document: engine commands reject with "no active
 // document" or "no document open" (engine error.rs / docmenu.rs) and the page rejects
 // (the control protocol ok:false, craft-libs page.rs). teachApp turns that wording into
-// the teaching error below, whose fix creates the document.
-const NO_DOC = { message: 'VectorCraft has no document open.', fix: callLine('vectorcraft.new_document') };
+// the teaching error below. The fix offers both ways out: create the document, or open an
+// existing one from Files (sweep b17 08: the new_document-only fix steered the model to a
+// fresh document instead of the file the user asked it to open).
+const NO_DOC = { message: 'VectorCraft has no document open.', fix: 'call_tool tool=vectorcraft.new_document name=<name>, or open an existing document from Files: call_tool tool=vectorcraft.open_file path=<path>' };
 
 /** definitions.rs pick(): copy the listed keys (when present) into a params object. */
 const pick = (args, keys) => {
@@ -156,7 +158,7 @@ export const tools = [
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { d: 'M0 0 L100 0 L50 80 Z', fill: '#3B5BDB' }, says: 'Draw a blue triangle path' }],
+    examples: [{ args: { d: 'M0 0 L100 0 L50 80 Z', fill: '#0CA678' }, says: 'Draw a green triangle path' }],
     // handlers.rs:196-218: path.create {anchors or d, closed} plus the paint steps as ONE
     // engine command.batch (handlers.rs:151-194), the new id from the first result
     run: async (args, ctx) => {
@@ -203,7 +205,7 @@ export const tools = [
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { shape: 'rectangle', x: 40, y: 40, width: 200, height: 120, radius: 12, fill: '#7048E8' }, says: 'Draw a rounded purple box' }],
+    examples: [{ args: { shape: 'rectangle', x: 20, y: 60, width: 200, height: 120, radius: 12, fill: '#7048E8' }, says: 'Draw a rounded purple box' }],
     // handlers.rs:220-237: the shape command with the geometry params plus the paint steps as
     // ONE engine command.batch (handlers.rs:151-194)
     run: async (args, ctx) => {
@@ -229,7 +231,7 @@ export const tools = [
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { fill: '#3B5BDB', ids: [3, 4] }, says: 'Paint both objects blue' }],
+    examples: [{ args: { fill: '#7048E8', ids: [3, 4] }, says: 'Paint both objects purple' }],
     // dispatch.rs:158-170 + handlers.rs:85-96: one paint command per given paint arg, with
     // ids when given, then {applied, objects} (a note when nothing was painted)
     run: async (args, ctx) => {
@@ -331,7 +333,7 @@ export const tools = [
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { text: 'Title', x: 40, y: 80, size: 24 }, says: 'Add a title at the top left' }],
+    examples: [{ args: { text: 'Title', x: 60, y: 120, size: 18 }, says: 'Add a title at the top left' }],
     // handlers.rs:247-291: text.createInPath {path, mode (default onPath)} or text.create
     // {x, y, area?}; overflow reported from the reply, or re-read via document.node
     run: async (args, ctx) => {
@@ -347,7 +349,14 @@ export const tools = [
         }
         result = await app.execute('text.create', params);
       } else {
-        throw new ToolError('invalid_argument', 'give x and y (or a path)', '');
+        // j3 b14 (02): the model crams "Quarterly report\nx=40\ny=80\nsize=24\ncolor=#E8590C"
+        // into the text parameter - split the crammed key=value pairs back out and echo
+        // them as their own arguments in the fix line, so the retry is spelled for it.
+        const [words, ...pairs] = String(args.text).split(/\s+(?=[A-Za-z]+=)/);
+        const extra = pairs.join(' ');
+        throw new ToolError('invalid_argument',
+          `x= and y= are their own arguments - text= is only the words, not the position or style`,
+          `call_tool tool=vectorcraft.add_text text=${words || '<the words>'}${extra ? ` ${extra}` : ' x=<x> y=<y>'}`);
       }
       const out = { id: result?.id ?? null };
       if (result?.overflow) out.overflow = true;
@@ -415,7 +424,7 @@ export const tools = [
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { dx: 0, dy: 40 }, says: 'Move the selection down 40 pt' }],
+    examples: [{ args: { dx: 0, dy: 24 }, says: 'Move the selection down 24 pt' }],
     // handlers.rs:293-332: select.set {ids} when given, then object.move / object.rotate /
     // object.scale / object.reflect / object.shear in that order; copy on the first op only
     run: async (args, ctx) => {
@@ -461,7 +470,7 @@ export const tools = [
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { x: 40, y: 40, width: 400, height: 300, series: ['Sales'], categories: ['Q1', 'Q2'], rows: [[12], [18]] }, says: 'Add a column chart of sales' }],
+    examples: [{ args: { x: 24, y: 60, width: 400, height: 300, series: ['Sales'], categories: ['Q1', 'Q2'], rows: [[12], [18]] }, says: 'Add a column chart of sales' }],
     // dispatch.rs:255-261 graph.create with all params, type defaulting to column
     run: async (args, ctx) => teachApp(await ctx.craft(APP), NO_DOC.message, NO_DOC.fix).execute('graph.create', { type: args.type ?? 'column', ...pick(args, ['x', 'y', 'width', 'height', 'series', 'categories', 'rows']) }),
   },
@@ -520,7 +529,7 @@ export const tools = [
     effect: 'change',
     effectFor: args => (DESTRUCTIVE.some(id => (args.commands ?? []).some(line => String(line ?? '').trim().startsWith(id))) ? 'destructive' : 'change'),
     needs: NEEDS,
-    examples: [{ args: { commands: ['shape.ellipse x=100 y=100 width=100 height=100', 'paint.setFill color=#3B5BDB'] }, says: 'Draw a circle and paint it blue' }],
+    examples: [{ args: { commands: ['shape.ellipse x=100 y=100 width=100 height=100', 'paint.setFill color=#0CA678'] }, says: 'Draw a circle and paint it green' }],
     // dispatch.rs:327-410: one engine.execute per step, in order, stop on error by default;
     // the atomic/label undo grouping and the $N / $last result references are dropped (report)
     run: async (args, ctx) => {
@@ -596,11 +605,15 @@ export const tools = [
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { name: 'Poster' }, says: 'Start a new drawing called Poster' }],
+    examples: [{ args: { name: 'Draft', width: 612, height: 792 }, says: 'Start a new drawing called Draft on a 612 by 792 artboard' }],
     // file.new {preset?, name?|title?, width? pt=612, height? pt=792, ...} -> {index,
     // previewMode} (engine cmd/edit.rs:22): the web app holds a document list and the new
     // document becomes active while the others stay, so it is not destructive (lead
-    // live gate); the name and the two sizes are the params a small model needs.
+    // live gate); the name and the two sizes are the params a small model needs. The
+    // example carries the default sizes so the describe_tool call template shows all
+    // three slots (sweep b17 01: with name-only the template hid width=/height= and the
+    // model drew the requested 595 by 842 artboard as a rectangle instead); the defaults
+    // are harmless to copy into a fix line.
     run: async (args, ctx) => (await ctx.craft(APP)).execute('file.new', pick(args, ['name', 'width', 'height'])),
   },
   {
@@ -610,17 +623,19 @@ export const tools = [
     params: { path: { type: 'path', required: false, description: 'A Files path to a .vectorcraft document or an import format (.svg, .pdf, .ai or image)' } },
     effect: 'change',
     needs: ['host', 'app:vectorcraft', 'files'],
-    examples: [{ args: { path: '/VectorCraft/poster.vectorcraft' }, says: 'Open the poster from Files' }],
+    examples: [{ args: { path: '/VectorCraft/draft.vectorcraft' }, says: 'Open the draft from Files' }],
     // VectorCraft is a standalone wrapper (releases.mjs), so the open rides the bootstrap's
     // download/open path rather than the host bridge: drive the wrapper's own #file input
     // (app.mjs:38) so the wrapper posts vectorcraft:open (app.mjs:35-36) and the bootstrap
     // (bootstrap.js:52-89) hands the bytes to window.vectorcraft.openFile. openAndAwait waits
     // until the page's docInspect changes, so the result confirms the document loaded.
+    // checkAlreadyOpen: false: this tool also imports (.svg, .pdf, .ai or image), so a
+    // name already in the state is not proof this file is the open document.
     run: async (args, ctx) => {
       const file = await readOpenFile(ctx, args.path, { id: APP, title: 'VectorCraft' });
       const wrapper = await ctx.host.appWindow(APP);
       const craft = await ctx.craft(APP);
-      return openAndAwait(craft, { id: APP, title: 'VectorCraft', wrapperWindow: wrapper, name: file.name, bytes: file.bytes, accept: releases[APP].accept });
+      return openAndAwait(craft, { id: APP, title: 'VectorCraft', wrapperWindow: wrapper, name: file.name, bytes: file.bytes, accept: releases[APP].accept, checkAlreadyOpen: false });
     },
   },
   {
@@ -628,13 +643,13 @@ export const tools = [
     purpose: 'Save the active document to Files as a document or export format.',
     when: 'Use when the user wants to keep a copy of the drawing in Files, as .vectorcraft or an export format.',
     params: {
-      path: { type: 'path', required: true, description: 'The Files path to write the copy to; the extension picks the format, e.g. /VectorCraft/poster.vectorcraft or /VectorCraft/poster.svg' },
+      path: { type: 'path', required: true, description: 'The Files path to write the copy to; the extension picks the format, e.g. /VectorCraft/draft.vectorcraft or /VectorCraft/draft.svg' },
       overwrite: { type: 'boolean', description: 'Replace the file when the path already exists; false when omitted' },
     },
     effect: 'change',
     effectFor: args => (args.overwrite ? 'destructive' : 'change'),
     needs: ['host', 'app:vectorcraft', 'files'],
-    examples: [{ args: { path: '/VectorCraft/poster.vectorcraft' }, says: 'Save a copy of the drawing to Files' }],
+    examples: [{ args: { path: '/VectorCraft/draft.vectorcraft' }, says: 'Save a copy of the drawing to Files' }],
     // No path is ever passed (the browser has no file system). document.serialize answers
     // with the bytes inline as {dataBase64, warnings} (svg answers {text} instead; txt
     // an empty dataBase64 when the document has no text; engine cmd/fileio/export.rs

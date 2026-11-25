@@ -424,6 +424,12 @@ test('skills.md parses with the runtime parser without errors and has 6 skills',
   }
 });
 
+test('the password-strength skill scores the exact password string (lfm3-1.7b nettools-05 scored the phrase)', () => {
+  const check = skills.find(skill => skill.slug === 'check-a-password-strength');
+  assert.ok(check.gotchas.includes('exact password string'), 'the skill says to score the exact string');
+  assert.ok(check.gotchas.includes('the password is falcon'), 'the skill shows the old-password phrasing');
+});
+
 test('every skill opens by launching the nettools app, then uses numbered nettools steps', () => {
   for (const skill of skills) {
     assert.equal(skill.steps[0].line, '1. call_tool tool=desktop.open_app app=nettools', `skill ${skill.slug}`);

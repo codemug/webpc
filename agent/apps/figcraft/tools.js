@@ -36,8 +36,17 @@ const parseValue = raw => {
   return raw;
 };
 
-// key=value lines -> object (the generic long-tail form for params and props).
-const parseParams = text => {
+// key=value lines -> object (the generic long-tail form for params and props). A JSON object
+// or array value passes through as-is (lfm3-1.7b sends engine params as JSON; repairArgs
+// serializes an unwrapped wrapper object to JSON text for this slot).
+export const parseParams = text => {
+  const source = String(text ?? '').trim();
+  if (source.startsWith('{') || source.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(source);
+      if (parsed !== null && typeof parsed === 'object') return parsed;
+    } catch { /* not JSON: fall through to key=value lines */ }
+  }
   const out = {};
   // A literal backslash-n counts as a line break too: small models often write \n in the text.
   for (const line of String(text ?? '').split(/\n|\\n/)) {
@@ -133,7 +142,7 @@ export const tools = [
     effect: 'change',
     effectFor: args => (DESTRUCTIVE.some(id => (args.commands ?? []).some(line => String(line ?? '').trim().startsWith(id))) ? 'destructive' : 'change'),
     needs: NEEDS,
-    examples: [{ args: { commands: ['node.create type=frame width=375 height=812 name=Login', 'node.create type=text text=Hi'], label: 'Login screen' }, says: 'Create a frame and a text as one undo step' }],
+    examples: [{ args: { commands: ['node.create type=frame width=480 height=852 name=Shell', 'node.create type=text text=Hi'], label: 'Shell screen' }, says: 'Create a frame and a text as one undo step' }],
     // tools.rs:639-666 one engine command.batch (one undo step); the as/$ref step
     // references are dropped: later steps cannot use earlier results (note in report).
     run: async (args, ctx) => {
@@ -163,7 +172,7 @@ export const tools = [
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { type: 'frame', width: 375, height: 812, name: 'Login', props: 'fill=#FFFFFF\nlayout=vertical\ngap=16' }, says: 'Create a phone frame called Login' }],
+    examples: [{ args: { type: 'frame', width: 480, height: 852, name: 'Shell', props: 'fill=#FFFFFF\nlayout=vertical\ngap=16' }, says: 'Create a phone frame called Shell' }],
     // tools.rs:668-693 node.create, then node.get {id, depth:0} for the new layer
     run: async (args, ctx) => {
       const app = teachApp(await ctx.craft(APP), NO_DOC.message, NO_DOC.fix);
@@ -349,12 +358,14 @@ export const tools = [
     // realm, as the page's host bridge requires (craft-libs web-host web.rs:106). The
     // document opens alongside the open ones (the engine holds a document list), so a
     // change. openAndAwait waits until the page's docInspect changes, so the result
-    // confirms the document loaded.
+    // confirms the document loaded. checkAlreadyOpen: false: this tool also imports
+    // (.fig, .json, .svg or image), so a name already in the state is not proof this
+    // file is the open document.
     run: async (args, ctx) => {
       const file = await readOpenFile(ctx, args.path, { id: APP, title: 'FigCraft' });
       const wrapper = await ctx.host.appWindow(APP);
       const craft = await ctx.craft(APP);
-      return openAndAwait(craft, { id: APP, title: 'FigCraft', wrapperWindow: wrapper, name: file.name, bytes: file.bytes, accept: releases[APP].accept });
+      return openAndAwait(craft, { id: APP, title: 'FigCraft', wrapperWindow: wrapper, name: file.name, bytes: file.bytes, accept: releases[APP].accept, checkAlreadyOpen: false });
     },
   },
   {

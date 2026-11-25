@@ -63,7 +63,8 @@ const fakeDocs = (overrides = {}, { initial } = {}) => {
     },
     // The cut fragment for move_section: the paragraphs whose start sits in [from, to). Dead
     // segments still count for positions (removed text does in a doc), so the range is stable
-    // after the delete step of the same transaction.
+    // after the delete step of the same transaction. Answered as a closed Slice (openStart/
+    // openEnd 0) with the paragraphs under .content, like doc.slice on whole top-level lines.
     slice: (from, to) => {
       let pos = 0;
       const frag = [];
@@ -71,10 +72,18 @@ const fakeDocs = (overrides = {}, { initial } = {}) => {
         if (pos >= from && pos < to) frag.push(para);
         pos += para.segs.reduce((a, s) => a + s.text.length, 0);
       }
-      return frag;
+      return { openStart: 0, openEnd: 0, content: frag };
     },
     nodesBetween: (from, to, cb) => {
       const st = starts();
+      // Block nodes (paragraphs) first, with the attrs the list tool reads (numPr); then the
+      // text segments, the way ProseMirror nodesBetween walks the range.
+      let pos = 0;
+      for (const para of paragraphs) {
+        const size = para.segs.reduce((a, s) => a + s.text.length, 0);
+        if (pos + size > from && pos < to) cb({ isText: false, isTextblock: true, type: { name: 'paragraph' }, nodeSize: size, attrs: { paraId: para.paraId, ...(para.styleId ? { styleId: para.styleId } : {}), ...(para.numPr != null ? { numPr: para.numPr } : {}), ...(para.listIsBullet != null ? { listIsBullet: para.listIsBullet } : {}) } }, pos);
+        pos += size;
+      }
       segList().forEach((seg, i) => {
         const s = st[i], e = s + seg.text.length;
         if (e <= from || s >= to) return;
@@ -94,6 +103,7 @@ const fakeDocs = (overrides = {}, { initial } = {}) => {
       removeMark: (from, to, mark) => { t.steps.push(['removeMark', from, to, mark]); return t; },
       delete: (from, to) => { t.steps.push(['delete', from, to]); return t; },
       setSelection: sel => { t.steps.push(['setSelection', sel]); return t; },
+      setNodeMarkup: (pos, _type, attrs) => { t.steps.push(['setNodeMarkup', pos, attrs]); return t; },
       insert: (pos, fragment) => { t.steps.push(['insert', pos, fragment]); return t; },
     };
     return t;
@@ -139,6 +149,19 @@ const fakeDocs = (overrides = {}, { initial } = {}) => {
           const para = paragraphs.find(x => x.segs.includes(seg));
           para.segs.splice(para.segs.indexOf(seg), 1, ...next);
         });
+      } else if (step[0] === 'setNodeMarkup') {
+        // The list toggle: the paragraph whose start sits at the step position takes the
+        // numPr attrs (null attrs remove the list), like ProseMirror setNodeMarkup on a block.
+        const [, pos, attrs] = step;
+        let acc = 0;
+        for (const para of paragraphs) {
+          if (acc === pos) {
+            para.numPr = attrs.numPr ?? null;
+            para.listIsBullet = attrs.listIsBullet ?? null;
+            break;
+          }
+          acc += para.segs.reduce((a, s) => a + s.text.length, 0);
+        }
       } else if (step[0] === 'insert') {
         // The move_section paste: the fragment paragraphs are pulled out of the array (they were
         // marked dead by the delete step of the same transaction), un-dead and re-inserted at
@@ -306,15 +329,25 @@ test('docs.insert_text inserts, accepts the change, so get_text shows the new te
   const docs = fakeDocs();
   const before = await docs.runTool('docs.get_text', {});
   assert.ok(!before.text.includes('New para'), 'the new text is not in the document yet');
-  const atCursor = await docs.runTool('docs.insert_text', { text: 'New para' });
-  assert.deepEqual(atCursor, { insertedAfter: 'p2', text: 'New para' });
-  assert.ok(docs.calls.some(c => c[0] === 'getSelection'), 'falls back to the cursor when para_id is omitted');
+  const atEnd = await docs.runTool('docs.insert_text', { text: 'New para' });
+  assert.deepEqual(atEnd, { insertedAfter: 'p2', text: 'New para' });
   assert.deepEqual(docs.calls.find(c => c[0] === 'insertParagraphAfter'), ['insertParagraphAfter', { paraId: 'p2', text: 'New para', author: 'WebPC Agent' }]);
   assert.equal(docs.viewDispatches.length, 1, 'the accept transaction is dispatched on the view');
   // insertParagraphAfter applies the insertion mark (a pending tracked suggestion); the tool
   // accepts it on getView().dispatch, so the paragraph becomes accepted text get_text reads back.
   const after = await docs.runTool('docs.get_text', {});
   assert.ok(after.text.includes('New para'), `get_text should include the accepted insert, got: ${after.text}`);
+});
+
+test('docs.insert_text without para_id appends at the document end, not the cursor, so a run of inserts lands in order', async () => {
+  // Live (docs-05, oracle run): the cursor sits in the first paragraph after the first line,
+  // insertParagraphAfter leaves the selection where it was, and cursor-anchored inserts stack
+  // in REVERSE after the anchor. The document-end anchor appends in order instead.
+  const docs = fakeDocs({ getSelection: () => ({ paraId: 'p1', selectedText: 'First', paragraphText: 'First draft', before: '', after: '' }) });
+  await docs.runTool('docs.insert_text', { text: 'line A' });
+  await docs.runTool('docs.insert_text', { text: 'line B' });
+  await docs.runTool('docs.insert_text', { text: 'line C' });
+  assert.deepEqual((await docs.runTool('docs.get_text', {})).paragraphs.map(p => p.text), ['First draft', 'Second line', 'line A', 'line B', 'line C'], 'inserts append in call order');
 });
 
 test('docs.insert_text types into the empty paragraph of a fresh document (no paraId yet)', async () => {
@@ -403,17 +436,37 @@ test('docs.new creates a fresh document with the default title', async () => {
   assert.deepEqual(docs.calls.at(-1), ['createDocument', { title: 'Weekly report', sections: [] }]);
 });
 
-test('docs.make_list selects the line range and runs the list command', async () => {
+// The embedded chrome (features.menuBar false) blocks the app's string commands, so make_list
+// dispatches the app's own list setNodeMarkup (numPr attr) on the live view: every paragraph
+// already in the list removes it, anything else applies it to the range.
+test('docs.make_list applies the list to the range by setting numPr on the view, without the string command', async () => {
   const docs = fakeDocs();
   const out = await docs.runTool('docs.make_list', { kind: 'bullet', from_text: 'First draft', to_text: 'Second line' });
-  assert.deepEqual(out, { kind: 'bullet', from: 'First draft', to: 'Second line' });
-  const sel = docs.viewDispatches[0].steps.find(s => s[0] === 'setSelection');
-  // "First draft" starts at 0, "Second line" starts at 11 and its nodeSize is 11: the
-  // selection spans both paragraphs, ending at the next paragraph's start.
-  assert.deepEqual(sel[1], { anchor: 0, head: 22 });
-  const cmd = docs.calls.at(-1);
-  assert.equal(cmd[0], 'executeCommand');
-  assert.equal(cmd[1], 'toggleBulletList');
+  assert.deepEqual(out, { kind: 'bullet', action: 'applied', from: 'First draft', to: 'Second line' });
+  const [p1, p2] = docs.paragraphs;
+  assert.deepEqual(p1.numPr, { numId: 1, ilvl: 0 }, 'first line becomes a bullet paragraph');
+  assert.deepEqual(p2.numPr, { numId: 1, ilvl: 0 }, 'last line becomes a bullet paragraph');
+  assert.equal(p1.listIsBullet, true);
+  assert.deepEqual(docs.calls.filter(c => c[0] === 'executeCommand'), [], 'the blocked string command is not called');
+  assert.ok(!docs.viewDispatches[0].steps.some(s => s[0] === 'setSelection'), 'no selection is set; the range is walked directly');
+  // A second call with the same kind removes the list again (the app toggle semantics).
+  const again = await docs.runTool('docs.make_list', { kind: 'bullet', from_text: 'First draft', to_text: 'Second line' });
+  assert.equal(again.action, 'removed');
+  assert.equal(p1.numPr, null);
+  assert.equal(p2.numPr, null);
+});
+
+test('docs.make_list numbered writes the numbered numId and decimal format', async () => {
+  const docs = fakeDocs();
+  await docs.runTool('docs.make_list', { kind: 'numbered', from_text: 'Second line' });
+  const [p1, p2] = docs.paragraphs;
+  assert.ok(p1.numPr == null, 'the line before the range stays unlisted');
+  assert.deepEqual(p2.numPr, { numId: 2, ilvl: 0 });
+  assert.equal(p2.listIsBullet, false);
+});
+
+test('docs.make_list refuses a range that runs backwards', async () => {
+  const docs = fakeDocs();
   await assert.rejects(docs.runTool('docs.make_list', { kind: 'numbered', from_text: 'Second line', to_text: 'First draft' }), error => {
     assert.ok(error instanceof ToolError);
     assert.equal(error.type, 'invalid_argument');
@@ -470,7 +523,9 @@ const filesFake = (markdown = '') => {
   const writes = [];
   return {
     writes,
-    readText: path => Promise.resolve({ path, name: 'plan.md', text: markdown }),
+    // readText answers { path, text, truncated } - no name (src/apps/ai-agent/runtime/files-ctx.mjs);
+    // docs.open derives the file name from the path.
+    readText: path => Promise.resolve({ path, text: markdown, truncated: false }),
     readBytes: path => Promise.resolve({ path, name: 'plan.docx', bytes: new Uint8Array([1, 2]), size: 2 }),
     writeText: (path, text, { overwrite } = {}) => { writes.push({ path, text, overwrite }); return Promise.resolve({ path, size: text.length, created: true }); },
     writeBytes: (path, bytes, { overwrite } = {}) => { writes.push({ path, size: bytes.length, overwrite }); return Promise.resolve({ path, size: bytes.length, created: true }); },

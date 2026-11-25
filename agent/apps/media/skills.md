@@ -9,7 +9,7 @@ Steps:
 1. call_tool tool=desktop.open_app app=media
 2. call_tool tool=media.play_file path=/music/tune.mp3
 Check: the result has the file name and says whether it is playing.
-Gotchas: change path=; only audio and video files are accepted; if playing is false with a note, autoplay was blocked by the browser, so tell the user to click Play in the Media app.
+Gotchas: change path= to the full Files path - the file's real location, not a guess (a tone file saved in the music folder is /music/bell.wav, not /tmp/bell.wav; a wrong path is an error that points at files.find); only audio and video files are accepted; if playing is false with a note, autoplay was blocked by the browser, so tell the user to click Play in the Media app.
 
 ## Pause the playback
 slug: pause-the-playback
@@ -47,7 +47,7 @@ tools: desktop.open_app, media.volume
 When: the user wants the playback louder or softer.
 Steps:
 1. call_tool tool=desktop.open_app app=media
-2. call_tool tool=media.volume percent=50
+2. call_tool tool=media.volume percent=35
 Check: the result reports the new volume.
 Gotchas: change percent=; the value is a percent from 0 to 100 and is saved by the app; for full silence use percent=0, the separate Mute button toggles muting.
 

@@ -62,6 +62,8 @@ const silently = promise => promise.catch(() => {});
 // from slide.inspect of the current slide (shapes[].id), themes and presets from the
 // engine's fixed lists - with the closest match filled into the call as the fix line.
 const NAME_REJECT = { layout: /(?:no|unknown) layout/i, theme: /(?:no|unknown) theme/i, preset: /unknown preset/i, shape: /no such shape/i };
+// The app's own layout normalisation (slide.rs): alphanumerics only, lowercased.
+const normLayout = s => String(s ?? '').replace(/[^A-Za-z0-9]/g, '').toLowerCase();
 const STATIC_NAMES = {
   theme: ['DeckCraft', 'Harbor', 'Ember', 'Meadow', 'Nocturne', 'Paper', 'Coral Reef', 'Slate'],
   preset: ['rect', 'roundRect', 'ellipse', 'triangle', 'diamond', 'rightArrow', 'chevron', 'star5', 'heart', 'cloud', 'line'],
@@ -113,7 +115,7 @@ export const tools = [
     },
     effect: 'destructive',
     needs: NEEDS,
-    examples: [{ args: { theme: 'Harbor' }, says: 'Start a new deck with the Harbor theme' }],
+    examples: [{ args: { theme: 'Meadow' }, says: 'Start a new deck with the Meadow theme' }],
     // tools.rs:395 file.new. Destructive: the web app holds one presentation, so this replaces the open one.
     run: async (args, ctx) => {
       const app = await ctx.craft(APP);
@@ -136,12 +138,26 @@ export const tools = [
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { layout: 'titleAndContent', title: 'Q1 Plan' }, says: 'Add a slide titled Q1 Plan' }],
+    examples: [{ args: { layout: 'titleAndContent', title: 'Overview' }, says: 'Add a slide titled Overview' }],
     // tools.rs:410 slide.new
     run: async (args, ctx) => {
       const app = await ctx.craft(APP);
+      // slide.new (upstream slide.rs) writes title= and body= only into the layout's title and
+      // body placeholders and silently drops them otherwise: live, a title on a Blank slide
+      // landed nowhere and the model kept building as if it had (deckcraft-05/12, lfm3).
+      if (normLayout(args.layout) === 'blank' && (args.title !== undefined || args.body !== undefined)) {
+        throw new ToolError('invalid_argument', 'Blank has no title or body placeholders, so the text would land nowhere; a titled slide is layout=titleAndContent, and free text on a slide goes in deckcraft.add_text_box', callLine('deckcraft.add_slide', pick({ layout: 'titleAndContent', title: args.title, body: args.body }, ['layout', 'title', 'body'])));
+      }
       try {
-        return await app.execute('slide.new', pick(args, ['layout', 'title', 'body']));
+        const result = await app.execute('slide.new', pick(args, ['layout', 'title', 'body']));
+        // slide.new makes the new slide the current slide: b14 deckcraft-05 added its
+        // closing text box right after add_slide believing it was back on slide one -
+        // the box landed on the new slide and the slide-one pin failed. The note names
+        // the navigation call the model must copy to switch back.
+        if (result && typeof result === 'object' && !Array.isArray(result)) {
+          return { ...result, note: `the new slide is now the current slide; to add content to another one, first run ${callLine('deckcraft.go_to_slide', { index: 0 })}` };
+        }
+        return result;
       } catch (error) {
         if (args.layout !== undefined && NAME_REJECT.layout.test(String(error?.message ?? error))) await namedReject('layout', args.layout, 'deckcraft.add_slide', pick(args, ['title', 'body']), app);
         throw error;
@@ -161,7 +177,7 @@ export const tools = [
   },
   {
     name: 'deckcraft.add_shape',
-    purpose: 'Insert a preset shape with size, text and colors.',
+    purpose: 'Insert a preset shape on the current slide, with size, text and colors.',
     when: 'Use when the user wants a shape: rectangle, ellipse, arrow, star, line.',
     params: {
       preset: { type: 'string', required: true, description: 'Preset name: rect, roundRect, ellipse, triangle, diamond, rightArrow, chevron, star5, heart, cloud, line' },
@@ -193,7 +209,7 @@ export const tools = [
   },
   {
     name: 'deckcraft.add_text_box',
-    purpose: 'Insert a text box with optional size, color and alignment.',
+    purpose: 'Insert a text box on the current slide (size, color, alignment optional).',
     when: 'Use when the user wants free text on a slide.',
     params: {
       x: { type: 'number', required: true, description: 'Left, in points' },
@@ -207,7 +223,7 @@ export const tools = [
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { x: 40, y: 260, w: 500, text: 'Key numbers', size: 24, align: 'left' }, says: 'Add a heading text box' }],
+    examples: [{ args: { x: 40, y: 260, w: 520, text: 'Headline', size: 24, align: 'left' }, says: 'Add a heading text box' }],
     // tools.rs:433-450 insert.textBox, then text.exit, edit.select and the format.* calls
     run: async (args, ctx) => {
       const app = await ctx.craft(APP);
@@ -245,7 +261,7 @@ export const tools = [
   },
   {
     name: 'deckcraft.insert_table',
-    purpose: 'Insert a table with rows and columns, optionally filled.',
+    purpose: 'Insert a table on the current slide, with rows and columns, optionally filled.',
     when: 'Use when the user wants a table on the slide.',
     params: {
       rows: { type: 'integer', required: true, description: 'Rows' },
@@ -258,7 +274,7 @@ export const tools = [
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { rows: 3, cols: 2, data: [['Item', 'Cost'], ['Rent', '1200'], ['Food', '400']] }, says: 'Add a small cost table' }],
+    examples: [{ args: { rows: 3, cols: 2, data: [['Name', 'Amount'], ['Lamp', '1850'], ['Chair', '910']] }, says: 'Add a small cost table' }],
     // tools.rs:459-465 insert.table; rect is sent only when all four box values are given
     run: async (args, ctx) => {
       const params = pick(args, ['rows', 'cols', 'data']);
@@ -268,13 +284,13 @@ export const tools = [
   },
   {
     name: 'deckcraft.insert_chart',
-    purpose: 'Insert a chart with categories and series.',
+    purpose: 'Insert a chart on the current slide, with categories and series.',
     when: 'Use when the user wants a chart, graph or plot on the slide.',
     params: {
       type: { type: 'string', description: 'Chart type: column, bar, line, pie, doughnut, area, scatter, stackedColumn' },
       title: { type: 'string', description: 'Chart title' },
       categories: { type: 'list', description: 'Category names, e.g. Q1, Q2' },
-      series: { type: 'table', description: 'Series as rows: [name, value, value, ...]' },
+      series: { type: 'table', flat: false, description: 'Series as rows: [[name, value, value, ...]]; a flat list of values is refused with both forms shown' },
       x: { type: 'number', description: 'Left (pt); all four set the box' },
       y: { type: 'number', description: 'Top (pt)' },
       w: { type: 'number', description: 'Width (pt)' },
@@ -282,7 +298,7 @@ export const tools = [
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { type: 'column', title: 'Sales', categories: ['Q1', 'Q2'], series: [['Sales', 12, 18]] }, says: 'Add a column chart of sales' }],
+    examples: [{ args: { type: 'column', title: 'Shipments', categories: ['North', 'South'], series: [['Units', 71, 58]] }, says: 'Add a column chart of shipments' }],
     // tools.rs:466-472 insert.chart; series rows [name, values...] become {name, values}
     run: async (args, ctx) => {
       const params = pick(args, ['type', 'title', 'categories']);

@@ -148,11 +148,14 @@ test('media.play_file rejects a file that is not audio or video', async () => {
   assert.equal(media.state.played, 0);
 });
 
-test('media.play_file passes the Files error code through for a missing file', async () => {
+test('media.play_file passes the Files error code through for a missing file, with the files.find fix', async () => {
   const media = fakeMedia();
   await assert.rejects(media.runTool('media.play_file', { path: '/nope.mp3' }), error => {
     assert.ok(error instanceof ToolError);
     assert.equal(error.type, 'not_found');
+    // A wrong path must point the model at file discovery instead of dead-ending
+    // (lfm3-1.7b media-05/08 both failed on the guessed /tmp path).
+    assert.equal(error.fix, 'call_tool tool=files.find query=<query>');
     return true;
   });
 });
@@ -274,6 +277,13 @@ test('skills.md parses with the runtime parser without errors and has 5 skills',
     assert.ok(skill.tools.length >= 1, `skill ${skill.slug} tools`);
     assert.ok(skill.when && skill.steps.length >= 1 && skill.check, `skill ${skill.slug} body sections`);
   }
+});
+
+test('the play-a-file skill pins the full Files path (lfm3-1.7b media-05/08 guessed a /tmp path)', () => {
+  const play = skills.find(skill => skill.slug === 'play-a-file');
+  assert.ok(play.gotchas.includes('full Files path'), 'the skill says path= is the full Files path');
+  assert.ok(play.gotchas.includes('/music/bell.wav'), 'the skill shows the real fixture location');
+  assert.ok(play.gotchas.includes('files.find'), 'the skill points at file discovery');
 });
 
 test('every skill opens by launching the media app, then uses numbered media steps', () => {

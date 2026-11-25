@@ -361,6 +361,22 @@ test('sqliteviz.open_db passes the Files error code through for a missing file',
   });
 });
 
+test('sqliteviz.run_query refuses a ? placeholder with the inline-values fix before touching the app', async () => {
+  const sv = fakeSqliteviz();
+  // No open_db: the guard must fire before any app access (lfm3-1.7b sent VALUES (7,?, 13.50)
+  // on sqliteviz-04 and the ? landed as a silent NULL).
+  await assert.rejects(sv.runTool('sqliteviz.run_query', { sql: 'INSERT INTO orders (customer_id, product_id, amount) VALUES (7, ?, 13.50)' }), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.match(error.message, /write the values inline/);
+    return true;
+  });
+  // A ? inside a string literal is ordinary SQL text: it runs.
+  await sv.runTool('sqliteviz.open_db', { path: '/data/shop.db' });
+  const got = await sv.runTool('sqliteviz.run_query', { sql: "SELECT * FROM sales WHERE name LIKE 'what?'" });
+  assert.deepEqual(got.columns, COLUMNS);
+});
+
 test('sqliteviz.run_query returns the result table, capped, with the app row count', async () => {
   const sv = fakeSqliteviz();
   await sv.runTool('sqliteviz.open_db', { path: '/data/shop.db' });
@@ -369,6 +385,8 @@ test('sqliteviz.run_query returns the result table, capped, with the app row cou
   assert.equal(got.rowCount, 250, 'the footer count is the app total');
   assert.equal(got.rows.length, 200, 'the rows are capped for the model');
   assert.equal(got.truncated, true);
+  // b17 sqliteviz-04: the capped result points at SQL aggregation instead of hand counting.
+  assert.match(got.note, /aggregate in SQL/);
   assert.deepEqual(got.rows[0], ['0', 'v0']);
   assert.equal(sv.ta.focused, true, 'the hidden textarea was focused before typing');
 });
@@ -395,6 +413,7 @@ test('sqliteviz.run_query returns the exact GROUP BY answer the live probe showe
   assert.deepEqual(got.rows, [['North', '160'], ['South', '80']], 'text cells, as the live result table renders them');
   assert.equal(got.rowCount, 2, 'the rowCount comes from the app footer, not the row cap');
   assert.equal(got.truncated, false);
+  assert.equal(got.note, undefined, 'no aggregation note when the result is not capped');
   // The second identical run must pass the stale guard: the footer's elapsed time varies per
   // run in the fake (as in the live app), so the container text differs from the pre-run capture.
   const again = await sv.runTool('sqliteviz.run_query', { sql });
@@ -511,7 +530,7 @@ const { skills, errors: skillErrors } = parseSkills(SKILLS_MD, 'sqliteviz');
 
 test('skills.md parses with the runtime parser without errors and has 5 skills', () => {
   assert.deepEqual(skillErrors, []);
-  assert.equal(skills.length, 5);
+  assert.equal(skills.length, 6);
   for (const skill of skills) {
     assert.ok(skill.slug && skill.summary, `skill ${skill.slug} slug/summary`);
     assert.ok(skill.summary.length <= 160, `skill ${skill.slug} summary is ${skill.summary.length} chars`);
