@@ -10,13 +10,13 @@ app: cadcraft
 # "spaces act as Enter" is only half of what the web build does):
 #   - command_line: whitespace-separated tokens each become one input, but the call never
 #     presses Enter: a trailing space on a call that starts a command is swallowed, and an
-#     empty or whitespace-only call is rejected by the pack (missing_argument). One input
-#     per call is the reliable form. A trailing Enter on a later call does end a command
-#     that is already open, which is why cadcraft-01's two "line ... " calls commit their
-#     lines: the second call's trailing Enter ends the still-open LINE.
+#     empty or whitespace-only call is now a bare Enter that ends an open command (T6 pack
+#     behavior; spaces act as Enter in the web build). One input per call is the reliable
+#     form.
 #   - script: one input per line, a blank line is an Enter, and the first line may start the
-#     command; measured reliable, unlike multi-token command_line calls. End a continuing
-#     command with a blank script line.
+#     command; measured reliable, unlike multi-token command_line calls. The pack appends
+#     the terminating blank line when it is missing (T6), so a continuing command always
+#     ends with its script.
 #   - LINE is a continuing command: after every point it keeps asking for the next one and
 #     ends only on that Enter, which commits the segments as Line entities. CIRCLE ends
 #     after its radius, so "circle 20,0 5" works in one call.
@@ -42,13 +42,13 @@ journeys:
       - open_app: cadcraft
     oracle:
       - { tool: cadcraft.new_drawing, metric: true }
-      - { tool: cadcraft.script, text: 'line\n0,0\n10,0\n\n' }
-      - { tool: cadcraft.script, text: 'line\n10,0\n10,5\n\n' }
+      - { tool: cadcraft.line, p1: '0,0', p2: '10,0' }
+      - { tool: cadcraft.line, p1: '10,0', p2: '10,5' }
     checks:
       - craft_request: { app: cadcraft, method: drawing.inspect, expect: { path: entityCount, equals: 2 } }
       - craft_request: { app: cadcraft, method: drawing.inspect, expect: { path: counts.Line, equals: 2 } }
-    covers: [cadcraft.new_drawing, cadcraft.script]
-    notes: The final blank line of each line script is the Enter that commits the still-open line command; the entity count and the per-type count both pin that exactly two lines exist.
+    covers: [cadcraft.new_drawing, cadcraft.line]
+    notes: The flat line tool commits each line in one engine call (the engine's points form), so no terminating Enter is needed; the entity count and the per-type count both pin that exactly two lines exist. The oracle exercises the flat tool's wire shape live (every new or changed tool gets an oracle step).
 
   - id: cadcraft-02-door-swing-circle
     split: train
@@ -61,11 +61,11 @@ journeys:
       - open_app: cadcraft
     oracle:
       - { tool: cadcraft.new_drawing }
-      - { tool: cadcraft.command_line, text: 'circle 20,0 5' }
+      - { tool: cadcraft.circle, center: '20,0', radius: 5 }
     checks:
       - craft_request: { app: cadcraft, method: entities, params: { type: Circle, limit: 1 }, expect: { path: count, equals: 1 } }
-    covers: [cadcraft.new_drawing, cadcraft.command_line]
-    notes: The circle command ends after its radius, so one call draws it; the entities query pinned to the Circle type proves the swing circle is in the drawing.
+    covers: [cadcraft.new_drawing, cadcraft.circle]
+    notes: The flat circle tool draws it in one engine call, so the oracle exercises its wire shape live; the entities query pinned to the Circle type proves the swing circle is in the drawing.
 
   - id: cadcraft-03-room-labels
     split: train
@@ -80,14 +80,14 @@ journeys:
       - open_app: cadcraft
     oracle:
       - { tool: cadcraft.new_drawing }
-      - { tool: cadcraft.script, text: 'text\n0,0\n100\n\nRoom 101\n\n' }
-      - { tool: cadcraft.script, text: 'text\n0,300\n100\n\nCorridor A\n\n' }
+      - { tool: cadcraft.text, at: '0,0', text: 'Room 101', height: 100 }
+      - { tool: cadcraft.text, at: '0,300', text: 'Corridor A', height: 100 }
     checks:
       - craft_request: { app: cadcraft, method: texts, params: { contains: 'Room 101' }, expect: { path: count, equals: 1 } }
       - craft_request: { app: cadcraft, method: texts, params: { contains: 'Corridor A' }, expect: { path: count, equals: 1 } }
       - craft_request: { app: cadcraft, method: texts, params: { limit: 10 }, expect: { path: count, equals: 2 } }
-    covers: [cadcraft.new_drawing, cadcraft.script, cadcraft.find_text]
-    notes: The blank script line answers the rotation prompt with its default, and the final blank line ends the TEXT command, which otherwise stays open at "Enter text:" and swallows the next label's inputs; the texts query pins each label and the total.
+    covers: [cadcraft.new_drawing, cadcraft.text, cadcraft.find_text]
+    notes: The flat text tool adds each label in one engine call at the default rotation, so the oracle exercises its wire shape live; the texts query pins each label and the total.
 
   - id: cadcraft-04-save-the-plan-dxf
     split: train
@@ -171,13 +171,13 @@ journeys:
       - { run: { tool: cadcraft.script, text: 'line\n0,0\n10,0\n\n' } }
       - { run: { tool: cadcraft.command_line, text: 'circle 0,0 5' } }
     oracle:
-      - { tool: cadcraft.script, text: 'move\n20,10\n-10,-10\n\n0,0\n5,5\n' }
+      - { tool: cadcraft.move, dx: 5, dy: 5 }
     checks:
       - craft_request: { app: cadcraft, method: drawing.inspect, expect: { path: 'extents[0][0]', equals: 0 } }
       - craft_request: { app: cadcraft, method: drawing.inspect, expect: { path: 'extents[1][1]', equals: 10 } }
       - craft_request: { app: cadcraft, method: drawing.inspect, expect: { path: undo, contains: Move } }
-    covers: [cadcraft.script]
-    notes: "Before the move the extents are -5,-5 to 10,5; after it they are 0,0 to 15,10, so the two corner pins only pass once the move happened. The window is dragged leftwards (corner 20,10 to -10,-10), which makes it a crossing select, so both the line and the circle are picked; the blank line after the corners finishes the selection, then the base point 0,0 and second point 5,5 give the displacement."
+    covers: [cadcraft.move]
+    notes: "Before the move the extents are -5,-5 to 10,5; after it they are 0,0 to 15,10, so the two corner pins only pass once the move happened. The flat move tool selects all first (omitted handles move the selection, which live is empty: {moved: 0} on build 15) and then sends the engine's delta form, so both the line and the circle move in one call."
 
   - id: cadcraft-07-layer-set-up
     split: holdout

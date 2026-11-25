@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   CHECK_KINDS, validateCheck, readPath, valuesEqual, compareValue, checkAnswer, checkToolResult,
-  checkReadTool, checkTerminalOutput, normalizeText, oracleAnswerText, toRegExp, fillStepRefs,
+  checkReadTool, checkTerminalOutput, normalizeText, oracleAnswerText, toRegExp, fillStepRefs, within,
 } from '../scripts/agent/eval.mjs';
 
 /** The shared kind list covers the old task kinds and the five journey kinds. */
@@ -195,6 +195,15 @@ test('checkToolResult reads the last result of the named tool', () => {
   assert.ok(!checkToolResult(trace, { tool: 'media.analyze', equals: { width: 241, height: 160 } }).ok);
   const missing = checkToolResult(trace, { tool: 'nettools.dig', path: 'a', equals: 1 });
   assert.ok(!missing.ok && missing.detail.includes('no nettools.dig call'));
+  // A session-level refusal (the identical-fail stop) never ran the tool, so the check reads
+  // the last real result behind it (sweep b17 terminal-08/10: stopped duplicates end the trace).
+  const stopped = [
+    { name: 'terminal.run', arguments: { command: 'ls' }, result: { ok: true, tool: 'terminal.run', result: { exitCode: 0, output: 'total 12\n' } } },
+    { name: 'terminal.run', arguments: { command: 'ls' }, result: { error: 'Stopped: this exact call already failed twice' } },
+  ];
+  assert.ok(checkToolResult(stopped, { tool: 'terminal.run', path: 'output', contains: 'total' }).ok, 'a stopped duplicate is not the tool\'s last result');
+  const refusedOnly = [stopped[1]];
+  assert.ok(!checkToolResult(refusedOnly, { tool: 'terminal.run', path: 'output', contains: 'total' }).ok, 'a trace of refusals has no result');
 });
 
 /** Oracle runs have no reply, so answer checks read the oracle's tool results. */
@@ -237,4 +246,10 @@ test('at_least and at_most bracket a number; a range and an exact comparator do 
   assert.equal(validateCheck('read_tool', { tool: 'x.y', at_least: 1, at_most: 2 }).ok, true);
   assert.equal(validateCheck('read_tool', { tool: 'x.y', equals: 1, at_most: 2 }).ok, false);
   assert.equal(validateCheck('craft_request', { app: 'a', method: 'm', expect: { path: 'p', at_most: 2 } }).ok, true);
+});
+
+/** A page step that never settles must not hang the queue. */
+test('within rejects a step that does not settle in time and passes one that does', async () => {
+  await assert.rejects(within(new Promise(() => {}), 20, 'check read_tool'), /check read_tool did not finish within 0.02 s/);
+  assert.equal(await within(Promise.resolve(7), 1000, 'x'), 7);
 });

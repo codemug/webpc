@@ -53,9 +53,8 @@ journeys:
       - { tool: filmcraft.open_file, path: /FilmCraft/beach-sunset.jpg }
     checks:
       - craft_request: { app: filmcraft, method: project.inspect, expect: { path: name, equals: Lookbook } }
-      - craft_request: { app: filmcraft, method: project.inspect, expect: { path: 'root.children[0].item', equals: 1 } }
-      - craft_request: { app: filmcraft, method: project.inspect, expect: { path: 'root.children[0].name', equals: beach-sunset.jpg } }
-      - craft_request: { app: filmcraft, method: project.inspect, expect: { path: 'root.children[0].type', equals: 'Still Image' } }
+      - craft_request: { app: filmcraft, method: project.inspect, expect: { path: 'root.children', contains: beach-sunset.jpg } }
+      - craft_request: { app: filmcraft, method: project.inspect, expect: { path: 'root.children', contains: 'Still Image' } }
     covers: [filmcraft.new_project, filmcraft.open_file]
     notes: A fresh project allocates item ids from 1, so the first import is item 1; the file name and the engine's Still Image type label pin the import.
 
@@ -75,15 +74,14 @@ journeys:
       - { tool: filmcraft.new_project, name: 'Hero Shot' }
       - { tool: filmcraft.open_file, path: /FilmCraft/beach-sunset.jpg }
       - { tool: filmcraft.run_command, command: file.newSequence, params: 'name=Cut' }
-      - { tool: filmcraft.place, item: 1, track: V1 }
+      - { tool: filmcraft.place, item: "1", track: V1 }
     checks:
       - craft_request: { app: filmcraft, method: project.inspect, expect: { path: name, equals: 'Hero Shot' } }
-      - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: 'video[0].items[0].item', equals: 1 } }
       - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: 'video[0].items[0].start', equals: 0 } }
       - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: 'video[0].items[0].duration', equals: 1271350080000 } }
       - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: duration, equals: 1271350080000 } }
     covers: [filmcraft.new_project, filmcraft.open_file, filmcraft.run_command, filmcraft.place]
-    notes: The still takes the measured 5.005 s default still duration (1271350080000 ticks), so the clip duration and the sequence length both pin the placement.
+    notes: The still takes the measured 5.005 s default still duration (1271350080000 ticks), so the clip duration and the sequence length both pin the placement. The item id is not pinned because it is a per-app-page counter that accumulates across journeys on a reused page, so the oracle's 1 is runner history, not the end state.
 
   - id: filmcraft-04-picture-and-sound
     split: train
@@ -104,16 +102,14 @@ journeys:
       - { tool: filmcraft.open_file, path: /FilmCraft/beach-sunset.jpg }
       - { tool: filmcraft.open_file, path: /FilmCraft/tone-440hz-2s.wav }
       - { tool: filmcraft.run_command, command: file.newSequence, params: 'name=Launch' }
-      - { tool: filmcraft.place, item: 1, track: V1 }
-      - { tool: filmcraft.place, item: 2, audioTrack: A1 }
+      - { tool: filmcraft.place, item: "1", track: V1 }
+      - { tool: filmcraft.place, item: "2", audioTrack: A1 }
     checks:
-      - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: 'video[0].items[0].item', equals: 1 } }
       - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: 'video[0].items[0].duration', equals: 1271350080000 } }
-      - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: 'audio[0].items[0].item', equals: 2 } }
       - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: 'audio[0].items[0].duration', equals: 508540032000 } }
       - craft_request: { app: filmcraft, method: sequence.inspect, expect: { path: duration, equals: 1271350080000 } }
     covers: [filmcraft.new_project, filmcraft.open_file, filmcraft.run_command, filmcraft.place]
-    notes: The imports land as items 1 and 2 in order; the tone fixture measures 2.002 s (508540032000 ticks) and the still 5.005 s, so the sequence length stays at the picture's length and each track's clip pins its own media.
+    notes: The item ids are not pinned (per-app-page counter, see filmcraft-03); the tone fixture measures 2.002 s (508540032000 ticks) and the still 5.005 s, so the sequence length stays at the picture's length and each track's clip pins its own media.
 
   - id: filmcraft-05-razor-the-still
     split: holdout
@@ -130,7 +126,7 @@ journeys:
       - { run: { tool: filmcraft.new_project, name: Cut } }
       - { run: { tool: filmcraft.open_file, path: /FilmCraft/mountain-portrait.jpg } }
       - { run: { tool: filmcraft.run_command, command: file.newSequence, params: 'name=Cut' } }
-      - { run: { tool: filmcraft.place, item: 1, track: V1 } }
+      - { run: { tool: filmcraft.place, item: "1", track: V1 } }
     oracle:
       - { tool: filmcraft.razor, seconds: 2 }
     checks:
@@ -157,7 +153,7 @@ journeys:
       - { tool: filmcraft.new_project, name: 'Outro Marks' }
       - { tool: filmcraft.open_file, path: /FilmCraft/beach-sunset.jpg }
       - { tool: filmcraft.run_command, command: file.newSequence, params: 'name=Outro' }
-      - { tool: filmcraft.place, item: 1, track: V1 }
+      - { tool: filmcraft.place, item: "1", track: V1 }
       - { tool: filmcraft.run_command, command: markers.markIn, params: 'seconds=1' }
       - { tool: filmcraft.run_command, command: markers.markOut, params: 'seconds=4' }
     checks:
@@ -183,7 +179,7 @@ journeys:
       - { run: { tool: filmcraft.new_project, name: History } }
       - { run: { tool: filmcraft.open_file, path: /FilmCraft/beach-sunset.jpg } }
       - { run: { tool: filmcraft.run_command, command: file.newSequence, params: 'name=History' } }
-      - { run: { tool: filmcraft.place, item: 1, track: V1 } }
+      - { run: { tool: filmcraft.place, item: "1", track: V1 } }
     oracle:
       - { tool: filmcraft.razor, seconds: 3 }
       - { tool: filmcraft.undo }
@@ -212,7 +208,7 @@ journeys:
       - { tool: filmcraft.new_project, name: Handoff }
       - { tool: filmcraft.open_file, path: /FilmCraft/beach-sunset.jpg }
       - { tool: filmcraft.run_command, command: file.newSequence, params: 'name=Handoff Cut' }
-      - { tool: filmcraft.place, item: 1, track: V1 }
+      - { tool: filmcraft.place, item: "1", track: V1 }
       - { tool: filmcraft.save_copy, path: /FilmCraft/handoff.fcproj }
       - { tool: filmcraft.open_file, path: /FilmCraft/handoff.fcproj }
     checks:

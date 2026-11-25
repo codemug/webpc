@@ -58,18 +58,22 @@ journeys:
       Twinkle twinkle little star. Then count the words in the file, double-check the count
       with a second method, and end your reply with just the number, so I can copy it into my
       spreadsheet.
+    setup:
+      - close_all: true
+      - open_app: terminal
     oracle:
       - { tool: terminal.run, lang: sh, code: "printf '%s\\n' 'The quick brown fox' 'jumps over the lazy dog' 'Twinkle twinkle little star' > ~/wc-demo.txt" }
       - { tool: terminal.run, lang: sh, code: 'wc -w < ~/wc-demo.txt' }
       - { tool: terminal.run, lang: sh, code: "awk '{n += NF} END {print n}' ~/wc-demo.txt" }
     checks:
-      - tool_result: { tool: terminal.run, path: output, matches: '^\s*13\s*$' }
+      - tool_result: { tool: terminal.run, path: output, matches: '\b13\b' }
     covers: [terminal.run]
     notes: >-
       Three calls: write, count with wc, double-check with awk field counts (also 13 words:
       4 + 5 + 4). busybox grep -ow . returns nothing (a one-character pattern with -w only
-      matches one-letter words), so the re-count is awk; the last output is the second count,
-      so the bare-13 check pins the arithmetic.
+      matches one-letter words), so the re-count is awk; the check is \b13\b, not the bare
+      output, because wc with a file argument prints "13 /home/user/wc-demo.txt" and the
+      user asked for the count (lead's ruling, 2026-11-25).
 
   - id: terminal-04-grep-errors
     split: train
@@ -79,6 +83,9 @@ journeys:
       directory with these five lines: INFO started, ERROR timeout after 30s, INFO retrying,
       ERROR gave up, INFO done. Then search that file for the lines that contain ERROR, tell me
       how many there are, and show me the matching lines.
+    setup:
+      - close_all: true
+      - open_app: terminal
     oracle:
       - { tool: terminal.run, lang: sh, code: "printf '%s\\n' 'INFO started' 'ERROR timeout after 30s' 'INFO retrying' 'ERROR gave up' 'INFO done' > ~/grep-demo.log" }
       - { tool: terminal.run, lang: sh, code: 'grep -c ERROR ~/grep-demo.log' }
@@ -122,6 +129,9 @@ journeys:
       the home directory, one fruit per line and in exactly that order. Then sort the file,
       count the duplicates and show me the full counts, and finish by telling me which fruit
       appears most often and how many times.
+    setup:
+      - close_all: true
+      - open_app: terminal
     oracle:
       - { tool: terminal.run, lang: sh, code: "printf '%s\\n' apple banana apple cherry banana apple > ~/fruit-list.txt" }
       - { tool: terminal.run, lang: sh, code: 'sort ~/fruit-list.txt | uniq -c' }
@@ -143,15 +153,22 @@ journeys:
       proj-t7, put a file inside it named readme.txt containing the single line Project notes go
       here, make a backup copy of the whole directory as proj-t7-backup, and finish by listing
       both directories so I can verify the layout looks right.
+    setup:
+      - close_all: true
+      - open_app: terminal
     oracle:
       - { tool: terminal.run, lang: sh, code: "mkdir -p ~/proj-t7 && echo 'Project notes go here' > ~/proj-t7/readme.txt && cp -r ~/proj-t7 ~/proj-t7-backup && ls -R ~/proj-t7 ~/proj-t7-backup" }
     checks:
       - tool_result: { tool: terminal.run, path: output, contains: 'readme.txt' }
       - tool_result: { tool: terminal.run, path: output, contains: 'proj-t7-backup' }
+      - read_tool: { tool: terminal.run, args: { lang: sh, code: 'ls -R ~/proj-t7 ~/proj-t7-backup' }, path: output, contains: 'readme.txt' }
     covers: [terminal.run]
     notes: >-
       One shell line with && chains the whole layout; the ls -R listing must show the file and
-      the backup directory, so both operations are pinned from the output.
+      the backup directory, so both operations are pinned from the output. The read_tool end
+      state re-runs ls -R itself (lead's ruling, 2026-11-25): a model that only echoed a
+      listing or copied in the Files app cannot pass - the backup must exist in the guest with
+      readme.txt inside it.
 
   - id: terminal-08-sed-fix
     split: train
@@ -165,10 +182,13 @@ journeys:
       - { tool: terminal.run, lang: sh, code: "echo 'port=8080' > ~/config-t8.ini && sed 's/8080/9090/' ~/config-t8.ini > ~/config-t8-new.ini && cat ~/config-t8-new.ini" }
     checks:
       - tool_result: { tool: terminal.run, path: output, contains: 'port=9090' }
+      - read_tool: { tool: terminal.run, args: { lang: sh, code: 'cat ~/config-t8-new.ini' }, path: output, contains: 'port=9090' }
     covers: [terminal.run]
     notes: >-
       The cat at the end of the chain is the deliverable; the pinned line proves the sed
-      substitution ran and the new file exists.
+      substitution ran and the new file exists. The read_tool end state re-reads the file
+      itself (lead's ruling, 2026-11-25): a model that only claimed the fix cannot pass -
+      config-t8-new.ini must actually contain port=9090 in the guest.
 
   - id: terminal-09-head-and-tail
     split: holdout
@@ -178,6 +198,9 @@ journeys:
       the home directory containing the numbers 1 through 20, one per line. Then print the
       first three lines, a line with only three dashes, and the last three lines, all in a
       single run, so I can see the shape of the list in one glance.
+    setup:
+      - close_all: true
+      - open_app: terminal
     oracle:
       - { tool: terminal.run, lang: sh, code: 'seq 1 20 > ~/seq-t9.txt && head -n 3 ~/seq-t9.txt && echo --- && tail -n 3 ~/seq-t9.txt' }
     checks:

@@ -58,6 +58,12 @@ export function validateRequest(raw) {
   if (raw?.oracle === undefined) req.oracle = false;
   else if (typeof raw.oracle === 'boolean') req.oracle = raw.oracle;
   else errors.push('oracle must be true or false');
+  // Lanes never run a model on holdout rows: a non-lead requester with a non-train split would
+  // leak holdout scores (lead ruling, 2026-11-25 - a lane queued a model run on split all).
+  // Oracle runs are exempt: they verify pinned calls only, so no model answer is at stake.
+  if (req.oracle === false && req.split !== 'train' && str(req.requester) && req.requester !== 'lead') {
+    errors.push("lanes run split train only; holdout model runs are the lead's");
+  }
   return errors.length ? { ok: false, errors } : { ok: true, request: req };
 }
 
@@ -99,19 +105,30 @@ const sleep = ms => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function main() {
   const argv = process.argv.slice(2);
-  let queueDir = DEFAULT_QUEUE, base = 'http://127.0.0.1:4333';
+  let queueDir = DEFAULT_QUEUE, base = 'http://127.0.0.1:4333', prefetch = 'off';
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--queue') queueDir = argv[++i];
     else if (a === '--base') base = argv[++i];
+    else if (a === '--prefetch') prefetch = argv[++i]; // on: the per-turn skill note (?prefetch=1), for A/B runs only
     else if (a === '--help' || a === '-h') { console.log(USAGE); process.exit(0); }
   }
   mkdirSync(queueDir, { recursive: true });
-  console.log(`eval-queue: queue=${queueDir} base=${base} (one shared session; Ctrl+C stops after the current journey)`);
-  const { ctx, page, buddy } = await launchEval(base, 'off', { handleSIGINT: false });
+  console.log(`eval-queue: queue=${queueDir} base=${base} prefetch=${prefetch} (one shared session; Ctrl+C stops after the current journey)`);
+  const { ctx, page, buddy } = await launchEval(base, prefetch, { handleSIGINT: false });
 
   let stop = false;
   process.on('SIGINT', () => { stop = true; console.log('stopping after the current journey...'); });
+  process.on('SIGTERM', () => { stop = true; console.log('stopping after the current journey...'); });
+  // A closed browser ends the runner: never write results or .done for requests it could not run.
+  // Log only when the close is unexpected: a graceful stop (or the fatal-exit path) also closes the context.
+  let browserClosed = false;
+  ctx.on('close', () => { if (!stop) console.error('FATAL: the browser closed; stopping without marking requests done'); browserClosed = true; stop = true; });
+  // A crashed or closed desktop page is as dead as a closed browser: the ab-off arm's tab died in the
+  // middle of terminal and the runner wrote 30 "browser has been closed" rows for four apps.
+  const pageDead = (why) => () => { browserClosed = true; stop = true; console.error(`FATAL: the desktop page ${why}; stopping without marking requests done`); };
+  page.on('crash', pageDead('crashed'));
+  page.on('close', () => { if (!stop) pageDead('closed')(); });
   let lastModel = null;
   try {
     for (;;) {
@@ -150,7 +167,7 @@ async function main() {
         console.log(`failed ${pick.id}: ${String(error?.message ?? error).split('\n')[0]}`);
         continue;
       }
-      if (stop) {
+      if (stop || browserClosed) {
         // Stopped part way: leave the request pending (no .done, no result) so it reruns in full.
         rmSync(join(queueDir, names.running), { force: true });
         console.log(`stopped during ${pick.id}; it stays queued and reruns in full`);

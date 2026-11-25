@@ -186,12 +186,11 @@ journeys:
       - tool: docs.get_text
       - tool: docs.insert_text
         text: "Sent to the client"
-        para_id: "${0.paragraphs[0].paraId}"
+        para_id: "${0.paragraphs[2].paraId}"
       - tool: docs.get_text
     checks:
-      - docs_text_contains: "Sent to the client"
-      - answer_matches: "Sent to the client.{1,10}End of experiment notes"
-    notes: "Genuine read-then-act journey; setup seeds the document, the oracle reads the paragraph ids, inserts after the first paragraph's id (${0.paragraphs[0].paraId}) and the final read pins the order."
+      - docs_text_contains: "Sent to the client End of experiment notes"
+    notes: "Genuine read-then-act journey; setup seeds the document, the oracle reads the paragraph ids, inserts after the 'First draft done' paragraph (index 2: 0 is the 'Untitled document' title, 1 is the blank line; b15 oracle caught the old index 0, which pinned the title) and the final read pins the order. The check pins the order in the document itself (the ordered pair, whitespace normalized), not the model's answer phrasing (b16 sweep: the model did the correct insert but its answer phrased the result without both lines adjacent, so the old answer check failed a correct run)."
 
   - id: docs-08-start-over
     split: holdout
@@ -287,9 +286,9 @@ journeys:
       - docs_text_contains: "Next steps"
       - docs_text_contains: "Open the beta to 500 users"
       - docs_text_contains: "Ship the billing redesign."
-      - answer_matches: "Next steps.{1,10}Open the beta to 500 users.{1,10}Current plan"
+      - docs_text_contains: "Next steps Open the beta to 500 users. Current plan"
     covers: [docs.move_section, docs.get_text]
-    notes: "Reorganise journey over a seeded document; all sections survive and the final read pins the new order (Next steps and its line above Current plan)."
+    notes: "Reorganise journey over a seeded document; all sections survive and the ordered triple check pins the new order in the document itself (Next steps and its line above Current plan) instead of the model's answer phrasing (b16 sweep: the model moved only the heading line and returned no visible answer)."
 
   - id: docs-12-demo-invite
     split: holdout

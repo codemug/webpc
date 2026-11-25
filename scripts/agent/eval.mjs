@@ -54,11 +54,19 @@ function parseArgs(argv) {
 
 // ---- pure helpers (no browser) ---------------------------------------------
 
+/** A trace entry that produced a result. Session-level refusals (the A21 close, the
+ *  identical-fail stop, the unknown tool) carry a plain-string error and never ran the
+ *  tool, so a check must not read a refusal as the tool's last result (sweep b17
+ *  terminal-08/10: the stopped duplicates become the last terminal.run entry after the
+ *  acting-name fix, and the real last output sits behind them). */
+const ran = (e) => !(e.result && typeof e.result === 'object' && typeof e.result.error === 'string');
+
 /** The ordered sequence of catalog tool invocations implied by a trace: a direct
  *  catalog-tool name, or the `tool` argument of a call_tool. Meta tools are skipped. */
 function catalogToolSequence(trace, catalogNames) {
   const seq = [];
   for (const entry of trace) {
+    if (!ran(entry)) continue;
     if (catalogNames.has(entry.name)) { seq.push(entry.name); continue; }
     if (entry.name === 'call_tool') {
       const tool = entry.arguments?.tool;
@@ -385,7 +393,7 @@ export async function runToolInPage(buddy, tool, args) {
  *  from the ?eval=1 trace: the last cyberchef.bake call's result (call_tool wraps it as
  *  { ok, tool, result: { output } }). */
 export function checkCyberchefOutput(trace, expected) {
-  const entry = [...trace].reverse().find((e) => e.name === 'cyberchef.bake' || (e.name === 'call_tool' && e.arguments?.tool === 'cyberchef.bake'));
+  const entry = [...trace].reverse().find((e) => ran(e) && (e.name === 'cyberchef.bake' || (e.name === 'call_tool' && e.arguments?.tool === 'cyberchef.bake')));
   const output = entry?.result?.result?.output;
   const ok = typeof output === 'string' && output.trim() === String(expected).trim();
   return { ok, detail: ok ? 'bake output matches' : `no matching bake output (got ${JSON.stringify(output ?? null)})` };
@@ -394,7 +402,7 @@ export function checkCyberchefOutput(trace, expected) {
 /** The guest's real output, read from the ?eval=1 trace: the last terminal.run call's result
  *  (call_tool wraps it as { ok, tool, result: { exitCode, output } }). */
 export function checkTerminalOutput(trace, expected) {
-  const entry = [...trace].reverse().find((e) => e.name === 'terminal.run' || (e.name === 'call_tool' && e.arguments?.tool === 'terminal.run'));
+  const entry = [...trace].reverse().find((e) => ran(e) && (e.name === 'terminal.run' || (e.name === 'call_tool' && e.arguments?.tool === 'terminal.run')));
   const output = entry?.result?.result?.output;
   const exact = Boolean(expected.exact);
   const ok = typeof output === 'string' && normalizeText(output, exact).includes(normalizeText(expected.text, exact));
@@ -570,7 +578,7 @@ export function checkAnswer(answer, kind, value) {
  *  whole result when no path). A direct catalog call carries its result in entry.result; the
  *  call_tool wrapper carries it in entry.result.result ({ ok, tool, result }). */
 export function checkToolResult(trace, { tool, path, ...cmp }) {
-  const entry = [...trace].reverse().find((e) => e.name === tool || (e.name === 'call_tool' && e.arguments?.tool === tool));
+  const entry = [...trace].reverse().find((e) => ran(e) && (e.name === tool || (e.name === 'call_tool' && e.arguments?.tool === tool)));
   if (!entry) return { ok: false, detail: `no ${tool} call in the trace` };
   const raw = entry.result;
   const result = raw && typeof raw === 'object' && 'result' in raw && 'tool' in raw ? raw.result : raw;
@@ -658,8 +666,10 @@ async function runSetup(page, buddy, steps) {
 /** Select and load the model once; wait until the model state says it is ready (Send stays
  *  disabled while the box is empty, so it is no longer the ready signal). */
 export async function loadModel(buddy, model) {
-  await buddy.waitForFunction(() => { const s = document.querySelector('#load-model'); return s && !s.disabled; }, null, { timeout: 60_000, polling: 250 });
+  // Select first: while the loaded model is the one selected, Load stays disabled, so waiting for it
+  // before choosing the next model timed out on every switch (qwen3.5-2b to lfm3-1.7b, j3-cyberchef-1).
   await buddy.locator('#model').selectOption(model);
+  await buddy.waitForFunction(() => { const s = document.querySelector('#load-model'); return s && !s.disabled; }, null, { timeout: 60_000, polling: 250 });
   await buddy.locator('#load-model').click();
   await buddy.waitForFunction(() => /^(Ready|Cloud|Chrome)/.test(document.querySelector('#model-state')?.textContent ?? ''), null, { timeout: 300_000, polling: 500 });
   console.log(`model ${model} loaded and ready`);
@@ -687,7 +697,9 @@ async function readTrace(buddy) {
 export async function launchEval(base, prefetch = 'off', { handleSIGINT = true } = {}) {
   // handleSIGINT false: the queue runner's own Ctrl+C handler finishes the current journey; with
   // Playwright's default the browser closed under it (beepbox-03, oracle-sqliteviz-r5).
-  const ctx = await chromium.launchPersistentContext(PROFILE, { channel: 'chrome', headless: true, handleSIGINT, args: ['--enable-unsafe-webgpu'] });
+  // SIGTERM too: Playwright's own handler closed the browser under the runner, which then marked
+  // every pending request done with "browser closed" rows (19 requests lost at 10:15:47).
+  const ctx = await chromium.launchPersistentContext(PROFILE, { channel: 'chrome', headless: true, handleSIGINT, handleSIGTERM: handleSIGINT, args: ['--enable-unsafe-webgpu'] });
   const page = await ctx.newPage();
   page.setDefaultTimeout(0);
   await page.goto(`${base}/pc/`);
@@ -707,8 +719,15 @@ export async function launchEval(base, prefetch = 'off', { handleSIGINT = true }
       const tx = db.transaction('keyval', 'readwrite');
       for (const key of keys) if (String(key).startsWith('buddy:thread')) tx.objectStore('keyval').delete(key);
       await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+      db.close();
+    } else {
+      // A bare open() of a missing database creates it at version 1 with no stores, and
+      // idb-keyval's upgrade never runs again on it: every chat then fails with "object
+      // stores was not found" (118 runs on 2026-11-25). Drop it so idb-keyval recreates it.
+      db.close();
+      await new Promise((res, rej) => { const r = indexedDB.deleteDatabase('keyval-store'); r.onsuccess = res; r.onerror = () => rej(r.error); });
     }
-    db.close(); localStorage.removeItem('buddy:openThread');
+    localStorage.removeItem('buddy:openThread');
   });
   await buddy.goto(buddy.url(), { waitUntil: 'domcontentloaded' });
   if (!new URL(buddy.url()).searchParams.get('eval')) { const u = new URL(buddy.url()); u.searchParams.set('eval', '1'); if (prefetch === 'on') u.searchParams.set('prefetch', '1'); await buddy.goto(u.toString(), { waitUntil: 'domcontentloaded' }); }
@@ -728,13 +747,24 @@ async function finalAnswer(buddy) {
 
 /** Run a journey's whole checks list; every check must pass. Records { kind, ok, detail }.
  *  read_tool checks call the read tool through the agent frame (buddy). */
+/** Settle a step that runs in the page within ms, or reject: a check read, a setup call or an
+ *  oracle tool that never answers hung the whole queue for 15 minutes (j3-gridcraft-b9, build 10). */
+export function within(promise, ms, what) {
+  let timer;
+  const limit = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${what} did not finish within ${ms / 1000} s`)), ms); });
+  return Promise.race([promise, limit]).finally(() => clearTimeout(timer));
+}
+const CHECK_TIMEOUT = 60_000;
+const SETUP_TIMEOUT = 180_000;
+const STEP_TIMEOUT = 120_000;
+
 async function runChecks(buddy, page, trace, answer, checks) {
   const out = [];
   for (const entry of checks ?? []) {
     const [kind, value] = Object.entries(entry ?? {})[0] ?? [];
     const validated = validateCheck(kind, value);
     if (!validated.ok) { out.push({ kind: kind ?? null, ok: false, detail: validated.detail ?? 'malformed check' }); continue; }
-    const res = await runNamedCheck(page, { trace, answer, buddy }, kind, validated.value);
+    const res = await within(runNamedCheck(page, { trace, answer, buddy }, kind, validated.value), CHECK_TIMEOUT, `check ${kind}`).catch((error) => ({ ok: false, detail: error.message }));
     out.push({ kind, ok: res.ok, detail: res.detail });
   }
   return out;
@@ -834,25 +864,44 @@ async function runTasks(args) {
 // through window.__buddyRun (app.js, EVAL_TRACE only); a journey with needs: and no oracle
 // is listed NEEDS and skipped.
 
-/** Load the journey files (zero files is a valid state), grouped by app. With journeyIds,
- *  every named id must be found (the queue runner's per-journey requests). */
-export function loadJourneys(appFilter, journeyIds = null) {
+/** Load the journey files (zero files is a valid state), grouped by app. Per file: a file
+ *  that does not parse (a lane mid-edit) is skipped and logged once; a request fails only
+ *  when a file it needs did not parse - its app's file for an app request, every file for
+ *  an all-apps request, or a file that may hold a requested id the parsed files lack.
+ *  dir is injectable for tests (the queue runner passes the real journeys dir). */
+const brokenLogged = new Set(); // journey files whose parse failure was logged (once per process)
+export function loadJourneys(appFilter, journeyIds = null, dir = JOURNEYS_DIR) {
   let files = [];
-  try { files = readdirSync(JOURNEYS_DIR, { withFileTypes: true }).filter((d) => d.isFile() && d.name.endsWith('.yaml')).map((d) => d.name).sort(); } catch { /* the dir does not exist yet */ }
+  try { files = readdirSync(dir, { withFileTypes: true }).filter((d) => d.isFile() && d.name.endsWith('.yaml')).map((d) => d.name).sort(); } catch { /* the dir does not exist yet */ }
   const names = appFilter === 'all' ? files : [`${appFilter}.yaml`];
   const missing = names.filter((name) => !files.includes(name));
-  if (missing.length) throw new Error(`no journey file ${missing.join(', ')} in tests/agent-eval/journeys (have: ${files.join(', ') || 'none'})`);
+  if (missing.length) throw new Error(`no journey file ${missing.join(', ')} in ${dir} (have: ${files.join(', ') || 'none'})`);
   const byApp = new Map();
+  const broken = [];
   for (const name of names) {
-    const doc = parse(readFileSync(join(JOURNEYS_DIR, name), 'utf8'));
+    let doc;
+    try { doc = parse(readFileSync(join(dir, name), 'utf8')); }
+    catch (error) {
+      broken.push(name);
+      if (!brokenLogged.has(name)) {
+        brokenLogged.add(name);
+        console.error(`journey file ${name} does not parse (${String(error.message).split('\n')[0]}); requests that need it fail until it is fixed`);
+      }
+      continue;
+    }
     if (typeof doc?.app !== 'string' || !Array.isArray(doc?.journeys) || !doc.journeys.length) throw new Error(`journey file ${name} must have an app and a non-empty journeys list`);
     byApp.set(doc.app, [...(byApp.get(doc.app) ?? []), ...doc.journeys]);
   }
   if (journeyIds?.length) {
     const known = new Set([...byApp.values()].flat().map((j) => j.id));
     const unknown = journeyIds.filter((id) => !known.has(id));
-    if (unknown.length) throw new Error(`unknown journey ids: ${unknown.join(', ')}`);
+    if (unknown.length) throw new Error(broken.length
+      ? `journey ids ${unknown.join(', ')} are not in the journey files that parse; ${broken.join(', ')} does not parse and may hold them`
+      : `unknown journey ids: ${unknown.join(', ')}`);
     for (const [app, journeys] of [...byApp]) byApp.set(app, journeys.filter((j) => journeyIds.includes(j.id)));
+  } else if (broken.length) {
+    // An app request needs its file; an all-apps request needs every file.
+    throw new Error(`journey file${broken.length > 1 ? 's' : ''} ${broken.join(', ')} ${broken.length > 1 ? 'do' : 'does'} not parse`);
   }
   return byApp;
 }
@@ -873,14 +922,14 @@ async function runJourneyOracle(buddy, page, journey) {
   const started = Date.now();
   const row = { id: journey.id, split: journey.split, pass: false, checks: [], seconds: 0, rounds: 0, answer: '', trace: [], error: null };
   try {
-    await runSetup(page, buddy, journey.setup);
+    await within(runSetup(page, buddy, journey.setup), SETUP_TIMEOUT, 'setup');
     const hasRun = await buddy.evaluate(() => typeof window.__buddyRun === 'function');
     if (!hasRun) throw Object.assign(new Error('FATAL: window.__buddyRun is missing (app.js not current or ?eval=1 not active)'), { fatal: true });
     await buddy.evaluate(() => { if (window.__buddyTrace) window.__buddyTrace.length = 0; });
     const stepResults = [];
     for (const step of journey.oracle ?? []) {
       const { tool, ...args } = step ?? {}; // the step is { tool, ...args }, like a setup run step
-      const res = await runToolInPage(buddy, tool, fillStepRefs(args, stepResults));
+      const res = await within(runToolInPage(buddy, tool, fillStepRefs(args, stepResults)), STEP_TIMEOUT, `oracle step ${tool}`).catch((error) => ({ ok: false, error: error.message }));
       stepResults.push(res?.result);
       if (res?.ok !== true) { row.error = `oracle step failed: ${tool} ${JSON.stringify(res?.error ?? res)}`.slice(0, 300); break; }
     }
@@ -914,7 +963,7 @@ async function runJourneyAgent(buddy, page, journey, repeat, shouldStop = () => 
     const started = Date.now();
     const row = { id: journey.id, split: journey.split, rep, repeat, pass: false, checks: [], seconds: 0, rounds: 0, answer: '', trace: [], error: null };
     try {
-      await runSetup(page, buddy, journey.setup);
+      await within(runSetup(page, buddy, journey.setup), SETUP_TIMEOUT, 'setup');
       await newChat(buddy);
       await buddy.locator('#message').fill(journey.prompt);
       await buddy.locator('#send').click();

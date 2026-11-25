@@ -30,15 +30,19 @@ app: lightcraft
 #     tombstones (demo and journey) do not survive end-state reads reliably (measured both
 #     ways across rounds). Delete and restore effects are therefore pinned with tool_result
 #     checks on the oracle's own live reads inside the journey, never at end state.
-#   - Writes settle asynchronously: an import's record and a delete's tombstone are visible
-#     to the query and inspect commands a few tool calls after the mutating call (measured
-#     invisible at 1-2 calls, settled by 4). A pinned journey-local read therefore leaves a
-#     few read steps after the mutation, and tool_result only sees the LAST step of a tool,
-#     so the pinned read is the final step of the journey.
-#   - The album store is sticky: albums created by earlier runs (journey oracles or model
-#     baselines) survive across queue requests, so a fresh store's album count is 6 plus the
-#     leftovers and a new album's id keeps growing. Album ids and counts are pinned per round
-#     against the leftover state and need re-pinning after any lightcraft run.
+#   - Import records settle asynchronously a few tool calls after the import (measured
+#     invisible at 1-2 calls, settled by 4); the journey's catalog checks read a few calls
+#     later and arbitrate the commit. The delete tombstone, in contrast, does not surface in
+#     ANY read on the current build: the oracle r16 settle ladder (catalog.query at ~5 s and
+#     ~9 s, photo.inspect at ~13 s after the delete) still shows the photo as not deleted -
+#     build 13 had it settled by ~4 s (oracle r8). This is the app-level finding for build
+#     16; 05 is needs: naming the gap, and lightcraft.delete verifies its post-condition
+#     (catalog.stats.deleted rising) and fails honestly when the surface does not reflect.
+#   - The eval harness rewrites the editor src to store=memory, so every journey starts on a
+#     fresh store: albums created by earlier runs do NOT survive, and a new album's id is the
+#     demo's next id - observed 8..15 across builds and runs (the demo album count drifts
+#     with the pinned release). Album ids are never pinned; the album is pinned by name and
+#     count via albums.list.
 #   - catalog.query filters: flag, edited, deleted, rating/ratingOp and only work; album
 #     takes the album id; the label filter shape is pinned by the probe round.
 #   - develop.adjust takes the control id "light.exposure" and moves the exposure value
@@ -75,10 +79,11 @@ journeys:
       - { tool: lightcraft.run_command, command: catalog.query, params: '{"filter":{"only":[25,26,27]}}' }
     checks:
       - window_open: lightcraft
-      - tool_result: { tool: lightcraft.run_command, path: total, equals: 3 }
+      - craft_request: { app: lightcraft, method: photo.inspect, params: { id: 25 }, expect: { path: file_name, equals: beach-sunset.jpg } }
+      - craft_request: { app: lightcraft, method: photo.inspect, params: { id: 26 }, expect: { path: file_name, equals: mountain-portrait.jpg } }
       - craft_request: { app: lightcraft, method: photo.inspect, params: { id: 27 }, expect: { path: file_name, equals: city-night.png } }
     covers: [lightcraft.import_file, lightcraft.run_command]
-    notes: The library starts from the 24-photo demo library whose load still settles in the first moments after the reset, so the absolute photo count cannot be pinned; the read-back steps also give the imports' records time to settle (the store applies them a few calls after the import), and the final scoped read over the three imported ids (total 3) plus the end-state name of the last import pin that all three landed.
+    notes: The library starts from the 24-photo demo library whose load still settles in the first moments after the reset, so the absolute photo count cannot be pinned; the read-back steps also give the imports' records time to settle (the store applies them a few calls after the import). The read-back command is not pinned, because the pack's import skill teaches the library_info count read and a correct model may use it; the end-state file names of all three imported ids pin that all three landed.
 
   - id: lightcraft-02-rate-and-flag-keepers
     split: train
@@ -187,14 +192,7 @@ journeys:
       - { run: { tool: lightcraft.import_file, path: /Photos/trip/beach-sunset.jpg } }
       - { run: { tool: lightcraft.import_file, path: /Photos/trip/mountain-portrait.jpg } }
       - { run: { tool: lightcraft.import_file, path: /Photos/trip/city-night.png } }
-    oracle:
-      - { tool: lightcraft.rate, rating: 5, ids: [25] }
-      - { tool: lightcraft.delete, ids: [26, 27] }
-      - { tool: lightcraft.restore, ids: [26] }
-      - { tool: lightcraft.run_command, command: catalog.query, params: '{"filter":{"rating":5,"ratingOp":"exactly","only":[25,26,27]}}' }
-      - { tool: lightcraft.run_command, command: catalog.query, params: '{"filter":{"only":[25,26,27]}}' }
-      - { tool: lightcraft.run_command, command: photo.inspect, params: '{"id":26}' }
-      - { tool: lightcraft.run_command, command: photo.inspect, params: '{"id":27}' }
+    needs: "lightcraft.delete surface (app-level finding for build 16): the delete's tombstone does not reflect in any read on the current build - the oracle r16 settle ladder reads the photo at 5 s, 9 s and 13 s after the delete and catalog.query and photo.inspect still show it as not deleted (build 13 had the tombstone settled by ~4 s, oracle r8). The mutations are deterministic (delete changed:2, restore changed:1) but the end state is unreadable, so no check can pin 'the city photo is in Recently Deleted'; lightcraft.delete now verifies its post-condition (catalog.stats.deleted rising) and fails honestly with the teaching error instead."
     checks:
       - window_open: lightcraft
       - tool_result: { tool: lightcraft.delete, path: changed, equals: 2 }
@@ -202,7 +200,7 @@ journeys:
       - tool_result: { tool: lightcraft.run_command, path: deleted, equals: true }
       - craft_request: { app: lightcraft, method: catalog.query, params: { filter: { rating: 5, ratingOp: exactly, only: [25, 26, 27] } }, expect: { path: total, equals: 1 } }
     covers: [lightcraft.rate, lightcraft.delete, lightcraft.restore, lightcraft.run_command]
-    notes: "Every requirement in the prompt is pinned on journey-local facts: the delete and restore changes (2 and 1) come from the oracle's own reads, the read-back steps give the tombstone time to settle (the store applies deletes a few calls after the call), the final live inspect then shows the city photo still deleted (the mountain photo's restore is pinned by the restore change of 1), and the five star rating on the beach shot (scoped to the imported ids, set by the journey) is stable in the end state. Absolute library counts and tombstones at end state are not pinned: the demo library's load still settles during the journey and the end-state re-seed drops Recently Deleted tombstones."
+    notes: "Every requirement in the prompt was pinned on journey-local facts (delete and restore changes 2 and 1 from the oracle's own reads; the five star rating on the beach shot scoped to the imported ids), until the app-level finding: the delete's tombstone no longer surfaces in any read on the current build (oracle r16 settle ladder: not deleted at 5 s / 9 s / 13 s; r8 build 13 had it settled by ~4 s), so the 'city photo in Recently Deleted' pin is unreadable and the journey is needs: instead of pinning a check the end state cannot satisfy. Absolute library counts and tombstones at end state are not pinned: the demo library's load still settles during the journey and the end-state re-seed drops Recently Deleted tombstones."
 
   - id: lightcraft-06-count-the-keepers
     split: train
@@ -283,7 +281,7 @@ journeys:
       - { tool: lightcraft.run_command, command: photo.label, params: '{"ids":[25,26],"label":"red"}' }
       - { tool: lightcraft.run_command, command: library.filter, params: '{"label":"red"}' }
     checks:
-      - craft_request: { app: lightcraft, method: catalog.query, params: { filter: { album: 12 } }, expect: { path: total, equals: 2 } }
+      - read_tool: { tool: lightcraft.run_command, args: { command: albums.list }, matches: '"count":2,((?:(?!\}).)*)?"name":"Weekend Trip"' }
       - craft_request: { app: lightcraft, method: catalog.query, params: { filter: { label: red, only: [25, 26, 27] } }, expect: { path: total, equals: 2 } }
     covers: [lightcraft.run_command]
-    notes: "The album store is sticky, so the new album's id is pinned per round against the leftover albums from earlier runs (ids 8..11 at the time of writing, next free id 12); the album membership query and the red label (scoped to the imported ids) each pin that the two keepers landed in the album and on the label."
+    notes: "The eval harness runs a fresh memory store per journey, so the new album's id drifts with the demo state (observed 8..15 across builds and runs) and is never pinned: the album is pinned by name and photo count via albums.list (the tempered-dot regex keeps the match inside the album's own object, so a demo album with count 2 cannot false-positive), and the red label (scoped to the imported ids) pins that the two keepers landed on the label."

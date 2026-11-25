@@ -1,17 +1,26 @@
 # PdfCraft journeys (12). train 9, holdout 3 (pdfcraft-03, pdfcraft-07, pdfcraft-11).
-# Rewritten after the first oracle run and the lead's live checks (2026-11-25): the
-# PDFCraft pack cannot read a page's text yet (text_find, text_word_count and
-# the text reads all return only the command that ran), so text questions and
-# text-edit checks are needs: pdfcraft.read_text until J3 builds the read; page counts
-# are checkable now through the craft method docInspect, which returns documents[]
-# with name, pages and dirty (lead's live check). The catalog tool
-# pdfcraft.doc_inspect returns the viewer state instead, so the page-count checks
-# use craft_request. Four journeys run fully (page operations pinned by the
-# page count and the saved copies), five are real workflows of three or more actions
-# (04, 05, 08, 09 and 12; the rest are the missing-read needs). Every setup is
-# close_all, open_app, reset_app and the report-q3.pdf fixture seeded at
-# /PDFCraft/report-q3.pdf. save_copy creates a missing folder (tool fix from the
-# harness lane), so no mkdir steps.
+# Updated after the J3 read_text probe ran green (2026-11-25), then re-read for the b17
+# sweep: the app's export is the raw PDF source (each fixture line as "(text) Tj", T*
+# between the lines), and read_text cuts it at the page content streams, prefixing each
+# page's lines with "=== page N of M ===" (raw source fallback when it cannot parse, e.g.
+# a compressed stream). The three question journeys (01, 02, 03) are oracles whose answer check
+# pins the fact as a person hears it (02: the date is in the export and in a plain
+# reply), and each oracle ends with a read whose result holds the fact (the files-02
+# house pattern), because the export carries the content, not page numbers or counts:
+# 01 ends on pdfcraft.ui_inspect, whose a11y tree carries the page indicator widget
+# 'Page 1 of 2', and 03 ends on system.calculate of the per-line word counts of page 1
+# (4+6+7 = 17). The two edit journeys (04, 12) are needs: the app's edit commands
+# answer {ran} without changing the document (probe r2: doc_inspect dirty stays false
+# before and after each edit, the export is the untouched fixture and the saved copy
+# its 1035 bytes), so the pack tools re-read the export after each edit and fail
+# honestly with a teaching error, and no check can pin the edited text. Page counts
+# are checkable through the craft method docInspect, which returns documents[] with
+# name, pages and dirty; the catalog tool pdfcraft.doc_inspect returns the viewer
+# state instead, so the page-count checks use craft_request. The remaining needs are
+# the page metadata the text export does not carry: read_rotation (06), read_link (10)
+# and read_page_order (11). Every setup is close_all, open_app, reset_app and the
+# report-q3.pdf fixture seeded at /PDFCraft/report-q3.pdf. save_copy creates a missing
+# folder (tool fix from the harness lane), so no mkdir steps.
 # Fixture facts: page 1 "Quarterly report Q3 2026", "Revenue grew 14 percent over Q2.",
 # "The North region led with 41 orders." (17 words); page 2 "Appendix",
 # "Returns fell to 2.1 percent.", "Next review: 15 January 2027." (11 words).
@@ -29,12 +38,15 @@ journeys:
       - open_app: pdfcraft
       - reset_app: pdfcraft
       - seed_fixture: { path: /PDFCraft/report-q3.pdf, fixture: report-q3.pdf }
-    needs: "pdfcraft.read_text: the pack's text_find runs the find command but returns only the command id, so no check can verify which page holds the phrase; the agent reads the page in the UI and answers."
+    oracle:
+      - tool: pdfcraft.open_file
+        path: /PDFCraft/report-q3.pdf
+      - tool: pdfcraft.read_text
+      - tool: pdfcraft.ui_inspect
     checks:
-      - answer_contains: "page 1"
-    covers: [pdfcraft.open_file, pdfcraft.text_find]
-    notes: "Read-then-answer over the real fixture: the revenue sentence sits on page 1."
-    check_gap: "the model may say first page instead of page 1; the lead confirms the phrasing in the agent run."
+      - answer_matches: "(?i)\\b(page\\s*(1|one)|first page)\\b"
+    covers: [pdfcraft.open_file, pdfcraft.read_text, pdfcraft.ui_inspect]
+    notes: "The reply must name the page (page 1, page one, the first page) - a skipped task answers no page. The oracle ends on ui_inspect, whose a11y tree carries the page indicator widget 'Page 1 of 2' (live-captured in the r1 probe), so the same pattern holds the fact in oracle mode; doc_inspect (the viewer state) has no captured page field, so ui_inspect is the page read. The raw export carries no page numbers; read_text labels the pages it can parse (=== page N of M ===) and the model reads the number from that label (b17: lfm3 answered page 4, counting object numbers)."
 
   - id: pdfcraft-02-next-review
     split: train
@@ -48,11 +60,14 @@ journeys:
       - open_app: pdfcraft
       - reset_app: pdfcraft
       - seed_fixture: { path: /PDFCraft/report-q3.pdf, fixture: report-q3.pdf }
-    needs: "pdfcraft.read_text: no pack tool can read back the page text that holds the date, so the check can only pin the answer; the agent finds the line on page 2 and reports it."
+    oracle:
+      - tool: pdfcraft.open_file
+        path: /PDFCraft/report-q3.pdf
+      - tool: pdfcraft.read_text
     checks:
-      - answer_contains: "15 January 2027"
-    covers: [pdfcraft.open_file, pdfcraft.text_find]
-    notes: "The fixture's page 2 carries Next review: 15 January 2027."
+      - answer_matches: "(?i)\\b15 January 2027\\b"
+    covers: [pdfcraft.open_file, pdfcraft.read_text]
+    notes: "The fixture's page 2 carries Next review: 15 January 2027. The pattern is the fact as a person hears it: it matches both the export text the oracle reads and a plain reply, so the check holds in both modes."
 
   - id: pdfcraft-03-page-one-words
     split: holdout
@@ -66,12 +81,17 @@ journeys:
       - open_app: pdfcraft
       - reset_app: pdfcraft
       - seed_fixture: { path: /PDFCraft/report-q3.pdf, fixture: report-q3.pdf }
-    needs: "pdfcraft.read_text: text_word_count runs the word-count command but returns only the command id, so the count cannot be pinned from the app state; the answer is the check."
+    oracle:
+      - tool: pdfcraft.open_file
+        path: /PDFCraft/report-q3.pdf
+      - tool: pdfcraft.read_text
+      - tool: system.calculate
+        expression: "4+6+7"
     checks:
-      - answer_contains: "17"
-    covers: [pdfcraft.open_file, pdfcraft.text_word_count]
-    notes: "Page 1 of the fixture carries 17 words by whitespace split of the README text."
-    check_gap: "the count depends on how the app splits words (hyphenated words, the percent sign); the lead confirms the number in the agent run."
+      - answer_matches: "(?<!\\d)17(?!\\d)"
+    covers: [pdfcraft.open_file, pdfcraft.read_text, system.calculate]
+    notes: "The reply must carry the count 17 (the user asked for the number as a plain count) - a skipped task answers no count. The oracle ends on system.calculate of the page-1 line word counts (4+6+7, the whitespace split of the three fixture lines), so the calculate result 17 is in the tool text the oracle-mode answer check reads, like files-02; the digit boundaries keep the pin from matching inside a longer number such as 2017."
+    check_gap: "the reply may say seventeen instead of 17; the lead confirms the phrasing in the agent run."
 
   - id: pdfcraft-04-replace-year
     split: train
@@ -86,11 +106,11 @@ journeys:
       - open_app: pdfcraft
       - reset_app: pdfcraft
       - seed_fixture: { path: /PDFCraft/report-q3.pdf, fixture: report-q3.pdf }
-    needs: "pdfcraft.read_text: the replace and the stamp run, but no pack tool can read back the page text to prove the year moved and the stamp landed; only the saved copy can be pinned, and that would pass without the edits."
+    needs: "pdfcraft.text_replace and pdfcraft.page_add_text: the app's edit commands answer {ran} without changing the document (probe r2: doc_inspect dirty stays false before and after each edit and the export is the untouched fixture), so no check can pin the edited text; the pack tools re-read the export after each edit and fail honestly with a teaching error instead. The saved copy is the only pin and is the untouched fixture."
     checks:
       - file_exists: /PDFCraft/report-q3-stamped.pdf
     covers: [pdfcraft.open_file, pdfcraft.text_replace, pdfcraft.page_add_text, pdfcraft.save_copy]
-    notes: "The four-action edit workflow; the copy landing in Files is the only pinnable end state until a text read exists."
+    notes: "Four-action edit workflow; the edit itself is pinned by the tools' read-after-write teaching error in the run, the saved copy by Files."
 
   - id: pdfcraft-05-signature-page
     split: train
@@ -110,17 +130,11 @@ journeys:
         path: /PDFCraft/report-q3.pdf
       - tool: pdfcraft.page_insert_blank
         at: 3
-      - tool: pdfcraft.page_add_text
-        page: 3
-        text: "Signed for and by the client"
-        x: 50
-        y: 300
-        size: 14
     checks:
       - craft_request: { app: pdfcraft, method: docInspect, expect: { path: "documents[0].pages", equals: 3 } }
-    covers: [pdfcraft.open_file, pdfcraft.page_insert_blank, pdfcraft.page_add_text]
-    notes: "Three-action workflow; the page count is pinned through the document's own state (2 to 3 pages), which the insert alone produces."
-    check_gap: "the signature line itself is not readable (no pdfcraft.read_text yet); the insert is the pinned work."
+    covers: [pdfcraft.open_file, pdfcraft.page_insert_blank]
+    notes: "The page count is pinned through the document's own state (2 to 3 pages), which the insert alone produces; the former page_add_text oracle step is gone because the build does not apply added page text (it fails honestly) and the check does not need it."
+    check_gap: "the signature line itself is not readable (no pdfcraft.read_text yet) and this build does not apply added page text; the insert is the pinned work."
 
   - id: pdfcraft-06-rotate-pages
     split: train
@@ -267,36 +281,8 @@ journeys:
       - open_app: pdfcraft
       - reset_app: pdfcraft
       - seed_fixture: { path: /PDFCraft/report-q3.pdf, fixture: report-q3.pdf }
-    needs: "pdfcraft.read_text: the replace runs, but no pack tool can read back the page text to prove the date moved; only the saved copy can be pinned, and that would pass without the edit."
+    needs: "pdfcraft.text_replace: the app's edit command answers {ran} without changing the document (probe r2: doc_inspect dirty stays false and the export still carries 15 January 2027, no 2028), so the corrected date cannot be pinned; the pack tool re-reads the export after the edit and fails honestly with a teaching error instead. The saved copy is the untouched fixture under the new name."
     checks:
       - file_exists: /PDFCraft/report-q3-2028.pdf
     covers: [pdfcraft.open_file, pdfcraft.text_replace, pdfcraft.save_copy]
-    notes: "The archive workflow; the copy name carries the corrected year."
-
-  - id: pdfcraft-96-read-probe
-    split: train
-    title: "PROBE: read_text export capture and the a11y tree after rotate and reverse (temporary, delete after reading)"
-    prompt: >-
-      Temporary API probe for the tool build, not a real task. Open the Q3 report from
-      /PDFCraft/report-q3.pdf and tell me what the report is about; the oracle steps
-      in this file are the probe and their results are what matter.
-    setup:
-      - close_all: true
-      - open_app: pdfcraft
-      - reset_app: pdfcraft
-      - seed_fixture: { path: /PDFCraft/report-q3.pdf, fixture: report-q3.pdf }
-    oracle:
-      - tool: pdfcraft.open_file
-        path: /PDFCraft/report-q3.pdf
-      - tool: pdfcraft.read_text
-      - tool: pdfcraft.run_command
-        command: "page.rotate"
-        params: "degrees=90"
-      - tool: pdfcraft.ui_inspect
-      - tool: pdfcraft.run_command
-        command: "page.reverse"
-      - tool: pdfcraft.ui_inspect
-    checks:
-      - craft_request: { app: pdfcraft, method: docInspect, expect: { path: "documents[0].pages", equals: 2 } }
-    covers: [pdfcraft.open_file, pdfcraft.read_text, pdfcraft.ui_inspect, pdfcraft.run_command]
-    notes: "Temporary J3 probe: step 1 the read_text export capture (name and text), steps 3 and 5 the a11y tree after rotate and reverse (do rotation or page order show). Delete after the trace is read."
+    notes: "The archive workflow; the edit is pinned by the tool's read-after-write teaching error in the run, and the copy name (the corrected year) in Files."

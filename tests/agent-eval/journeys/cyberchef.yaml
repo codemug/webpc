@@ -172,7 +172,7 @@ journeys:
       - reset_app: cyberchef
     oracle:
       - tool: cyberchef.bake
-        recipe: MD5
+        recipe: hash
         input: hello world
       - tool: cyberchef.bake
         recipe: SHA256
@@ -185,7 +185,7 @@ journeys:
       - answer_contains: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
       - cyberchef_output: "NWViNjNiYmJlMDFlZWVkMDkzY2IyMmJiOGY1YWNkYzM="
     covers: [cyberchef.bake]
-    notes: "Three bakes for two digests and a compact field; both digests are computed locally and are exact for the input."
+    notes: "Three bakes for two digests and a compact field; both digests are computed locally and are exact for the input. The first bake is the bare recipe=hash: the B17 alias resolves it to MD5 live (the prompt names the MD5 before the SHA-256; the model-less oracle run takes the MD5 fallback either way)."
 
   - id: cyberchef-08-caesar-shift
     split: train

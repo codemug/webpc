@@ -225,7 +225,9 @@ journeys:
         path: /reports/shop-summary.txt
         text: "Shop: 42 customers, 8 products, 156 orders."
     checks:
-      - file_contains: { path: /reports/shop-summary.txt, text: "42 customers" }
-      - file_contains: { path: /reports/shop-summary.txt, text: "156 orders" }
+      # The note pins the two counts next to their subject word in any order or phrasing
+      # ("42 customers" or "Customers: 42"); a wrong count still fails.
+      - file_matches: { path: /reports/shop-summary.txt, regex: "(?i)(customers?\\D{0,25}42|42\\D{0,25}customers?)" }
+      - file_matches: { path: /reports/shop-summary.txt, regex: "(?i)(orders?\\D{0,25}156|156\\D{0,25}orders?)" }
     covers: [sqliteviz.open_db, sqliteviz.run_query, files.write]
     notes: "The export journey: the counts come from the database and the end state is the note in Files, pinned on the two numbers a wrong count would break."

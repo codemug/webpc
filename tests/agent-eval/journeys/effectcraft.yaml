@@ -27,16 +27,16 @@ journeys:
       - close_all: true
       - open_app: effectcraft
     oracle:
-      - { tool: effectcraft.project_open, new: true }
-      - { tool: effectcraft.run_command, command: comp.new, params: 'name=Titles\nwidth=1920\nheight=1080\nduration=5' }
-      - { tool: effectcraft.run_command, command: layer.newText, params: 'text=Shipped on time' }
+      - { tool: effectcraft.new_project }
+      - { tool: effectcraft.new_comp, name: Titles, width: 1920, height: 1080, duration: 5 }
+      - { tool: effectcraft.add_text_layer, text: 'Shipped on time' }
     checks:
       - craft_request: { app: effectcraft, method: comp.info, expect: { path: name, equals: Titles } }
       - craft_request: { app: effectcraft, method: comp.info, expect: { path: width, equals: 1920 } }
       - craft_request: { app: effectcraft, method: comp.info, expect: { path: duration, at_least: 4.99, at_most: 5.01 } }
       - craft_request: { app: effectcraft, method: comp.info, expect: { path: 'layers[0].name', equals: 'Shipped on time' } }
-    covers: [effectcraft.project_open, effectcraft.run_command]
-    notes: A text layer with no name takes the text as its name, so the layer name pins the text; the comp size and duration pin the comp.new parameters.
+    covers: [effectcraft.new_project, effectcraft.new_comp, effectcraft.add_text_layer]
+    notes: "A text layer with no name takes the text as its name, so the layer name pins the text; the comp size and duration pin the new_comp parameters. The oracle uses the flat create tools (the model's own path), for which b14 scored 0/6; the former oracle's multi-line run_command params read back as a compounded comp name on the r3 run."
 
   - id: effectcraft-02-background-solid
     split: train
@@ -50,15 +50,15 @@ journeys:
       - close_all: true
       - open_app: effectcraft
     oracle:
-      - { tool: effectcraft.project_open, new: true }
-      - { tool: effectcraft.run_command, command: comp.new, params: 'name=Ad 15\nduration=10' }
-      - { tool: effectcraft.run_command, command: layer.newSolid, params: 'name=Background\nwidth=1920\nheight=1080' }
+      - { tool: effectcraft.new_project }
+      - { tool: effectcraft.new_comp, name: 'Ad 15', duration: 10 }
+      - { tool: effectcraft.add_solid, name: Background, width: 1920, height: 1080 }
     checks:
       - craft_request: { app: effectcraft, method: comp.info, expect: { path: name, equals: 'Ad 15' } }
       - craft_request: { app: effectcraft, method: comp.info, expect: { path: duration, at_least: 9.99, at_most: 10.01 } }
       - craft_request: { app: effectcraft, method: comp.info, expect: { path: 'layers[0].name', equals: Background } }
       - craft_request: { app: effectcraft, method: comp.info, expect: { path: 'layers[0].out', at_least: 9.99, at_most: 10.01 } }
-    covers: [effectcraft.project_open, effectcraft.run_command]
+    covers: [effectcraft.new_project, effectcraft.new_comp, effectcraft.add_solid]
     notes: New layers span the whole comp, so the solid's out point at the 10 s comp end pins that the layer was added to this comp and not trimmed.
 
   - id: effectcraft-03-opacity-fade
@@ -73,16 +73,16 @@ journeys:
       - close_all: true
       - open_app: effectcraft
     oracle:
-      - { tool: effectcraft.project_open, new: true }
-      - { tool: effectcraft.run_command, command: comp.new, params: 'name=Fade In\nduration=2' }
-      - { tool: effectcraft.run_command, command: layer.newText, params: 'text=Hello' }
+      - { tool: effectcraft.new_project }
+      - { tool: effectcraft.new_comp, name: 'Fade In', duration: 2 }
+      - { tool: effectcraft.add_text_layer, text: Hello }
       - { tool: effectcraft.keyframe_add, layer: 'Hello', path: transform/opacity, keys: '[{"time":0,"value":0},{"time":1,"value":100}]' }
     checks:
       - craft_request: { app: effectcraft, method: comp.info, expect: { path: 'layers[0].name', equals: Hello } }
       - craft_request: { app: effectcraft, method: prop.get, params: { layer: 'Hello', path: transform/opacity }, expect: { path: animated, equals: true } }
       - craft_request: { app: effectcraft, method: prop.get, params: { layer: 'Hello', path: transform/opacity }, expect: { path: 'keys[0].value', equals: 0 } }
       - craft_request: { app: effectcraft, method: prop.get, params: { layer: 'Hello', path: transform/opacity }, expect: { path: 'keys[1].value', equals: 100 } }
-    covers: [effectcraft.project_open, effectcraft.run_command, effectcraft.keyframe_add]
+    covers: [effectcraft.new_project, effectcraft.new_comp, effectcraft.add_text_layer, effectcraft.keyframe_add]
     notes: The keyframes read back in time order through prop.get, so the 0 to 100 fade is pinned on the property itself; the layer is addressed by its name, which follows the text.
 
   - id: effectcraft-04-blur-the-card
@@ -97,14 +97,14 @@ journeys:
       - close_all: true
       - open_app: effectcraft
     oracle:
-      - { tool: effectcraft.project_open, new: true }
-      - { tool: effectcraft.run_command, command: comp.new, params: 'name=Soft\nduration=5' }
-      - { tool: effectcraft.run_command, command: layer.newSolid, params: 'name=Card\nwidth=800\nheight=600' }
+      - { tool: effectcraft.new_project }
+      - { tool: effectcraft.new_comp, name: Soft, duration: 5 }
+      - { tool: effectcraft.add_solid, name: Card, width: 800, height: 600 }
       - { tool: effectcraft.effect_add, layer: 'Card', effect: 'Gaussian Blur', values: '{"blurriness":12}' }
     checks:
       - craft_request: { app: effectcraft, method: comp.info, expect: { path: 'layers[0].name', equals: Card } }
       - craft_request: { app: effectcraft, method: prop.get, params: { layer: 'Card', path: 'effects/#1/blurriness' }, expect: { path: value, equals: 12 } }
-    covers: [effectcraft.project_open, effectcraft.run_command, effectcraft.effect_add]
+    covers: [effectcraft.new_project, effectcraft.new_comp, effectcraft.add_solid, effectcraft.effect_add]
     notes: The effect instance is the first child of the layer's effects group, so its first parameter is addressed as effects/#1/blurriness; the value pin proves the blur landed on that layer with the asked blurriness.
 
   - id: effectcraft-05-still-on-the-comp
@@ -120,15 +120,15 @@ journeys:
       - open_app: effectcraft
       - seed_fixture: { path: /EffectCraft/city-night.png, fixture: city-night.png }
     oracle:
-      - { tool: effectcraft.project_open, new: true }
+      - { tool: effectcraft.new_project }
       - { tool: effectcraft.open_file, path: /EffectCraft/city-night.png }
-      - { tool: effectcraft.run_command, command: comp.new, params: 'name=Night\nduration=5' }
-      - { tool: effectcraft.run_command, command: layer.addItem, params: 'item=city-night.png' }
+      - { tool: effectcraft.new_comp, name: Night, duration: 5 }
+      - { tool: effectcraft.add_item, item: city-night.png }
     checks:
       - craft_request: { app: effectcraft, method: comp.info, expect: { path: name, equals: Night } }
       - craft_request: { app: effectcraft, method: comp.info, expect: { path: 'layers[0].name', equals: city-night.png } }
       - craft_request: { app: effectcraft, method: comp.info, expect: { path: 'layers[0].start', equals: 0 } }
-    covers: [effectcraft.project_open, effectcraft.open_file, effectcraft.run_command]
+    covers: [effectcraft.new_project, effectcraft.open_file, effectcraft.new_comp, effectcraft.add_item]
     notes: layer.addItem takes the item by name, so no item id is assumed; the layer's start at zero and its name (the file name) pin the placement.
 
   - id: effectcraft-06-opacity-expression
@@ -143,14 +143,14 @@ journeys:
       - close_all: true
       - open_app: effectcraft
     oracle:
-      - { tool: effectcraft.project_open, new: true }
-      - { tool: effectcraft.run_command, command: comp.new, params: 'name=Pulse\nduration=4' }
-      - { tool: effectcraft.run_command, command: layer.newText, params: 'text=Live' }
+      - { tool: effectcraft.new_project }
+      - { tool: effectcraft.new_comp, name: Pulse, duration: 4 }
+      - { tool: effectcraft.add_text_layer, text: Live }
       - { tool: effectcraft.property_set, layer: 'Live', path: transform/opacity, expression: 'Math.sin(time*2*Math.PI)*50+50' }
     checks:
       - craft_request: { app: effectcraft, method: comp.info, expect: { path: 'layers[0].name', equals: Live } }
       - craft_request: { app: effectcraft, method: prop.get, params: { layer: 'Live', path: transform/opacity }, expect: { path: expression, equals: 'Math.sin(time*2*Math.PI)*50+50' } }
-    covers: [effectcraft.project_open, effectcraft.run_command, effectcraft.property_set]
+    covers: [effectcraft.new_project, effectcraft.new_comp, effectcraft.add_text_layer, effectcraft.property_set]
     notes: prop.get returns the stored expression text, so the exact pulse expression is pinned on the property; the property is still plain (no keys) because the motion comes from the expression.
 
   - id: effectcraft-07-undo-redo-an-opacity
@@ -165,9 +165,9 @@ journeys:
     setup:
       - close_all: true
       - open_app: effectcraft
-      - { run: { tool: effectcraft.project_open, new: true } }
-      - { run: { tool: effectcraft.run_command, command: comp.new, params: 'name=History\nduration=3' } }
-      - { run: { tool: effectcraft.run_command, command: layer.newText, params: 'text=Hold' } }
+      - { run: { tool: effectcraft.new_project } }
+      - { run: { tool: effectcraft.new_comp, name: History, duration: 3 } }
+      - { run: { tool: effectcraft.add_text_layer, text: Hold } }
     oracle:
       - { tool: effectcraft.property_set, layer: 'Hold', path: transform/opacity, value: '50' }
       - { tool: effectcraft.undo }
@@ -191,9 +191,9 @@ journeys:
       - close_all: true
       - open_app: effectcraft
     oracle:
-      - { tool: effectcraft.project_open, new: true }
-      - { tool: effectcraft.run_command, command: comp.new, params: 'name=Handoff\nduration=6' }
-      - { tool: effectcraft.run_command, command: layer.newText, params: 'text=Saved' }
+      - { tool: effectcraft.new_project }
+      - { tool: effectcraft.new_comp, name: Handoff, duration: 6 }
+      - { tool: effectcraft.add_text_layer, text: Saved }
       - { tool: effectcraft.save_copy, path: /EffectCraft/handoff.ecproj }
       - { tool: effectcraft.open_file, path: /EffectCraft/handoff.ecproj }
     checks:
@@ -201,5 +201,5 @@ journeys:
       - craft_request: { app: effectcraft, method: project.summary, expect: { path: path, contains: handoff.ecproj } }
       - craft_request: { app: effectcraft, method: comp.info, expect: { path: name, equals: Handoff } }
       - craft_request: { app: effectcraft, method: comp.info, expect: { path: 'layers[0].name', equals: Saved } }
-    covers: [effectcraft.project_open, effectcraft.run_command, effectcraft.save_copy, effectcraft.open_file]
+    covers: [effectcraft.new_project, effectcraft.new_comp, effectcraft.add_text_layer, effectcraft.save_copy, effectcraft.open_file]
     notes: Reopening restores the saved view, so the active comp is the one from the file. The web host bridge opens a file by name, so the project path reads /handoff.ecproj (measured) and the check pins the file name, not the directory.
