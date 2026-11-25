@@ -467,10 +467,12 @@ export function validateCheck(kind, value) {
       return typeof value === 'number' && Number.isFinite(value) ? { ok: true, value } : { ok: false, detail: 'expects a number' };
     case 'tool_result': {
       const comparators = ['contains', 'equals', 'matches'].filter((k) => k in (value ?? {}));
-      // path is optional: without it the comparator runs over the whole result.
-      return str(value?.tool) && (value?.path === undefined || str(value.path)) && comparators.length === 1 && boolOrAbsent(value?.exact)
-        ? { ok: true, value: { ...value, exact: Boolean(value?.exact) } }
-        : { ok: false, detail: 'expects { tool, path?, contains | equals | matches, exact? }' };
+      // path is optional: without it the comparator runs over the whole result. any: true (T17)
+      // matches any result of the named tool; the default stays the last result, which the
+      // journey notes keep only where the prompt pins the order.
+      return str(value?.tool) && (value?.path === undefined || str(value.path)) && comparators.length === 1 && boolOrAbsent(value?.exact) && boolOrAbsent(value?.any)
+        ? { ok: true, value: { ...value, exact: Boolean(value?.exact), any: Boolean(value?.any) } }
+        : { ok: false, detail: 'expects { tool, path?, contains | equals | matches, exact?, any? }' };
     }
     case 'craft_request': {
       return str(value?.app) && str(value?.method) && str(value?.expect?.path) && oneComparison(value?.expect) && boolOrAbsent(value?.expect?.exact)
@@ -575,14 +577,18 @@ export function checkAnswer(answer, kind, value) {
 }
 
 /** tool_result: the last result of the named catalog tool in the trace, read at path (or the
- *  whole result when no path). A direct catalog call carries its result in entry.result; the
- *  call_tool wrapper carries it in entry.result.result ({ ok, tool, result }). */
-export function checkToolResult(trace, { tool, path, ...cmp }) {
-  const entry = [...trace].reverse().find((e) => ran(e) && (e.name === tool || (e.name === 'call_tool' && e.arguments?.tool === tool)));
-  if (!entry) return { ok: false, detail: `no ${tool} call in the trace` };
-  const raw = entry.result;
-  const result = raw && typeof raw === 'object' && 'result' in raw && 'tool' in raw ? raw.result : raw;
-  return compareValue(path ? readPath(result, path) : result, cmp);
+ *  whole result when no path); with any: true (T17) the first matching result wins instead,
+ *  for checks whose prompt does not require the result to be the tool's last call. A direct
+ *  catalog call carries its result in entry.result; the call_tool wrapper carries it in
+ *  entry.result.result ({ ok, tool, result }). */
+export function checkToolResult(trace, { tool, path, any, ...cmp }) {
+  const hits = trace.filter((e) => ran(e) && (e.name === tool || (e.name === 'call_tool' && e.arguments?.tool === tool)));
+  if (!hits.length) return { ok: false, detail: `no ${tool} call in the trace` };
+  const read = raw => { const result = raw && typeof raw === 'object' && 'result' in raw && 'tool' in raw ? raw.result : raw; return path ? readPath(result, path) : result; };
+  if (!any) return compareValue(read(hits.at(-1).result), cmp);
+  let last;
+  for (const entry of hits) { last = compareValue(read(entry.result), cmp); if (last.ok) return last; }
+  return { ok: false, detail: `none of the ${hits.length} ${tool} results: ${last.detail}` };
 }
 
 /** Dispatch a task's single end-state check (tasks.yaml keeps one check per task). */

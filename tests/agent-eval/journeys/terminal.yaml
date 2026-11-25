@@ -4,8 +4,11 @@ app: terminal
 # every journey works on guest-local files with unique names (the disk persists across
 # journeys, so earlier journeys' files may already exist - none of the checks depend on them).
 # terminal.run boots the guest itself when it is stopped (up to 90 s wait inside the tool).
-# Checks: tool_result on the last terminal.run output (the command output is the deliverable),
-# read_tool terminal.status for guest state, answer checks for the tell-me journeys.
+# Checks: tool_result on a terminal.run output (the command output is the deliverable), with
+# any: true where the prompt does not require the result to be the last command (T17 ruling:
+# "last" stays only where the prompt pins the order - 05 "end with", 06/07 "finish by",
+# 08 "End by printing"), read_tool terminal.status for guest state, answer checks for the
+# tell-me journeys.
 
 journeys:
   - id: terminal-01-list-files
@@ -21,13 +24,15 @@ journeys:
       - { tool: terminal.run, lang: sh, code: 'ls -la ~' }
       - { tool: terminal.status }
     checks:
-      - tool_result: { tool: terminal.run, path: output, contains: 'total' }
+      - tool_result: { tool: terminal.run, path: output, contains: 'total', any: true }
       - read_tool: { tool: terminal.status, path: state, equals: running }
     covers: [terminal.open, terminal.run, terminal.status]
     notes: >-
       Three separate calls (open, list, read the state back): ls -la always starts with a total
       line, so the output check is stable whatever the home directory holds, and the status
-      read pins that the guest is up after the first boot.
+      read pins that the guest is up after the first boot. The output check is any: true
+      (T17, 2026-11-25): the prompt asks for a listing but not for it to be the last command,
+      so a harmless follow-up (b20: whoami && id) after a good listing must not fail the run.
 
   - id: terminal-02-box-details
     split: train
@@ -66,14 +71,16 @@ journeys:
       - { tool: terminal.run, lang: sh, code: 'wc -w < ~/wc-demo.txt' }
       - { tool: terminal.run, lang: sh, code: "awk '{n += NF} END {print n}' ~/wc-demo.txt" }
     checks:
-      - tool_result: { tool: terminal.run, path: output, matches: '\b13\b' }
+      - tool_result: { tool: terminal.run, path: output, matches: '\b13\b', any: true }
     covers: [terminal.run]
     notes: >-
       Three calls: write, count with wc, double-check with awk field counts (also 13 words:
       4 + 5 + 4). busybox grep -ow . returns nothing (a one-character pattern with -w only
       matches one-letter words), so the re-count is awk; the check is \b13\b, not the bare
       output, because wc with a file argument prints "13 /home/user/wc-demo.txt" and the
-      user asked for the count (lead's ruling, 2026-11-25).
+      user asked for the count (lead's ruling, 2026-11-25). any: true (T17): the prompt
+      pins the reply ("end your reply with just the number"), not the order of the count
+      commands, so either count's output satisfies it.
 
   - id: terminal-04-grep-errors
     split: train
@@ -91,13 +98,14 @@ journeys:
       - { tool: terminal.run, lang: sh, code: 'grep -c ERROR ~/grep-demo.log' }
       - { tool: terminal.run, lang: sh, code: 'grep ERROR ~/grep-demo.log' }
     checks:
-      - tool_result: { tool: terminal.run, path: output, contains: 'ERROR timeout after 30s' }
-      - tool_result: { tool: terminal.run, path: output, contains: 'ERROR gave up' }
+      - tool_result: { tool: terminal.run, path: output, contains: 'ERROR timeout after 30s', any: true }
+      - tool_result: { tool: terminal.run, path: output, contains: 'ERROR gave up', any: true }
     covers: [terminal.run]
     notes: >-
-      Three calls: write, count the matches (2), show them. The last output is the plain grep,
-      so both error lines are pinned and the count call cannot shadow them; the INFO lines
-      must not be the only matches.
+      Three calls: write, count the matches (2), show them. The checks are any: true (T17):
+      the prompt does not require the show to be the last command, and the grep -c output
+      ("2") cannot match either error line, so the count call cannot shadow them; the INFO
+      lines must not be the only matches.
 
   - id: terminal-05-csv-total
     split: train
@@ -168,7 +176,9 @@ journeys:
       the backup directory, so both operations are pinned from the output. The read_tool end
       state re-runs ls -R itself (lead's ruling, 2026-11-25): a model that only echoed a
       listing or copied in the Files app cannot pass - the backup must exist in the guest with
-      readme.txt inside it.
+      readme.txt inside it. The tool_result checks keep last (T17 audit, 2026-11-25): the
+      prompt says "finish by listing both directories", so a model that ends on a one-directory
+      listing (b20) fails on purpose - precision, not check design.
 
   - id: terminal-08-sed-fix
     split: train
@@ -204,11 +214,12 @@ journeys:
     oracle:
       - { tool: terminal.run, lang: sh, code: 'seq 1 20 > ~/seq-t9.txt && head -n 3 ~/seq-t9.txt && echo --- && tail -n 3 ~/seq-t9.txt' }
     checks:
-      - tool_result: { tool: terminal.run, path: output, matches: '^1\s+2\s+3\s+---\s+18\s+19\s+20\s*$' }
+      - tool_result: { tool: terminal.run, path: output, matches: '^1\s+2\s+3\s+---\s+18\s+19\s+20\s*$', any: true }
     covers: [terminal.run]
     notes: >-
       Holdout: the output must be exactly 1, 2, 3, ---, 18, 19, 20 - both the head and the tail
-      are pinned from one run.
+      are pinned from one run. any: true (T17): the prompt requires the single run but not that
+      it be the last command.
 
   - id: terminal-10-even-sum
     split: train
@@ -223,12 +234,13 @@ journeys:
       - { tool: terminal.run, lang: python, code: 'print(sum(range(2, 21, 2)))' }
       - { tool: terminal.run, lang: sh, code: "seq 2 20 | awk '$1 % 2 == 0 {s += $1} END {print s}'" }
     checks:
-      - tool_result: { tool: terminal.run, path: output, matches: '^\s*110\s*$' }
+      - tool_result: { tool: terminal.run, path: output, matches: '^\s*110\s*$', any: true }
     covers: [terminal.status, terminal.run]
     notes: >-
       Three calls: state, Python sum (2+4+...+20 = 110), shell verification (seq | awk, also
-      110). The last output is the verification, so the bare-110 check pins the arithmetic
-      whatever language route the model takes.
+      110). any: true (T17): the prompt orders compute-then-verify but does not require the
+      verification to be the last command, and both language routes print the bare 110, so the
+      check pins the arithmetic whichever route the model takes.
 
   - id: terminal-11-free-space
     split: holdout

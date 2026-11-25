@@ -40,6 +40,7 @@ test('validateCheck accepts well-formed checks and rejects broken shapes', () =>
     ['answer_contains', { text: '42', exact: true }],
     ['file_contains', { path: 'a.txt', text: 'hi', exact: true }],
     ['tool_result', { tool: 'terminal.run', path: 'output', contains: 'hi', exact: true }],
+    ['tool_result', { tool: 'terminal.run', path: 'output', contains: 'hi', any: true }], // T17: any-result mode
     ['craft_request', { app: 'gridcraft', method: 'cell.get', expect: { path: 'input', contains: 'x', exact: true } }],
     ['read_tool', { tool: 'gridcraft.inspect', args: { sheet: 'Sheet1' }, path: 'rows', at_least: 1 }],
     ['read_tool', { tool: 'deckcraft.inspect', contains: 'Q1' }],
@@ -64,6 +65,7 @@ test('validateCheck accepts well-formed checks and rejects broken shapes', () =>
     ['answer_contains', { text: '' }],
     ['file_contains', { path: 'a.txt', text: { x: 1 } }],
     ['tool_result', { tool: 'a.b', path: 'p', contains: 'x', exact: 'yes' }], // exact must be a boolean
+    ['tool_result', { tool: 'a.b', contains: 'x', any: 'yes' }], // any must be a boolean
     ['read_tool', { tool: 'a.b', contains: 'x', equals: 1 }], // two comparators
     ['read_tool', { tool: 'a.b', args: [1], contains: 'x' }], // args must be an object
     ['read_tool', { tool: 'a.b', path: 2, contains: 'x' }], // path must be a string
@@ -204,6 +206,17 @@ test('checkToolResult reads the last result of the named tool', () => {
   assert.ok(checkToolResult(stopped, { tool: 'terminal.run', path: 'output', contains: 'total' }).ok, 'a stopped duplicate is not the tool\'s last result');
   const refusedOnly = [stopped[1]];
   assert.ok(!checkToolResult(refusedOnly, { tool: 'terminal.run', path: 'output', contains: 'total' }).ok, 'a trace of refusals has no result');
+});
+
+/** T17 (sweep-terminal-b20 01): any: true matches any result of the named tool - the prompt
+ *  asked for a listing, not for it to be the last command. The default stays last. */
+test('checkToolResult any: true matches an earlier result, not only the last', () => {
+  const trace = [WRAPPED, DIRECT, WRAPPED_LATER];
+  assert.ok(checkToolResult(trace, { tool: 'terminal.run', path: 'output', contains: 'first', any: true }).ok, 'the earlier result matches');
+  assert.ok(!checkToolResult(trace, { tool: 'terminal.run', path: 'output', contains: 'first' }).ok, 'without any the last result still wins');
+  const miss = checkToolResult(trace, { tool: 'terminal.run', path: 'output', contains: 'nope', any: true });
+  assert.ok(!miss.ok && miss.detail.includes('none of the 2'), miss.detail);
+  assert.ok(checkToolResult(trace, { tool: 'media.analyze', path: 'width', equals: 240, any: true }).ok, 'any works with a path too');
 });
 
 /** Oracle runs have no reply, so answer checks read the oracle's tool results. */
