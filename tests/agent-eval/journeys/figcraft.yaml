@@ -175,7 +175,13 @@ journeys:
       - { tool: figcraft.save_copy, path: /FigCraft/poster.figcraft, overwrite: true }
     checks:
       - file_exists: /FigCraft/poster.figcraft
-      - craft_request: { app: figcraft, method: document.inspect, expect: { path: name, equals: Poster } }
+      - craft_request: { app: figcraft, method: document.inspect, params: { depth: 1 }, expect: { path: 'pages[0].children[0].characters', contains: Post release notes here } }
       - tool_result: { tool: figcraft.save_copy, path: created, equals: false }
     covers: [figcraft.new_document, figcraft.create_node, figcraft.save_copy]
-    notes: Exercises the destructive overwrite path of save_copy; the .figcraft file is a zip archive (document.json deflated inside), so the document name is not plain text on disk and the overwrite is pinned by the second save reporting created false.
+    notes: >-
+      Exercises the destructive overwrite path of save_copy; the .figcraft file is a zip
+      archive (document.json deflated inside), so the document name is not plain text on
+      disk and the overwrite is pinned by the second save reporting created false. The
+      text layer is pinned through the characters property; the prompt does not name the
+      document, so its name is not pinned (b21: the model named it after the content and
+      failed a name check the prompt never asked for).

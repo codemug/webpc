@@ -375,7 +375,8 @@ journeys:
         text: "12 servers * 7 hours * 30 dollars = 2520"
     checks:
       - terminal_output: "2520"
-      - file_contains: { path: /notes/calc.txt, text: "2520" }
+      # b20/b21 false negative: the model wrote the correct "$2,520.00" and the bare "2520" pin failed; accept the comma grouping
+      - file_matches: { path: /notes/calc.txt, regex: "(?<!\\d)2,?520" }
     covers: [desktop.open_app, terminal.run, files.write]
     notes: "Cross-app workflow: the terminal carries the working (pinned through the terminal output) and the result lands in a Files note. 12 * 7 * 30 = 2520."
     check_gap: "the terminal runs in the Linux guest; if the guest is slow to start in the oracle run, the terminal_output pin is the first to show it."

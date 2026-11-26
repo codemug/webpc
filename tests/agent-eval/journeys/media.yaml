@@ -85,11 +85,16 @@ journeys:
       - { tool: media.seek, seconds: 1.5 }
     checks:
       - read_tool: { tool: media.status, path: time, at_least: 1.4 }
-      - answer_contains: '1.5'
+      - answer_matches: '\b(1\.[4-9]\d*|2\.0+)\b'
     covers: [media.play_file, media.seek, media.status]
     notes: >-
       The seek sets the position to 1.5 s (seeking needs the media loaded, which the play
-      provides); the position is read back live and relayed in the reply.
+      provides); the position is read back live and relayed in the reply. The tone keeps
+      PLAYING after the seek, so the honest answer is the live position the player shows -
+      the check accepts a decimal position reading from 1.4 through 2.0 (lead's ruling,
+      2026-11-26, after sweep b20 reported 1.90056 against the old answer_contains '1.5').
+      The decimal is required (the player shows one): a bare 2 would match "the 2-second
+      tone", so 2.0 is the only whole-end reading that passes.
 
   - id: media-05-report-current
     split: train

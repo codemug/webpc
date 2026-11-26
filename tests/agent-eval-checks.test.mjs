@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {
   CHECK_KINDS, validateCheck, readPath, valuesEqual, compareValue, checkAnswer, checkToolResult,
   checkReadTool, checkTerminalOutput, normalizeText, oracleAnswerText, toRegExp, fillStepRefs, within,
+  shapeTimeoutDiag,
 } from '../scripts/agent/eval.mjs';
 
 /** The shared kind list covers the old task kinds and the five journey kinds. */
@@ -178,6 +179,19 @@ test('checkReadTool calls the read tool and tests its result', async () => {
   assert.ok(!noBuddy.ok && noBuddy.detail.includes('journey runner'));
 });
 
+/** media-04 (ruling 2026-11-26, after sweep b20's 1.90056 against the old answer_contains
+ *  '1.5'): the position check accepts a decimal reading from 1.4 through 2.0 and nothing
+ *  that is not a position reading - a bare 2 would match "the 2-second tone". */
+test('the media-04 position regex accepts decimal position readings only', () => {
+  const re = new RegExp('\\b(1\\.[4-9]\\d*|2\\.0+)\\b');
+  for (const text of ['positioned at 1.90056', 'at 1.5', 'position 1.4', 'at 2.0', 'at 2.00', 'at 1.9999']) {
+    assert.ok(re.test(text), `should pass: ${text}`);
+  }
+  for (const text of ['a 2-second tone', '2 seconds', 'at 0.9', 'at 1.3', 'at 11.5', 'at 3.0', 'at 2.05']) {
+    assert.ok(!re.test(text), `should fail: ${text}`);
+  }
+});
+
 /** A trace with the call_tool wrapper and a direct catalog call. */
 const WRAPPED = { name: 'call_tool', arguments: { tool: 'terminal.run' }, result: { ok: true, tool: 'terminal.run', result: { exitCode: 0, output: 'first\n' } } };
 const WRAPPED_LATER = { name: 'call_tool', arguments: { tool: 'terminal.run' }, result: { ok: true, tool: 'terminal.run', result: { exitCode: 0, output: 'second\n' } } };
@@ -227,6 +241,35 @@ test('oracleAnswerText joins every tool result so an answer check can find the f
   assert.equal(checkAnswer(text, 'answer_matches', { text: '"n":19\\b' }).ok, false);
   assert.equal(checkAnswer(text, 'answer_contains', { text: 'This was' }).ok, false);
   assert.equal(oracleAnswerText([]), '');
+});
+
+/** T19 (deckcraft-10, build 21: 240 s, 0 rounds, empty trace): a run that failed after the
+ *  prompt was sent captures the trace as it stands, the last assistant bubble, the composer
+ *  state and the model status line - a call in flight is a trace entry with no result yet. */
+test('shapeTimeoutDiag marks in-flight calls and caps the captured text', () => {
+  const shaped = shapeTimeoutDiag({
+    trace: [
+      { name: 'call_tool', arguments: { tool: 'desktop.open_app' }, ok: true, errorType: null, result: { ok: true } },
+      { name: 'call_tool', arguments: { tool: 'deckcraft.save' } }, // in flight: no ok/result
+    ],
+    lastBubble: 'Saving the deck'.padEnd(2000, 'x'),
+    composerValue: 'Save my deck as Q3',
+    composerSendDisabled: true,
+    status: 'Working locally',
+  });
+  assert.equal(shaped.partialTrace.length, 2);
+  assert.equal(shaped.partialTrace[0].inFlight, false);
+  assert.equal(shaped.partialTrace[1].inFlight, true, 'a call with no recorded result is in flight');
+  assert.equal(shaped.partialTrace[1].result, null);
+  assert.equal(shaped.chatTail.lastBubble.length, 1000, 'the bubble tail is capped to its last 1000 chars');
+  assert.equal(shaped.chatTail.composerValue, 'Save my deck as Q3');
+  assert.equal(shaped.chatTail.composerSendDisabled, true);
+  assert.equal(shaped.status, 'Working locally');
+  // A missing/empty capture shapes to empty fields, not a throw (the page may be gone).
+  const empty = shapeTimeoutDiag({});
+  assert.deepEqual(empty.partialTrace, []);
+  assert.equal(empty.chatTail.lastBubble, '');
+  assert.equal(empty.status, '');
 });
 
 /** Authors write (?i) as in other regex dialects; JavaScript needs it as a flag. */

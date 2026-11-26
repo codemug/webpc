@@ -677,7 +677,7 @@ export async function loadModel(buddy, model) {
   await buddy.locator('#model').selectOption(model);
   await buddy.waitForFunction(() => { const s = document.querySelector('#load-model'); return s && !s.disabled; }, null, { timeout: 60_000, polling: 250 });
   await buddy.locator('#load-model').click();
-  await buddy.waitForFunction(() => /^(Ready|Cloud|Chrome)/.test(document.querySelector('#model-state')?.textContent ?? ''), null, { timeout: 300_000, polling: 500 });
+  await buddy.waitForFunction(() => /^(Ready|Cloud|Chrome)/.test(document.querySelector('#model-state')?.textContent ?? ''), null, { timeout: 1_200_000, polling: 500 }); // 20 min: a first download of a large model (gemma4-e2b) took longer than 5
   console.log(`model ${model} loaded and ready`);
 }
 
@@ -748,6 +748,25 @@ async function finalAnswer(buddy) {
     const bodies = [...document.querySelectorAll('#messages article.message.assistant .message-body')];
     const last = bodies.at(-1);
     return last ? last.innerText : '';
+  });
+}
+
+/** What the page still holds when a journey's run fails after the prompt was sent (T19):
+ *  the trace as it stands (a call in flight is an entry with no result recorded yet), the
+ *  last assistant bubble, the composer state, and the model status line. */
+async function timeoutDiag(buddy) {
+  return buddy.evaluate(() => {
+    const bodies = [...document.querySelectorAll('#messages article.message.assistant .message-body')];
+    const last = bodies.at(-1);
+    const message = document.querySelector('#message');
+    const send = document.querySelector('#send');
+    return {
+      trace: (window.__buddyTrace ?? []).map((e) => ({ name: e.name, arguments: e.arguments, ok: e.ok, errorType: e.errorType, result: e.result })),
+      lastBubble: last ? last.innerText : '',
+      composerValue: message ? message.value : '',
+      composerSendDisabled: send ? send.disabled : null,
+      status: document.querySelector('#model-state')?.textContent ?? '',
+    };
   });
 }
 
@@ -961,6 +980,24 @@ export function oracleAnswerText(trace) {
   return (trace ?? []).map((e) => (typeof e.result === 'string' ? e.result : JSON.stringify(e.result ?? null))).join('\n');
 }
 
+/** T19 (deckcraft-10, build 21: 240 s, 0 rounds, empty trace - and no way to tell whether
+ *  it hung on a tool call that never returned, the model still generating, or a prompt that
+ *  never left the composer): shape a timeoutDiag capture into the result-row fields
+ *  (partialTrace, chatTail, status). A call in flight is a trace entry with no result
+ *  recorded yet; captured text is capped so one bad run cannot bloat the results file. */
+export function shapeTimeoutDiag(capture) {
+  const trace = Array.isArray(capture?.trace) ? capture.trace : [];
+  return {
+    partialTrace: trace.map((e) => ({ name: e?.name, arguments: e?.arguments, ok: 'ok' in (e ?? {}) ? e.ok : undefined, errorType: e?.errorType ?? null, result: e?.result ?? null, inFlight: !('ok' in (e ?? {})) })),
+    chatTail: {
+      lastBubble: String(capture?.lastBubble ?? '').slice(-1000),
+      composerValue: String(capture?.composerValue ?? '').slice(0, 300),
+      composerSendDisabled: Boolean(capture?.composerSendDisabled),
+    },
+    status: String(capture?.status ?? '').slice(0, 300),
+  };
+}
+
 /** Agent mode: the journey, --repeat times, a fresh chat each. */
 async function runJourneyAgent(buddy, page, journey, repeat, shouldStop = () => false) {
   const rows = [];
@@ -968,11 +1005,13 @@ async function runJourneyAgent(buddy, page, journey, repeat, shouldStop = () => 
     if (shouldStop()) break; // the queue runner's Ctrl+C: stop after the current journey
     const started = Date.now();
     const row = { id: journey.id, split: journey.split, rep, repeat, pass: false, checks: [], seconds: 0, rounds: 0, answer: '', trace: [], error: null };
+    let sent = false;
     try {
       await within(runSetup(page, buddy, journey.setup), SETUP_TIMEOUT, 'setup');
       await newChat(buddy);
       await buddy.locator('#message').fill(journey.prompt);
       await buddy.locator('#send').click();
+      sent = true;
       // Wait for the run to finish (the model state leaves "Working" when the active run ends), 240 s cap.
       try { await buddy.waitForFunction(() => /^Working/.test(document.querySelector('#model-state')?.textContent ?? ''), null, { timeout: 8_000, polling: 100 }); } catch { /* finished before we sampled */ }
       await buddy.waitForFunction(() => !/^Working/.test(document.querySelector('#model-state')?.textContent ?? ''), null, { timeout: JOURNEY_TIMEOUT, polling: 250 });
@@ -986,6 +1025,13 @@ async function runJourneyAgent(buddy, page, journey, repeat, shouldStop = () => 
     } catch (error) {
       if (error?.fatal) throw error;
       row.error = String(error?.message ?? error).slice(0, 300);
+      if (sent) {
+        // T19: the prompt is in flight, so capture what the page still holds (partialTrace,
+        // chatTail, status) - a tool call that never returned, a model still generating, or a
+        // prompt that never left the composer all read the same as an empty trace otherwise.
+        const diag = await timeoutDiag(buddy).catch(() => null);
+        if (diag) Object.assign(row, shapeTimeoutDiag(diag));
+      }
     } finally {
       row.seconds = +((Date.now() - started) / 1000).toFixed(1);
     }
