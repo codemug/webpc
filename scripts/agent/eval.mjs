@@ -1029,7 +1029,9 @@ async function runJourneyAgent(buddy, page, journey, repeat, shouldStop = () => 
         // T19: the prompt is in flight, so capture what the page still holds (partialTrace,
         // chatTail, status) - a tool call that never returned, a model still generating, or a
         // prompt that never left the composer all read the same as an empty trace otherwise.
-        const diag = await timeoutDiag(buddy).catch(() => null);
+        // Bounded: a frozen app page (same-origin frames share its main thread) left this
+        // evaluate pending forever and stalled the whole queue (sweep-figcraft-b22, 44 min).
+        const diag = await within(timeoutDiag(buddy), 15_000, 'timeout capture').catch(() => null);
         if (diag) Object.assign(row, shapeTimeoutDiag(diag));
       }
     } finally {
