@@ -20,17 +20,103 @@ const pick = (args, keys) => {
   return out;
 };
 
+// The engine surfaces a bad sheet prefix in a range as the bare app_error
+// "invalid parameters for `range`: no sheet named `Quarter`". lfm3 took a header word
+// ("Quarter") as a sheet name and never recovered (sweep b16 gridcraft-05: 20 rounds of
+// guessed open_file paths after). Re-throw with the real sheet names and the
+// active-sheet form, which is what a data range usually should be.
+const NO_SHEET = /no sheet named `([^`]+)`/;
+// Sweep b20 gridcraft-02: the engine's "A table can't overlap another table." teaches nothing,
+// and lfm3 had already created the table (the first attempt succeeded) and then looped 13
+// rounds over style variants - A23's identical-fail stop cannot catch it, because the style
+// changes each time. Same enrichment as NO_SHEET: read the real tables and say the range is
+// already one.
+const TABLE_OVERLAP = /table can'?t overlap another table/i;
+const rangeExecute = async (app, command, params) => {
+  try {
+    return await app.execute(command, params);
+  } catch (error) {
+    const m = error?.code === 'app_error' ? NO_SHEET.exec(error.message ?? '') : null;
+    if (m) {
+      const state = await app.inspect().catch(() => null);
+      const names = (state?.sheets ?? []).map(sheet => (sheet && typeof sheet === 'object' ? sheet.name : sheet)).filter(Boolean).join(', ');
+      throw new ToolError('app_error', `no sheet named "${m[1]}"${names ? `; the sheets are: ${names}` : ''}. Omit the sheet name to use the active sheet, e.g. range=A1:B5`, 'call_tool tool=gridcraft.inspect');
+    }
+    if (error?.code === 'app_error' && TABLE_OVERLAP.test(error.message ?? '')) {
+      const state = await app.inspect().catch(() => null);
+      const tables = (state?.sheets ?? []).flatMap(sheet => (sheet && typeof sheet === 'object' && Array.isArray(sheet.tables) ? sheet.tables : [])).filter(t => t?.name || t?.range);
+      const list = tables.map(t => `${t.name ?? 'table'} (${t.range ?? '?'})`).join(', ');
+      throw new ToolError('app_error', `a table already overlaps ${params?.range ?? 'this range'}${list ? `: ${list}` : ''}. Do not create it again - the cells are already inside that table. Continue with the table as it is, or pick a range that does not touch it`, 'call_tool tool=gridcraft.inspect');
+    }
+    throw error;
+  }
+};
+
+// A range operation on an empty range is a dead end the model cannot read: the bare
+// engine error sends it hunting for a file to open (sweep b16 gridcraft-05/-06/-08).
+// Read the range first and, when it holds no values, fail with the set_cells call that
+// fixes it. sheet.read failures or unreadable results skip the guard (the engine's own
+// error follows).
+const rangeHasData = async (app, range) => {
+  let read;
+  try { read = await app.request('sheet.read', { range }); } catch { return null; }
+  const values = read?.values;
+  if (!Array.isArray(values)) return null;
+  return values.some(row => Array.isArray(row) && row.some(cell => cell !== null && cell !== undefined && String(cell).trim() !== ''));
+};
+const topLeftCell = range => {
+  const head = String(range).split('!').pop().split(':')[0];
+  return /^[A-Z]+\d+$/.test(head) ? head : 'A1';
+};
+const requireRangeData = async (app, range) => {
+  const hasData = await rangeHasData(app, range);
+  if (hasData === false) {
+    throw new ToolError('invalid_argument', `the sheet has no data in ${range}; type the values first`, `call_tool tool=gridcraft.set_cells start=${topLeftCell(range)} values=[["header1","header2"],["value1","value2"]]`);
+  }
+};
+
 // gridcraft.run_command params: key=value lines -> object, with number and boolean
-// coercion (plan 9, the generic long-tail tool).
-const parseParams = text => {
+// coercion (plan 9, the generic long-tail tool). A line holding several key=value pairs
+// (space-separated, the way small models write it) is split into pairs the same way; a
+// JSON object is used as-is (lfm3-1.7b sent params as {"cell": "B2", "input": "Hello"}).
+const coercePairValue = raw => (/^(true|false)$/i.test(raw) ? raw.toLowerCase() === 'true' : /^-?\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw);
+const PAIR_RE = /(^|\s)([A-Za-z_][A-Za-z0-9_-]*)=("(?:[^"]*)"|\S+)/g;
+const parsePairs = text => {
   const out = {};
-  for (const line of String(text ?? '').split('\n')) {
+  PAIR_RE.lastIndex = 0;
+  let match;
+  while ((match = PAIR_RE.exec(text)) !== null) {
+    let value = match[3];
+    if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) value = value.slice(1, -1);
+    out[match[2]] = coercePairValue(value);
+  }
+  return out;
+};
+const parseParams = text => {
+  const source = text == null ? '' : text;
+  if (typeof source === 'object') return source;
+  const raw = String(source).trim();
+  if (raw.startsWith('{')) {
+    try {
+      const obj = JSON.parse(raw);
+      if (obj && typeof obj === 'object' && !Array.isArray(obj)) return obj;
+    } catch {
+      // not JSON: fall through to the line parsing
+    }
+  }
+  const out = {};
+  for (const line of raw.split(/\n|\\n/)) {
     const row = line.trim();
     if (!row) continue;
+    const pairs = parsePairs(row);
+    const keys = Object.keys(pairs);
+    if (keys.length >= 2) {
+      for (const key of keys) out[key] = pairs[key];
+      continue;
+    }
     const eq = row.indexOf('=');
     if (eq <= 0) throw new ToolError('invalid_argument', `bad params line "${row}": use key=value`, '');
-    const raw = row.slice(eq + 1).trim();
-    out[row.slice(0, eq).trim()] = /^(true|false)$/i.test(raw) ? raw.toLowerCase() === 'true' : /^-?\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw;
+    out[row.slice(0, eq).trim()] = coercePairValue(row.slice(eq + 1).trim());
   }
   return out;
 };
@@ -71,18 +157,26 @@ export const tools = [
     when: 'Use when the user wants to type or paste a table of values into cells.',
     params: {
       start: { type: 'string', required: true, description: 'Top-left cell or range, e.g. A1 or Sheet2!B3' },
-      values: { type: 'table', required: true, description: 'Rows of cell values, e.g. [["Item","Cost"],["Rent",1200]]' },
+      values: { type: 'table', required: true, flat: false, description: 'Rows of cell values: a list of rows, each row a list of cells, e.g. [["Name","Price"],["Lamp",320]]; a row is values=[["Date","Income"]] and a column is values=[["Date"],["Income"]]; a flat list of more than one value is refused' },
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { start: 'A1', values: [['Item', 'Cost'], ['Rent', 1200]] }, says: 'Type this table into the sheet' }],
-    // tools.rs:642 range.setValues; the wire field is range, so start maps onto it
-    run: async (args, ctx) => (await ctx.craft(APP)).execute('range.setValues', { range: args.start, values: args.values }),
+    examples: [{ args: { start: 'A1', values: [['Name', 'Price'], ['Lamp', 320]] }, says: 'Type this table into the sheet' }],
+    // tools.rs:642 range.setValues; the wire field is range, so start maps onto it. The result
+    // reports the written shape (rows/cols) so the model can see a table that did not land.
+    // A flat list of more than one value never reaches here: checkArgs (args.mjs, table case,
+    // flat: false) refuses it with a teaching error showing the row and column forms.
+    run: async (args, ctx) => {
+      const result = await (await ctx.craft(APP)).execute('range.setValues', { range: args.start, values: args.values });
+      const base = result != null && typeof result === 'object' && !Array.isArray(result) ? result : {};
+      return { ...base, rows: args.values.length, cols: Math.max(...args.values.map(row => row.length)) };
+    },
   },
   {
     name: 'gridcraft.set_cell',
     purpose: 'Enter one cell exactly as if typed: number, text or formula.',
-    when: 'Use when the user wants to set the value of a single cell, or type a formula.',
+    when: 'Use when the user wants to set the value of a single cell, or type a formula like =SUM.',
+    keywords: ['formula', 'sum', 'total', 'average', 'type a formula'],
     params: {
       cell: { type: 'string', required: true, description: 'Cell, e.g. B7 or Sheet2!C3' },
       input: { type: 'string', required: true, description: 'Typed input: a number, text or a =formula' },
@@ -90,8 +184,13 @@ export const tools = [
     effect: 'change',
     needs: NEEDS,
     examples: [{ args: { cell: 'A1', input: 'Total' }, says: 'Put the word Total in A1' }, { args: { cell: 'B10', input: '=SUM(B2:B9)' }, says: 'Total column B in B10' }],
-    // tools.rs:643 cell.set
-    run: async (args, ctx) => (await ctx.craft(APP)).execute('cell.set', { cell: args.cell, input: args.input }),
+    // tools.rs:643 cell.set. The note nudges off the cell-by-cell habit: the budget run typed
+    // the header cells one at a time after writing the first row (sweep b17 gridcraft-01).
+    run: async (args, ctx) => {
+      const result = await (await ctx.craft(APP)).execute('cell.set', { cell: args.cell, input: args.input });
+      const base = result != null && typeof result === 'object' && !Array.isArray(result) ? result : {};
+      return { ...base, note: 'typing several rows? one gridcraft.set_cells call with values=[[...],[...]] writes them all at once' };
+    },
   },
   {
     name: 'gridcraft.get_cell',
@@ -166,9 +265,10 @@ export const tools = [
       if (args.number_format !== undefined) steps.push(['home.numberFormat', { format: args.number_format }]);
       if (args.align !== undefined) steps.push([ALIGN[args.align], {}]);
       if (steps.length === 0) throw new ToolError('invalid_argument', 'give at least one of bold, italic, font_color, fill, number_format or align', '');
+      await requireRangeData(app, args.range);
       const applied = [];
       for (const [id, extra] of steps) {
-        await app.execute(id, { range: args.range, ...extra });
+        await rangeExecute(app, id, { range: args.range, ...extra });
         applied.push(id);
       }
       return { range: args.range, applied };
@@ -189,7 +289,11 @@ export const tools = [
     needs: NEEDS,
     examples: [{ args: { range: 'A1:C6', type: 'column', title: 'Sales' }, says: 'Make a column chart of the sales data' }],
     // tools.rs:655 insert.chart
-    run: async (args, ctx) => (await ctx.craft(APP)).execute('insert.chart', pick(args, ['range', 'type', 'subtype', 'title', 'at'])),
+    run: async (args, ctx) => {
+      const app = await ctx.craft(APP);
+      await requireRangeData(app, args.range);
+      return rangeExecute(app, 'insert.chart', pick(args, ['range', 'type', 'subtype', 'title', 'at']));
+    },
   },
   {
     name: 'gridcraft.create_table',
@@ -205,7 +309,11 @@ export const tools = [
     needs: NEEDS,
     examples: [{ args: { range: 'A1:D20' }, says: 'Turn the range into a table' }],
     // tools.rs:656 insert.table
-    run: async (args, ctx) => (await ctx.craft(APP)).execute('insert.table', pick(args, ['range', 'style', 'header', 'name'])),
+    run: async (args, ctx) => {
+      const app = await ctx.craft(APP);
+      await requireRangeData(app, args.range);
+      return rangeExecute(app, 'insert.table', pick(args, ['range', 'style', 'header', 'name']));
+    },
   },
   {
     name: 'gridcraft.sort_range',
@@ -221,10 +329,14 @@ export const tools = [
     examples: [{ args: { keys: 'B, A desc', range: 'A1:D20', header: true }, says: 'Sort the table by column B' }],
     // tools.rs:657 sort_range (tools.rs:572): keys normalize to {column, order}, then data.sort
     run: async (args, ctx) => {
+      const app = await ctx.craft(APP);
       const params = { keys: (args.keys ?? []).map(level => { const [column, order] = String(level).split(/\s+/); return { column, order: /desc/i.test(order ?? '') ? 'desc' : 'asc' }; }) };
-      if (args.range !== undefined) params.range = args.range;
+      if (args.range !== undefined) {
+        await requireRangeData(app, args.range);
+        params.range = args.range;
+      }
       if (args.header !== undefined) params.header = args.header;
-      return (await ctx.craft(APP)).execute('data.sort', params);
+      return rangeExecute(app, 'data.sort', params);
     },
   },
   {
@@ -234,7 +346,7 @@ export const tools = [
     params: {
       column: { type: 'string', required: true, description: 'Column letter to filter on, e.g. C' },
       range: { type: 'string', description: 'Data range to filter; the region around the selection when omitted' },
-      values: { type: 'list', description: 'Values to keep, e.g. North, South' },
+      values: { type: 'list', description: 'Values to keep, e.g. Red, Blue' },
       custom_op: { type: 'string', description: 'Custom operator: =, <>, >, >=, <, <=, beginsWith, contains' },
       custom_value: { type: 'string', description: 'Value the custom operator compares against' },
       custom_op2: { type: 'string', description: 'Second operator, for a pair of criteria' },
@@ -250,12 +362,15 @@ export const tools = [
     needs: NEEDS,
     examples: [
       { args: { column: 'C', values: 'North, South' }, says: 'Show only the North and South rows' },
-      { args: { column: 'B', custom_op: '>', custom_value: '100' }, says: 'Keep the rows over 100' },
+      { args: { column: 'B', custom_op: '>', custom_value: '68' }, says: 'Keep the rows over 68' },
     ],
     // tools.rs:658 filter (tools.rs:603): selection.set for range, then data.filterBy
     run: async (args, ctx) => {
       const app = await ctx.craft(APP);
-      if (args.range !== undefined) await app.execute('selection.set', { range: args.range });
+      if (args.range !== undefined) {
+        await requireRangeData(app, args.range);
+        await rangeExecute(app, 'selection.set', { range: args.range });
+      }
       const params = { column: args.column };
       const put = (key, value) => { if (value !== undefined) params[key] = value; };
       put('values', args.values);
@@ -273,7 +388,7 @@ export const tools = [
       if (Object.keys(top).length > 0) params.top = top;
       put('blanks', args.blanks);
       put('clear', args.clear);
-      return app.execute('data.filterBy', params);
+      return rangeExecute(app, 'data.filterBy', params);
     },
   },
   {
@@ -314,6 +429,10 @@ export const tools = [
     name: 'gridcraft.list_functions',
     purpose: 'List spreadsheet functions with signature and description.',
     when: 'Use when the user asks which formula function to use, e.g. for a lookup or a date.',
+    // A4: function names live in the app's function registry, not the tool text, so an inner
+    // name (find_tool "vlookup") would not match. The common function names index this tool so
+    // the app's own registry is the first hop (its search param then narrows it).
+    keywords: ['sum', 'average', 'vlookup', 'hlookup', 'xlookup', 'if', 'iferror', 'index', 'match', 'countif', 'sumif', 'counta', 'count', 'min', 'max', 'round', 'roundup', 'rounddown', 'text', 'left', 'right', 'mid', 'concatenate', 'substitute', 'trim', 'date', 'today', 'now', 'datedif', 'eomonth', 'networkdays', 'pi', 'sqrt', 'abs', 'log', 'power', 'mod', 'int', 'ceiling', 'floor', 'rand', 'randbetween', 'and', 'or', 'not', 'isblank', 'isnumber'],
     params: {
       search: { type: 'string', description: 'Substring of the function name or description' },
       category: { type: 'string', description: 'Category, e.g. Math & Trig, Lookup & Reference' },
@@ -346,7 +465,7 @@ export const tools = [
     when: `Use when a menu action is wanted by id; ${DESTRUCTIVE.join(', ')} are destructive.`,
     params: {
       command: { type: 'string', required: true, description: 'Command id from gridcraft.list_commands, e.g. cell.set or home.bold' },
-      params: { type: 'text', description: 'Parameters as key=value lines, one per line; omit for the defaults' },
+      params: { type: 'text', description: 'Parameters as key=value lines, one per line (a JSON object works too); omit for the defaults' },
     },
     effect: 'change',
     effectFor: args => (DESTRUCTIVE.some(prefix => String(args.command ?? '').startsWith(prefix)) ? 'destructive' : 'change'),
@@ -357,9 +476,16 @@ export const tools = [
       const app = await ctx.craft(APP);
       const all = await app.commands();
       if (!all.some(command => command.id === args.command)) {
-        const near = closest(args.command, all.map(command => command.id), 3);
+        const id = String(args.command);
+        // A dash is the tell of a skill slug, not an engine id: gridcraft-08 burned five
+        // rounds on command=add-a-sheet-and-use-it-in-a-formula, and the closest-id fix
+        // (formulas.useInFormula) pointed at an unrelated command.
+        if (id.includes('-')) {
+          throw new ToolError('invalid_argument', `unknown command "${id}": command ids have no dashes (e.g. home.insertSheet) - copy an id from the command list`, 'call_tool tool=gridcraft.list_commands');
+        }
+        const near = closest(id, all.map(command => command.id), 3);
         const fix = near.length > 0 ? callLine('gridcraft.run_command', { command: near[0] }) : '';
-        throw new ToolError('invalid_argument', `unknown command "${args.command}"${near.length > 0 ? `; closest: ${near.join(', ')}` : ''}`, fix);
+        throw new ToolError('invalid_argument', `unknown command "${id}"${near.length > 0 ? `; closest: ${near.join(', ')}` : ''}`, fix);
       }
       return app.execute(args.command, parseParams(args.params));
     },
@@ -378,7 +504,13 @@ export const tools = [
     // wrapper's own unsaved-changes confirm still applies (app.mjs:35). openAndAwait waits
     // until the app's inspect changes, so the result confirms the workbook actually loaded.
     run: async (args, ctx) => {
-      const file = await readOpenFile(ctx, args.path, { id: APP, title: 'GridCraft' });
+      const file = await readOpenFile(ctx, args.path, {
+        id: APP, title: 'GridCraft',
+        // Sweep b16 (gridcraft-04/-05/-06/-08): after a failed open the model looped on
+        // guessed workbook names because it assumed the data must be in a file. The data
+        // is usually in the user's message; the active sheet already holds nothing.
+        missingHint: 'If the data comes from the user message, nothing needs opening: type it with set_cells into the active sheet.',
+      });
       const wrapper = await ctx.host.appWindow(APP);
       const craft = await ctx.craft(APP);
       return openAndAwait(craft, { id: APP, title: 'GridCraft', wrapperWindow: wrapper, name: file.name, bytes: file.bytes, accept: releases[APP].accept });

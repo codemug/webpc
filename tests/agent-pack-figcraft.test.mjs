@@ -359,7 +359,7 @@ test('figcraft.open_file reads the file, drives the wrapper input, and waits for
   assert.deepEqual(ctx.calls.read, ['/FigCraft/app.figcraft']);
   assert.equal(wrapper.opened.length, 1);
   assert.equal(wrapper.opened[0].name, 'app.figcraft');
-  assert.deepEqual(out, { name: 'app.figcraft', bytes: 3, opened: '"app.figcraft" 1 page' });
+  assert.deepEqual(out, { name: 'app.figcraft', bytes: 3, opened: '"app.figcraft" 1 page', next: 'app.figcraft is open. To check it, call figcraft.inspect. Opening it again shows a dialog and blocks the app.' });
 });
 
 test('figcraft.save_copy takes the bytes inline from file.saveAs {data: true} and writes them', async () => {
@@ -393,9 +393,9 @@ test('figcraft.save_copy refuses a foreign target extension with the .figcraft f
 
 const { skills, errors: skillErrors } = parseSkills(SKILLS_MD, 'figcraft');
 
-test('skills.md parses with the runtime parser without errors and has 10 skills', () => {
+test('skills.md parses with the runtime parser without errors and has 13 skills', () => {
   assert.deepEqual(skillErrors, []);
-  assert.equal(skills.length, 10);
+  assert.equal(skills.length, 13);
   for (const skill of skills) {
     assert.ok(skill.slug && skill.summary, `skill ${skill.slug} slug/summary`);
     assert.ok(skill.summary.length <= 160, `skill ${skill.slug} summary is ${skill.summary.length} chars`);

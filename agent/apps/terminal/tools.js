@@ -55,6 +55,49 @@ function readState(win) {
 // and the user to use directly.
 const BOOT_WAIT_MS = 90000;
 const BOOT_POLL_MS = 250;
+// The boot race (sweep-terminal-b17 terminal-01): the page reports the guest running
+// (the buttons) before the guest's shell actually runs commands - the first one or two
+// commands answer exit 0 with empty output. So before the first command of a boot, prove
+// the shell executes: echo a random sentinel and wait until its output comes back.
+const READY_TIMEOUT_MS = 5000;
+const READY_POLL_MS = 250;
+let shellReady = false;
+
+// Test seam: unit tests share the module's shellReady flag across fake guests.
+export function resetShellReadiness() { shellReady = false; }
+
+// The token counts only on a line that is not the echoed command line: the guest's
+// vm.exec hands back clean output, but if the terminal echo ever leaks into it, the
+// echoed "echo <token>" line alone must not prove the shell ready. The probe's shape
+// (echo wcpc-ready-<lowercase base36>) is matched by isAgentProbeRun in
+// src/scripts/pc/apps/terminal-exec.mjs to hide it from the user's xterm - keep in sync.
+function sentinelInOutput(output, token) {
+  return String(output).split('\n').some(line => line.includes(token) && !line.includes(`echo ${token}`));
+}
+
+async function proveShellReady(bridge, signal) {
+  const token = `wcpc-ready-${Math.random().toString(36).slice(2, 10)}`;
+  const code = `echo ${token}`;
+  const deadline = Date.now() + READY_TIMEOUT_MS;
+  for (;;) {
+    let reply;
+    try {
+      reply = await bridge.run({ code, lang: 'sh', timeout_ms: 3000 });
+    } catch (error) {
+      if (error instanceof ToolError) throw error;
+      throw new ToolError(error?.code || 'app_error', error?.message ?? String(error), '');
+    }
+    if (!reply?.error && reply.exitCode === 0 && typeof reply.output === 'string' && sentinelInOutput(reply.output, token)) {
+      shellReady = true;
+      return;
+    }
+    if (signal?.aborted) throw new ToolError('aborted', 'The run was stopped before the shell proved ready.', '');
+    if (Date.now() > deadline) throw new ToolError('not_running',
+      `Linux reports running but its shell never echoed the readiness check (${code}) within ${READY_TIMEOUT_MS / 1000} s - its commands are not executing (a fresh boot swallows the first commands, or the exec channel went dead after an earlier run)`,
+      'call system.sleep seconds=3, then terminal.status');
+    await new Promise(resolve => setTimeout(resolve, READY_POLL_MS));
+  }
+}
 async function ensureRunning(win, signal) {
   let { state, line } = readState(win);
   if (state === 'running') return;
@@ -129,6 +172,11 @@ export const tools = [
     name: 'terminal.run',
     purpose: 'Run a shell command (uname, ls, pip) or Python/Node code in the Linux terminal.',
     when: 'Use when the user wants any command, script or code run in Linux or the terminal.',
+    // A4: program names live in the guest, not the tool text, so an inner name (find_tool
+    // "grep") or an install intent would not match. Common guest programs index this tool;
+    // generic words (date, echo, test) are deliberately left out - they would pull shell runs
+    // into unrelated queries.
+    keywords: ['ls', 'cat', 'grep', 'sed', 'awk', 'wc', 'head', 'tail', 'sort', 'uniq', 'find', 'which', 'whoami', 'uname', 'df', 'du', 'free', 'top', 'ps', 'kill', 'mkdir', 'cp', 'mv', 'rm', 'touch', 'chmod', 'chown', 'tar', 'gzip', 'zip', 'curl', 'wget', 'ssh', 'scp', 'git', 'python', 'python3', 'node', 'npm', 'pip', 'pip3', 'nano', 'vim', 'less', 'basename', 'dirname', 'realpath', 'ping', 'traceroute', 'ifconfig', 'netstat', 'jq', 'base64', 'od', 'xxd', 'file', 'diff', 'make', 'apk', 'apt', 'busybox', 'strace', 'gdb'],
     params: {
       lang: { type: 'enum', values: ['python', 'node', 'sh'], default: 'sh', description: 'Language of the code (default sh)' },
       code: { type: 'text', required: true, description: 'Code to run in the guest' },
@@ -143,15 +191,32 @@ export const tools = [
       { args: { lang: 'python', code: 'print(6 * 7)' }, says: 'Run this Python code' },
     ],
     // Open the window first so the user sees the run (the status line says what runs and its
-    // result). Then delegate to the run_code bridge (ctx.legacy.run_code, wired
+    // result). Then prove the shell is actually executing (a fresh boot's first commands are
+    // swallowed - boot race) and delegate to the run_code bridge (ctx.legacy.run_code, wired
     // by src/apps/ai-agent/app.js over the webpc-terminal BroadcastChannel); its reply is
     // already model-facing: { exitCode, output, truncated } or
     // { error } for not-running / busy / no-terminal / timeout / cancelled.
     run: async (args, ctx) => call(ctx, async host => {
-      await ensureRunning(await page(host), ctx.signal);
+      const win = await page(host);
+      const wasRunning = readState(win).state === 'running';
+      await ensureRunning(win, ctx.signal);
+      if (!wasRunning) resetShellReadiness(); // a fresh boot is a fresh shell
       const bridge = ctx.legacy?.run_code;
       if (!bridge) throw new ToolError('not_available', 'the run_code bridge is not wired here (the Linux guest tools are unavailable)', '');
-      return bridge.run({ code: args.code, lang: args.lang, timeout_ms: args.timeout_ms });
+      if (!shellReady) await proveShellReady(bridge, ctx.signal);
+      const reply = await bridge.run({ code: args.code, lang: args.lang, timeout_ms: args.timeout_ms });
+      // sweep-terminal-b19 (terminal-01: 27 rounds of {exitCode:0, output:""}): after the
+      // oracle phase the guest's exec session went silent - well-formed success replies
+      // with empty output - and the boot proof never re-ran on an already-running guest.
+      // Re-prove once on that shape: if the sentinel answers, the shell is live and an
+      // empty output is a legitimate answer, so the original reply stands; if it does not,
+      // proveShellReady throws the honest not_running within READY_TIMEOUT_MS instead of
+      // the model burning rounds on empty successes.
+      if (!reply?.error && reply?.exitCode === 0 && !reply.output) {
+        resetShellReadiness();
+        await proveShellReady(bridge, ctx.signal);
+      }
+      return reply;
     }),
   },
 ];

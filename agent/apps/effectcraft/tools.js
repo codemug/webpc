@@ -29,6 +29,39 @@ const pick = (args, keys) => {
   return out;
 };
 
+// Layer create commands need an active comp. new_project leaves the project empty
+// (activeComp null), so a model that skipped new_comp gets the engine's bare app_error
+// "no composition is open" and loops (sweep b16 effectcraft-04: 27 rounds oscillating
+// new_project / project_open demo). Re-throw with the new_comp fix line.
+const NO_COMP = /no composition is open/i;
+const runLayerCreate = async (ctx, command, params) => {
+  try {
+    return await (await ctx.craft(APP)).execute(command, params);
+  } catch (error) {
+    if (error?.code === 'app_error' && NO_COMP.test(error.message)) {
+      throw new ToolError('app_error', 'no comp is open; new_project starts the project with none, so create a comp before adding layers', 'call_tool tool=effectcraft.new_comp name=<name> duration=<seconds>');
+    }
+    throw error;
+  }
+};
+
+// prop.set/addKey/get surface a bad property path as the bare app_error "no property `X`".
+// lfm3 guessed the bare name (opacity) and burned 10+ rounds each finding transform/opacity
+// in the layer tree (sweep b16 effectcraft-05 and -06). Re-throw with the transform/<name>
+// hint when the missing name is a bare one (no slash yet).
+const NO_PROP = /no property `([^`/]+)`/;
+const propExecute = async (app, command, params) => {
+  try {
+    return await app.execute(command, params);
+  } catch (error) {
+    const m = error?.code === 'app_error' ? NO_PROP.exec(error.message ?? '') : null;
+    if (m) {
+      throw new ToolError('app_error', `${error.message}; transform properties are named transform/<name>, so try transform/${m[1]}`, 'call_tool tool=effectcraft.layer layer=<layer>');
+    }
+    throw error;
+  }
+};
+
 // A key=value value: booleans, numbers, a [ ... ] or { ... } JSON value, else a string.
 const parseValue = raw => {
   if (/^(true|false)$/i.test(raw)) return raw.toLowerCase() === 'true';
@@ -39,10 +72,20 @@ const parseValue = raw => {
   return raw;
 };
 
-// key=value lines -> object (the generic long-tail form for params).
-const parseParams = text => {
+// key=value lines -> object (the generic long-tail form for params). A JSON object or array
+// value passes through as-is (lfm3-1.7b sends the engine params as JSON; repairArgs
+// serializes an unwrapped wrapper object to JSON text for this slot).
+export const parseParams = text => {
+  const source = String(text ?? '').trim();
+  if (source.startsWith('{') || source.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(source);
+      if (parsed !== null && typeof parsed === 'object') return parsed;
+    } catch { /* not JSON: fall through to key=value lines */ }
+  }
   const out = {};
-  for (const line of String(text ?? '').split('\n')) {
+  // A literal backslash-n counts as a line break too: small models often write \n in the text.
+  for (const line of String(text ?? '').split(/\n|\\n/)) {
     const row = line.trim();
     if (!row) continue;
     const eq = row.indexOf('=');
@@ -155,7 +198,7 @@ export const tools = [
     needs: NEEDS,
     examples: [{ args: { layer: '1', path: 'transform/opacity' }, says: 'What is the opacity?' }],
     // tools.rs:324 get_property: prop.get
-    run: async (args, ctx) => (await ctx.craft(APP)).execute('prop.get', pick(args, ['layer', 'path', 'comp', 'time'])),
+    run: async (args, ctx) => propExecute(await ctx.craft(APP), 'prop.get', pick(args, ['layer', 'path', 'comp', 'time'])),
   },
   {
     name: 'effectcraft.property_set',
@@ -172,7 +215,7 @@ export const tools = [
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { layer: '1', path: 'transform/opacity', value: '50' }, says: 'Set layer 1 opacity to 50' }],
+    examples: [{ args: { layer: '1', path: 'transform/opacity', value: '40' }, says: 'Set layer 1 opacity to 40' }],
     // tools.rs:329 set_property: value -> prop.set (or prop.addKey with time), expression ->
     // prop.setExpression, then prop.get to read the result back
     run: async (args, ctx) => {
@@ -183,22 +226,29 @@ export const tools = [
       const base = pick(args, ['layer', 'path', 'comp']);
       const jsonValue = () => {
         if (args.value === undefined) return undefined;
-        try { return JSON.parse(args.value); } catch { return args.value; }
+        let parsed;
+        try { parsed = JSON.parse(args.value); } catch { parsed = args.value; }
+        // b20 effectcraft-06: a raw string that is not a #color is expression text; prop.set
+        // answers "bad value" and the model loops, so point at the expression parameter.
+        if (typeof parsed === 'string' && !parsed.startsWith('#')) {
+          throw new ToolError('invalid_argument', 'value is not a number, a JSON array or a #rrggbb color: animation text goes in the expression parameter', '');
+        }
+        return parsed;
       };
       if (args.value !== undefined) {
         const params = { ...base, value: jsonValue() };
         if (args.time !== undefined) {
           params.time = args.time;
           if (args.timeBase !== undefined) params.timeBase = args.timeBase;
-          await app.execute('prop.addKey', params);
+          await propExecute(app, 'prop.addKey', params);
         } else {
-          await app.execute('prop.set', params);
+          await propExecute(app, 'prop.set', params);
         }
       }
       if (args.expression !== undefined) {
-        await app.execute('prop.setExpression', { ...base, expression: args.expression });
+        await propExecute(app, 'prop.setExpression', { ...base, expression: args.expression });
       }
-      return app.execute('prop.get', { ...base, ...(args.time !== undefined ? { time: args.time } : {}) });
+      return propExecute(app, 'prop.get', { ...base, ...(args.time !== undefined ? { time: args.time } : {}) });
     },
   },
   {
@@ -214,7 +264,7 @@ export const tools = [
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { layer: '1', path: 'transform/opacity', keys: '[{"time":0,"value":0},{"time":1,"value":100}]' }, says: 'Fade layer 1 in over one second' }],
+    examples: [{ args: { layer: '1', path: 'transform/opacity', keys: '[{"time":0,"value":0},{"time":8,"value":75}]' }, says: 'Fade layer 1 in over eight seconds' }],
     // tools.rs:360 add_keyframe: one prop.addKey per key, then prop.get; the interpolation
     // follow-up (keys.select + keys.interpolation) is omitted (report)
     run: async (args, ctx) => {
@@ -234,9 +284,9 @@ export const tools = [
         const params = { ...base, time: key.time };
         if (key.value !== undefined) params.value = key.value;
         if (args.timeBase !== undefined) params.timeBase = args.timeBase;
-        await app.execute('prop.addKey', params);
+        await propExecute(app, 'prop.addKey', params);
       }
-      return app.execute('prop.get', base);
+      return propExecute(app, 'prop.get', base);
     },
   },
   {
@@ -246,12 +296,12 @@ export const tools = [
     params: {
       layer: { type: 'string', required: true, description: 'Layer id, #n or name' },
       effect: { type: 'string', required: true, description: 'Effect id or name, e.g. Gaussian Blur, Glow, ec.color.levels' },
-      values: { type: 'text', description: 'JSON object of parameter id to value, e.g. {"blurriness":12}' },
+      values: { type: 'text', description: 'JSON object of parameter id to value, e.g. {"blurriness":8}' },
       comp: { type: 'string', description: 'Composition id or name; the active comp when omitted' },
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { layer: '1', effect: 'Gaussian Blur', values: '{"blurriness":12}' }, says: 'Blur layer 1' }],
+    examples: [{ args: { layer: '1', effect: 'Gaussian Blur', values: '{"blurriness":8}' }, says: 'Blur layer 1' }],
     // tools.rs:228 add_effect: layer.tree for the index, then ONE engine.batch of effect.apply
     // plus prop.set per value (one undo step, labelled "Apply <name>"), then layer.tree for
     // the new instance's name and params
@@ -266,7 +316,12 @@ export const tools = [
         try {
           values = JSON.parse(args.values);
         } catch {
-          throw new ToolError('invalid_argument', 'values must be a JSON object of parameter id to value', '');
+          throw new ToolError('invalid_argument', 'values must be a JSON object of parameter id to value, e.g. {"blurriness": 8}', '');
+        }
+        // b20 effectcraft-04: a bare "12" parses as a JSON number and Object.entries drops it
+        // silently, so the effect landed with every parameter at zero; refuse it up front.
+        if (typeof values !== 'object' || values === null || Array.isArray(values)) {
+          throw new ToolError('invalid_argument', 'values must be a JSON object of parameter id to value, e.g. {"blurriness": 8}', '');
         }
         const prefix = `effects/#${index}`;
         for (const [key, value] of Object.entries(values)) {
@@ -324,6 +379,124 @@ export const tools = [
     },
   },
   {
+    name: 'effectcraft.new_project',
+    purpose: 'Start a new empty project (replaces the open one).',
+    when: 'Use when the user wants a fresh project before any comp or layer work.',
+    params: {},
+    effect: 'destructive',
+    needs: NEEDS,
+    examples: [{ args: {}, says: 'Start a fresh project' }],
+    // file.newProject, the same engine command as project_open new=true, as its own flat
+    // tool: b14 (j3-effectcraft-3-b14, 0/6) the pack had no flat create verbs, so the model
+    // edited the demo project (layer 377 of "EffectCraft Intro") instead of starting fresh.
+    // Destructive like project_open: the web app holds one project, so this replaces it.
+    run: async (args, ctx) => {
+      const app = await ctx.craft(APP);
+      await app.execute('file.newProject', {});
+      const summary = await app.execute('project.summary', {});
+      // lfm3 saw activeComp:null on new_project seven times and never connected it to
+      // "create a comp" (sweep b16 effectcraft-04). Name the next step in the result.
+      if (summary && typeof summary === 'object' && !summary.activeComp) {
+        summary.note = 'no comp is open yet; call new_comp before adding layers';
+      }
+      return summary;
+    },
+  },
+  {
+    name: 'effectcraft.new_comp',
+    purpose: 'Create a named composition; it becomes the active comp.',
+    when: 'Use when the user wants a comp of a size and length, after new_project or on the open project.',
+    params: {
+      name: { type: 'string', required: true, description: 'Comp name, e.g. Credits' },
+      width: { type: 'integer', description: 'Width in pixels' },
+      height: { type: 'integer', description: 'Height in pixels' },
+      duration: { type: 'number', description: 'Duration in seconds; snapped to whole frames' },
+      frameRate: { type: 'number', description: 'Frames per second' },
+    },
+    effect: 'change',
+    needs: NEEDS,
+    examples: [{ args: { name: 'Credits', width: 1280, height: 720, duration: 8 }, says: 'Make an 8 s Credits comp' }],
+    // comp.new, the engine command the journeys' oracles drive (b14 oracle r3: {comp:1});
+    // it makes the new comp active and snaps duration to whole frames (5 s reads back
+    // 5.005 s at the 29.97 fps default), so duration checks bracket the asked length.
+    run: async (args, ctx) => {
+      const app = await ctx.craft(APP);
+      const created = await app.execute('comp.new', pick(args, ['name', 'width', 'height', 'duration', 'frameRate']));
+      // lfm3 called new_comp twice with the same name (sweep b16 effectcraft-05/-06); the
+      // engine renames the second one ("Night 2") and the layers stay in the first comp,
+      // so the active comp no longer matches the journey. comp.new returns only the id,
+      // so read the new active comp back and catch the rename.
+      const info = await app.execute('comp.info', {});
+      if (info && typeof info === 'object' && info.name !== args.name) {
+        throw new ToolError('app_error', `a comp named "${args.name}" already exists; the new comp was renamed to "${info.name}" and is now active, but your earlier layers are in the first comp. Switch back to it instead of adding more layers here.`, `call_tool tool=effectcraft.comp_switch comp=${args.name}`);
+      }
+      return created;
+    },
+  },
+  {
+    name: 'effectcraft.comp_switch',
+    purpose: 'Make a composition the active comp (by id or name).',
+    when: 'Use when the user wants to switch to another comp, or when a tool error says a comp was renamed and you must go back.',
+    params: {
+      comp: { type: 'string', required: true, description: 'Composition id or name (from effectcraft.project or effectcraft.comp)' },
+    },
+    effect: 'change',
+    needs: NEEDS,
+    examples: [{ args: { comp: 'Credits' }, says: 'Switch back to the Credits comp' }],
+    // comp.open (the engine command the web API calls as openInViewer, verified in the
+    // vendored wasm command registry) opens the comp in the timeline, i.e. makes it
+    // active. The flat create tools have no comp= param, so this is the only way back
+    // from the wrong active comp (sweep b16 effectcraft-05/-06).
+    run: async (args, ctx) => (await ctx.craft(APP)).execute('comp.open', pick(args, ['comp'])),
+  },
+  {
+    name: 'effectcraft.add_text_layer',
+    purpose: 'Add a text layer to the active comp.',
+    when: 'Use when the user wants a text layer on the active comp.',
+    params: {
+      text: { type: 'string', required: true, description: 'The text, e.g. On schedule' },
+      name: { type: 'string', description: 'Layer name; the text when omitted' },
+    },
+    effect: 'change',
+    needs: NEEDS,
+    examples: [{ args: { text: 'On schedule' }, says: 'Add a text layer' }],
+    // layer.newText, the oracle's creation command (b14 oracle r3: {layer:2}); the new
+    // layer spans the whole comp (in 0, out the comp duration) and its name follows the
+    // text when no name is given, so a layer name pins the text.
+    run: (args, ctx) => runLayerCreate(ctx, 'layer.newText', pick(args, ['text', 'name'])),
+  },
+  {
+    name: 'effectcraft.add_solid',
+    purpose: 'Add a solid color layer to the active comp.',
+    when: 'Use when the user wants a solid (a background or a flat block) on the active comp.',
+    params: {
+      name: { type: 'string', description: 'Layer name, e.g. Backdrop' },
+      width: { type: 'integer', description: 'Width in pixels; the comp size when omitted' },
+      height: { type: 'integer', description: 'Height in pixels; the comp size when omitted' },
+      color: { type: 'string', description: 'Color as #rrggbb or [r,g,b,a] 0-1, as text' },
+    },
+    effect: 'change',
+    needs: NEEDS,
+    examples: [{ args: { name: 'Backdrop', width: 1280, height: 720 }, says: 'Add a solid that fills the comp' }],
+    // layer.newSolid, the oracle's creation command (b14 oracle r3: {layer:4}); new layers
+    // span the whole comp, so the solid's out point at the comp end pins its placement.
+    run: (args, ctx) => runLayerCreate(ctx, 'layer.newSolid', pick(args, ['name', 'width', 'height', 'color'])),
+  },
+  {
+    name: 'effectcraft.add_item',
+    purpose: 'Add an imported item (a still or footage) as a layer on the active comp.',
+    when: 'Use when the user wants imported media on the timeline, after effectcraft.open_file.',
+    params: {
+      item: { type: 'string', required: true, description: 'The imported item name, e.g. mountain-portrait.jpg (from effectcraft.project)' },
+    },
+    effect: 'change',
+    needs: NEEDS,
+    examples: [{ args: { item: 'mountain-portrait.jpg' }, says: 'Put the imported still on the comp' }],
+    // layer.addItem, the item addressed by name, not id (the oracle's 05 command, b14
+    // oracle r3: {layer:3}); the new layer starts at zero and takes the item's name.
+    run: (args, ctx) => runLayerCreate(ctx, 'layer.addItem', pick(args, ['item'])),
+  },
+  {
     name: 'effectcraft.script_run',
     purpose: 'Run a JavaScript script against the project.',
     when: 'Use when the user wants a scripted bulk edit.',
@@ -333,7 +506,7 @@ export const tools = [
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { code: 'comp.layers.forEach(l => l.opacity = 50)' }, says: 'Dim every layer of the active comp' }],
+    examples: [{ args: { code: 'comp.layers.forEach(l => l.opacity = 40)' }, says: 'Dim every layer of the active comp' }],
     // tools.rs:271 run_script: script.run
     run: async (args, ctx) => (await ctx.craft(APP)).execute('script.run', pick(args, ['code', 'name'])),
   },
@@ -464,7 +637,7 @@ export const tools = [
       return (Array.isArray(steps) ? steps : []).some(step => DESTRUCTIVE.some(id => String(step?.command ?? '').startsWith(id))) ? 'destructive' : 'change';
     },
     needs: NEEDS,
-    examples: [{ args: { steps: '[{"command":"comp.new","params":{"name":"Titles","width":1920,"height":1080}}]' }, says: 'Create a Titles comp' }],
+    examples: [{ args: { steps: '[{"command":"comp.new","params":{"name":"Credits","width":1280,"height":720}}]' }, says: 'Create a Credits comp' }],
     // tools.rs:496 batch_tool: ONE engine.batch {steps, label?, atomic?} (the engine applies the
     // atomic default; engine.batch cannot nest itself, engine/cmd/batch.rs:14)
     run: async (args, ctx) => {
@@ -509,7 +682,7 @@ export const tools = [
     effect: 'change',
     effectFor: args => (DESTRUCTIVE.some(prefix => String(args.command ?? '').startsWith(prefix)) ? 'destructive' : 'change'),
     needs: NEEDS,
-    examples: [{ args: { command: 'time.set', params: 'seconds=5' }, says: 'Jump to 5 seconds' }],
+    examples: [{ args: { command: 'time.set', params: 'seconds=8' }, says: 'Jump to 8 seconds' }],
     // tools.rs:202 execute_command: run(id, params) against the live command list; unknown ids
     // get invalid_argument with the 3 closest. The command_list/command_run aliases
     // (:937/:954) and the sequential command_batch (:986) are deduped here; describe_command
@@ -590,5 +763,6 @@ export const usesCommands = [
   'engine.batch', 'effect.apply', 'effect.list', 'text.fonts', 'editor.state', 'app.capabilities',
   'script.run', 'file.openDemoProject', 'file.newProject', 'file.save',
   'edit.undo', 'edit.redo', 'edit.history.goto', 'edit.history.list',
+  'comp.new', 'layer.newText', 'layer.newSolid', 'layer.addItem', 'comp.open',
 ];
 export const usesMethods = []; // nothing goes through request(); the page inspect() is not used (the packs read via engine queries)

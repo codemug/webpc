@@ -1,0 +1,411 @@
+# Desktop journeys (16). train 12, holdout 4 (desktop-03, desktop-07, desktop-11,
+# desktop-16). Cross-app file: app is desktop (the schema allows it). Rewritten for the
+# round 2 rules and the fixture oracle (2026-11-25): every setup is close_all (desktop
+# cannot be opened as an app, so the schema exempts it), the window state is pinned with
+# read_tool on desktop.list_windows (open windows, positions, sizes, minimized and
+# maximized flags, the active window) instead of the agent's words, the journeys that
+# assume open windows seed them with run steps, and eight of the sixteen journeys cross
+# apps (10, 12, 13, 14, 15, 16 plus the two in the original file), with the long
+# workflows at six actions (13, 14). answer_* checks stay only where the fact is
+# readable in a tool result, pinned with word-boundary patterns.
+app: desktop
+journeys:
+  - id: desktop-01-tile-and-report
+    split: train
+    title: "Start two apps, tile them, and report the count"
+    prompt: >-
+      Start GridCraft and Docs for me and put the two windows side by side so I can
+      compare them, one on the left and one on the right. When they are arranged, tell
+      me the number of open windows on the desktop.
+    setup:
+      - close_all: true
+    oracle:
+      - tool: desktop.open_app
+        app: gridcraft
+      - tool: desktop.open_app
+        app: docs
+      - tool: desktop.tile
+      - tool: desktop.list_windows
+    checks:
+      - read_tool: { tool: desktop.list_windows, matches: '"id":"docs"[^}]*"x":640[^}]*"width":640' }
+      - read_tool: { tool: desktop.list_windows, matches: '"id":"gridcraft"[^}]*"x":0[^}]*"width":640' }
+    covers: [desktop.open_app, desktop.tile, desktop.list_windows]
+    notes: "Two windows tiled side by side; the pin reads the end state itself (docs at x 640, gridcraft at x 0, both half-width, per the measured tile layout)."
+    check_gap: "the window count the user asks about is not present in any tool result (the list carries geometry, not a count), so the answer is checked only in the agent run; the tiling state is the pin."
+
+  - id: desktop-02-theme-light
+    split: train
+    title: "Check the desktop theme and make sure it is light"
+    prompt: >-
+      Check which colour mode the desktop is in, and if it is not light, switch it to
+      light so the screens are easy on the eyes; afterwards tell me which colour mode
+      it is in when you are done.
+    setup:
+      - close_all: true
+    oracle:
+      - tool: desktop.get_theme
+      - tool: desktop.set_theme
+        theme: light
+      - tool: desktop.get_theme
+    checks:
+      - theme: light
+      - answer_contains: "light"
+    covers: [desktop.get_theme, desktop.set_theme]
+    notes: "Read-then-act-then-read; the theme check kind reads the end state itself and the get_theme result carries the word the answer pins."
+
+  - id: desktop-03-move-resize
+    split: holdout
+    title: "Move and resize the terminal window"
+    prompt: >-
+      Open the terminal for me, move its window so its top-left corner sits at 40 by 60
+      pixels from the top-left of the desktop, and resize it to 800 wide by 500 tall.
+      When you are done, tell me its new width in pixels so I know the resize stuck.
+    setup:
+      - close_all: true
+    oracle:
+      - tool: desktop.open_app
+        app: terminal
+      - tool: desktop.move
+        app: terminal
+        x: 40
+        y: 60
+      - tool: desktop.resize
+        app: terminal
+        width: 800
+        height: 500
+      - tool: desktop.list_windows
+    checks:
+      - read_tool: { tool: desktop.list_windows, matches: '"id":"terminal"[^}]*"x":40[^}]*"width":800[^}]*"height":500' }
+      - answer_matches: "(?<!\\d)800(?!\\d)"
+    covers: [desktop.open_app, desktop.move, desktop.resize, desktop.list_windows]
+    notes: "Geometry journey; the x position and the size are pinned in the window state and the width the user asked about is pinned with a word boundary. The window manager clamps the requested y of 60 to 48 (oracle run), so y is not pinned."
+
+  - id: desktop-04-minimize-restore
+    split: train
+    title: "Minimize Files and bring it back"
+    prompt: >-
+      Tuck the Files window away to the taskbar so I can get it out of the way, and then
+      bring it back again so I can see it. When you are finished, tell me whether the
+      Files window is back to its normal state at the end.
+    setup:
+      - close_all: true
+    oracle:
+      - tool: desktop.open_app
+        app: files
+      - tool: desktop.minimize
+        app: files
+      - tool: desktop.restore
+        app: files
+      - tool: desktop.list_windows
+    checks:
+      - read_tool: { tool: desktop.list_windows, matches: '"id":"files"[^}]*"state":"normal"' }
+    covers: [desktop.open_app, desktop.minimize, desktop.restore, desktop.list_windows]
+    notes: "Minimize-restore round trip; the end state (state normal, not minimized) is pinned in the window list, so a window left on the taskbar fails."
+    check_gap: "the yes-or-no answer is checked only in the agent run; the state pin carries the requirement."
+
+  - id: desktop-05-close-all
+    split: train
+    title: "Close every open window"
+    prompt: >-
+      I am done with everything on the desktop, so close every open window to make the
+      desktop clear, and then tell me how many windows are left open so I know nothing
+      is sticking around.
+    setup:
+      - close_all: true
+      - run: { tool: desktop.open_app, app: docs }
+      - run: { tool: desktop.open_app, app: files }
+    oracle:
+      - tool: desktop.close
+        app: docs
+      - tool: desktop.close
+        app: files
+      - tool: desktop.list_windows
+    checks:
+      - read_tool: { tool: desktop.list_windows, matches: "^\\[\\]$" }
+    covers: [desktop.close, desktop.list_windows]
+    notes: "The two windows are opened by setup so the prompt assumes what the setup creates; Docs and Files stay clean on a fresh open, so both close (a fresh GridCraft reports itself dirty and the app refuses the close, oracle run). The empty window list is the pin (an anchored match on the list's JSON, which reads [] only when no window is open)."
+    check_gap: "the count answer (0 or none) is checked only in the agent run; the empty list is the state pin."
+
+  - id: desktop-06-show-desktop
+    split: train
+    title: "Show the desktop and name the apps still open"
+    prompt: >-
+      Show me the desktop for a minute: tuck every window away so I can see the icons,
+      and then tell me which apps are still open underneath, by name, so I know what is
+      still running.
+    setup:
+      - close_all: true
+      - run: { tool: desktop.open_app, app: gridcraft }
+      - run: { tool: desktop.open_app, app: docs }
+    oracle:
+      - tool: desktop.show_desktop
+      - tool: desktop.list_windows
+    checks:
+      - read_tool: { tool: desktop.list_windows, matches: '"id":"gridcraft"[^}]*"state":"minimized"' }
+      - read_tool: { tool: desktop.list_windows, matches: '"id":"docs"[^}]*"state":"minimized"' }
+      - answer_contains: "GridCraft"
+    covers: [desktop.show_desktop, desktop.list_windows]
+    notes: "Minimising leaves the apps open; both windows are pinned in the minimized state and the answer must name at least the spreadsheet app."
+    check_gap: "the answer may use different name casing; the contains check ignores case, and the lead confirms in the agent run."
+
+  - id: desktop-07-office-apps
+    split: holdout
+    title: "List the office apps and name the spreadsheet"
+    prompt: >-
+      Which office apps can I open on this desktop? Look at the office category of the
+      app list and name the spreadsheet app using exactly its app id, the way the
+      system knows it, not its display name.
+    setup:
+      - close_all: true
+    oracle:
+      - tool: desktop.list_apps
+        category: Office
+    checks:
+      - answer_contains: "gridcraft"
+    covers: [desktop.list_apps]
+    notes: "Knowledge journey over the live app list; the app id is pinned in lowercase as the prompt demands."
+
+  - id: desktop-08-focus-switch
+    split: train
+    title: "Bring Docs forward, then switch back to the spreadsheet"
+    prompt: >-
+      Bring the Docs window to the front of the desktop, and then switch back so the
+      spreadsheet window is the active one again. Afterwards tell me which window is in
+      front so I know the switch landed.
+    setup:
+      - close_all: true
+      - run: { tool: desktop.open_app, app: gridcraft }
+      - run: { tool: desktop.open_app, app: docs }
+    oracle:
+      - tool: desktop.focus
+        app: docs
+      - tool: desktop.focus
+        app: gridcraft
+      - tool: desktop.list_windows
+    checks:
+      - read_tool: { tool: desktop.list_windows, matches: '"id":"gridcraft"[^}]*"active":true' }
+      - read_tool: { tool: desktop.list_windows, matches: '"id":"docs"[^}]*"active":false' }
+      - answer_contains: "GridCraft"
+    covers: [desktop.focus, desktop.list_windows]
+    notes: "Focus round trip; the front window is pinned in the window state (gridcraft active, docs inactive) and named in the answer."
+
+  - id: desktop-09-server-cost
+    split: train
+    title: "Work out a server cost with tax"
+    prompt: >-
+      I am pricing three servers at 24 dollars a day for 30 days each, and I owe 24
+      percent tax on top of that. Work out the total with the tax and give me the number
+      to two decimal places so I can put it on the invoice.
+    setup:
+      - close_all: true
+    oracle:
+      - tool: system.calculate
+        expression: "3*24*30*1.24"
+    checks:
+      - answer_matches: "(?<!\\d)2678\\.4(?!\\d)"
+    covers: [system.calculate]
+    notes: "Exact arithmetic: 3 * 24 * 30 = 2160, times 1.24 = 2678.4; the calculate result carries the figure."
+
+  - id: desktop-10-cell-and-note
+    split: train
+    title: "Enter a spreadsheet cell and save a note in Files"
+    prompt: >-
+      Start the spreadsheet, put 42 in cell B2, and save a note in Files at
+      /notes/checkpoint.txt saying B2 is 42, so I have the value written down in both
+      places in case one of them gets reset.
+    setup:
+      - close_all: true
+    oracle:
+      - tool: desktop.open_app
+        app: gridcraft
+      - tool: gridcraft.set_cell
+        cell: B2
+        input: "42"
+      - tool: files.write
+        path: /notes/checkpoint.txt
+        text: "B2 is 42"
+    checks:
+      - cell: { app: gridcraft, cell: B2, input: "42" }
+      - file_contains: { path: /notes/checkpoint.txt, text: "B2 is 42" }
+    covers: [desktop.open_app, gridcraft.set_cell, files.write]
+    notes: "Cross-app journey; both the spreadsheet cell and the Files note are pinned by their own state (files.write creates the missing folder, a tool fix from the harness lane)."
+
+  - id: desktop-11-maximize-restore
+    split: holdout
+    title: "Maximize the spreadsheet and restore it"
+    prompt: >-
+      Maximise the spreadsheet window so I can read the whole sheet, and then bring it
+      back to its normal size. Afterwards tell me whether the window is maximised now or
+      back to its normal size.
+    setup:
+      - close_all: true
+      - run: { tool: desktop.open_app, app: gridcraft }
+    oracle:
+      - tool: desktop.maximize
+        app: gridcraft
+      - tool: desktop.restore
+        app: gridcraft
+      - tool: desktop.list_windows
+    checks:
+      - read_tool: { tool: desktop.list_windows, matches: '"id":"gridcraft"[^}]*"state":"normal"' }
+      - answer_contains: "normal"
+    covers: [desktop.maximize, desktop.restore, desktop.list_windows]
+    notes: "Maximize-restore round trip; the state pin reads normal at the end and the answer must say the window is back to its normal size (the state word is in the tool results, so the pin works in both modes)."
+
+  - id: desktop-12-deck-titles
+    split: train
+    title: "Build a two-slide deck in DeckCraft and report the titles"
+    prompt: >-
+      Start DeckCraft for me, start a new presentation, add a slide titled Kickoff and a
+      second slide titled Agenda, and then tell me the slide titles the deck now has so
+      I know the deck came out the way I asked.
+    setup:
+      - close_all: true
+    oracle:
+      - tool: desktop.open_app
+        app: deckcraft
+      - tool: deckcraft.new_presentation
+      - tool: deckcraft.add_slide
+        layout: titleAndContent
+        title: "Kickoff"
+      - tool: deckcraft.add_slide
+        layout: titleAndContent
+        title: "Agenda"
+      - tool: deckcraft.inspect
+    checks:
+      - read_tool: { tool: deckcraft.inspect, contains: "Kickoff" }
+      - read_tool: { tool: deckcraft.inspect, contains: "Agenda" }
+      - answer_contains: "Kickoff"
+    covers: [desktop.open_app, deckcraft.new_presentation, deckcraft.add_slide, deckcraft.inspect]
+    notes: "Cross-app workflow: the deck titles are pinned through the deck's own inspect (it lists slide titles) and repeated in the answer."
+
+  - id: desktop-13-sales-to-docs
+    split: train
+    title: "Summarise the sales CSV in GridCraft and write it up in Docs"
+    prompt: >-
+      My Q3 sales export is in my files at /data/sales-q3.csv, with Date, Region,
+      Product, Units and Unit price per row. Open it in the spreadsheet and build a
+      small block of per-region unit totals next to the data, one row per region with a
+      formula doing the adding up. Then open Docs, start a fresh document, and write the
+      two-line summary into it: the total units across all regions, and the best region
+      by units.
+    setup:
+      - close_all: true
+      - seed_fixture: { path: /data/sales-q3.csv, fixture: sales-q3.csv }
+    oracle:
+      - tool: desktop.open_app
+        app: gridcraft
+      - tool: gridcraft.open_file
+        path: /data/sales-q3.csv
+      - tool: gridcraft.set_cells
+        start: G1
+        values:
+          - [Region, Units]
+          - [North, "=SUMIF(B2:B9,\"North\",D2:D9)"]
+          - [South, "=SUMIF(B2:B9,\"South\",D2:D9)"]
+          - [East, "=SUMIF(B2:B9,\"East\",D2:D9)"]
+          - [West, "=SUMIF(B2:B9,\"West\",D2:D9)"]
+      - tool: desktop.open_app
+        app: docs
+      - tool: docs.new
+        title: "Q3 sales summary"
+      - tool: docs.insert_text
+        text: "Total units: 100\nBest region: East (33 units)"
+    checks:
+      - read_tool: { tool: gridcraft.get_cell, args: { cell: "H4" }, path: "value", equals: 33 }
+      - docs_text_contains: "East"
+      - docs_text_contains: "100"
+    covers: [desktop.open_app, gridcraft.open_file, gridcraft.set_cells, docs.new, docs.insert_text]
+    notes: "The long cross-app workflow: Files CSV into GridCraft (formula per region, the East cell pinned at 33), then the two-line summary into Docs, pinned through the document's own text. The fixture has 100 units total, East best with 33."
+
+  - id: desktop-14-chart-slide
+    split: train
+    title: "Turn the per-region units from GridCraft into a chart slide"
+    prompt: >-
+      My Q3 sales export is in my files at /data/sales-q3.csv and the units per region
+      are North 23, South 27, East 33 and West 17. Open the CSV in the spreadsheet so
+      the numbers are in front of you, then open the presentation app and make a slide
+      titled Units by region with a column chart of those four region numbers on it.
+    setup:
+      - close_all: true
+      - seed_fixture: { path: /data/sales-q3.csv, fixture: sales-q3.csv }
+    oracle:
+      - tool: desktop.open_app
+        app: gridcraft
+      - tool: gridcraft.open_file
+        path: /data/sales-q3.csv
+      - tool: desktop.open_app
+        app: deckcraft
+      - tool: deckcraft.new_presentation
+      - tool: deckcraft.add_slide
+        layout: titleAndContent
+        title: "Units by region"
+      - tool: deckcraft.insert_chart
+        type: column
+        title: "Units by region"
+        categories: [North, South, East, West]
+        series:
+          - [Units, 23, 27, 33, 17]
+    checks:
+      - read_tool: { tool: deckcraft.inspect_slide, args: { index: 1 }, contains: "Units by region" }
+    covers: [desktop.open_app, gridcraft.open_file, deckcraft.new_presentation, deckcraft.add_slide, deckcraft.insert_chart]
+    notes: "Cross-app workflow: the spreadsheet holds the source numbers and the chart slide carries them; the chart title is pinned through the slide's own inspect (the slide inspect lists chart titles, as the deckcraft chart journeys showed)."
+    check_gap: "the chart's series values are not readable through a current check kind; the title is the pin."
+
+  - id: desktop-15-terminal-calc-note
+    split: train
+    title: "Run a calculation in the Terminal and save it as a note"
+    prompt: >-
+      I have a number to keep straight: 12 servers, each used 7 hours a day at 30
+      dollars an hour. Run that arithmetic in the terminal so I can see the working,
+      and then save the result as a short note in my files at /notes/calc.txt so I do
+      not have to work it out again.
+    setup:
+      - close_all: true
+    oracle:
+      - tool: desktop.open_app
+        app: terminal
+      - tool: terminal.run
+        lang: sh
+        code: "echo $((12 * 7 * 30))"
+      - tool: desktop.open_app
+        app: files
+      - tool: files.write
+        path: /notes/calc.txt
+        text: "12 servers * 7 hours * 30 dollars = 2520"
+    checks:
+      - terminal_output: "2520"
+      # b20/b21 false negative: the model wrote the correct "$2,520.00" and the bare "2520" pin failed; accept the comma grouping
+      - file_matches: { path: /notes/calc.txt, regex: "(?<!\\d)2,?520" }
+    covers: [desktop.open_app, terminal.run, files.write]
+    notes: "Cross-app workflow: the terminal carries the working (pinned through the terminal output) and the result lands in a Files note. 12 * 7 * 30 = 2520."
+    check_gap: "the terminal runs in the Linux guest; if the guest is slow to start in the oracle run, the terminal_output pin is the first to show it."
+
+  - id: desktop-16-pdf-line-to-slide
+    split: holdout
+    title: "Pull the revenue sentence from the report PDF onto a slide"
+    prompt: >-
+      My Q3 report is in my files at /PDFCraft/report-q3.pdf and the first page carries
+      the revenue line I need for the kickoff. Open the report, read the sentence about
+      how revenue grew, and then open the presentation app and put that sentence on a
+      slide titled Revenue so it is on the deck for the meeting.
+    setup:
+      - close_all: true
+      - seed_fixture: { path: /PDFCraft/report-q3.pdf, fixture: report-q3.pdf }
+    oracle:
+      - tool: desktop.open_app
+        app: pdfcraft
+      - tool: pdfcraft.open_file
+        path: /PDFCraft/report-q3.pdf
+      - tool: desktop.open_app
+        app: deckcraft
+      - tool: deckcraft.new_presentation
+      - tool: deckcraft.add_slide
+        layout: titleAndContent
+        title: "Revenue"
+        body: "Revenue grew 14 percent over Q2."
+    checks:
+      - read_tool: { tool: deckcraft.inspect_slide, args: { index: 1 }, contains: "Revenue grew 14 percent" }
+    covers: [desktop.open_app, pdfcraft.open_file, deckcraft.new_presentation, deckcraft.add_slide]
+    notes: "The long cross-app workflow: the sentence comes from the real fixture PDF (page 1) and is pinned in the slide's own inspect; the agent must read the PDF to get it right."
+    check_gap: "the slide body text is visible to the slide inspect (the deckcraft journeys pinned body lines), but the exact shape of the inspect result is unverified for this layout."

@@ -45,7 +45,7 @@ export const pack = { id: APP, title: 'BeepBox' };
 export const tools = [
   {
     name: 'beepbox.get_song',
-    purpose: 'Get the current song hash and tempo.',
+    purpose: 'Get the current song hash, tempo and playback state.',
     when: 'Use when the user asks for the song link, or before loading or saving a song.',
     params: {},
     effect: 'read',
@@ -56,7 +56,7 @@ export const tools = [
     // (synth/synth.ts Song class).
     run: async (args, ctx) => call(ctx, async host => {
       const { editor } = await app(host, ctx);
-      return { hash: editor.doc.song.toBase64String(), tempo: editor.doc.song.tempo };
+      return { hash: editor.doc.song.toBase64String(), tempo: editor.doc.song.tempo, playing: editor.doc.synth.playing };
     }),
   },
   {

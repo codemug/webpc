@@ -1,0 +1,287 @@
+app: lightcraft
+# LightCraft journeys (J1, Craft Integrator lane), rewritten after oracle round 2.
+# The page has only window.lightcraft.command(id, paramsText), so every state check is a
+# craft_request through a registry query command (pinned by the upstream source at
+# storytold/lightcraft v0.21.1, crates/engine/src/cmd/query.rs and crates/catalog/src):
+#   catalog.stats -> {photos, edited, picks, rejects, deleted, albums, ...}
+#   catalog.query {filter?, sort?, offset?, limit?} -> {total, photos: [photo_summary]}
+#   photo.inspect {id?} -> the full photo: file_name, rating, flag ("pick"|"reject"|"none"),
+#     label ("red"|...|null), deleted, history: [step labels]
+#   history.list {id?} -> {history: [labels], cursor, versions}
+#   develop.get {id?} -> the develop settings (sections, e.g. light.exposure) plus process
+#   albums.list -> [album_json]
+#
+# Baseline (measured in the oracle runs and probes, 2026-11-25, build 3):
+#   - LightCraft starts every journey from the first-run demo library (throwaway store):
+#     24 photos, ids 1..24, of which 23 are visible and one (id 3) sits in Recently Deleted;
+#     the photo counter continues, so a journey's three imports get ids 25, 26, 27 in import
+#     order. The demo library loads incrementally after the reset (the store settles a few
+#     seconds after the journey starts), so demo-derived absolute counts (catalog.stats
+#     photos/deleted, global pick and edited totals) are unreliable during the early steps
+#     of a journey and drift between rounds. Never pin them; pin journey-local facts instead:
+#     the oracle's own tool results (tool_result on a trailing read step) and scoped
+#     catalog.query calls over the imported ids with filter.only.
+#   - The born attributes of the imported fixture photos (rating, pick flag, edited flag,
+#     develop settings) vary from run to run (measured: born exposure of 25 at 1.2 and 2.8
+#     in two rounds; born edited of 26 true in one round, false in another). Checks must
+#     only pin what the journey's own actions set, scoped to the acted-on ids.
+#   - The end-state store re-seeds photo records: attributes the journey set (rating, flag,
+#     label, develop, album membership) are stable in the end state, but Recently Deleted
+#     tombstones (demo and journey) do not survive end-state reads reliably (measured both
+#     ways across rounds). Delete and restore effects are therefore pinned with tool_result
+#     checks on the oracle's own live reads inside the journey, never at end state.
+#   - Import records settle asynchronously a few tool calls after the import (measured
+#     invisible at 1-2 calls, settled by 4); the journey's catalog checks read a few calls
+#     later and arbitrate the commit. The delete tombstone, in contrast, does not surface in
+#     ANY read on the current build: the oracle r16 settle ladder (catalog.query at ~5 s and
+#     ~9 s, photo.inspect at ~13 s after the delete) still shows the photo as not deleted -
+#     build 13 had it settled by ~4 s (oracle r8). This is the app-level finding for build
+#     16; 05 is needs: naming the gap, and lightcraft.delete verifies its post-condition
+#     (catalog.stats.deleted rising) and fails honestly when the surface does not reflect.
+#   - The eval harness rewrites the editor src to store=memory, so every journey starts on a
+#     fresh store: albums created by earlier runs do NOT survive, and a new album's id is the
+#     demo's next id - observed 8..15 across builds and runs (the demo album count drifts
+#     with the pinned release). Album ids are never pinned; the album is pinned by name and
+#     count via albums.list.
+#   - catalog.query filters: flag, edited, deleted, rating/ratingOp and only work; album
+#     takes the album id; the label filter shape is pinned by the probe round.
+#   - develop.adjust takes the control id "light.exposure" and moves the exposure value
+#     (measured); the rotate history step label is "Rotate"; photo.label takes label=
+#     (red|yellow|green|blue|purple|none).
+#   - The lightcraft pack's params parser splits key=value lines only on real newlines (no
+#     literal-backslash-n conversion), so multi-param run_command calls use a JSON object.
+#     An oracle step-ref must be the whole argument value ("${N.path}"): a ref embedded in a
+#     JSON blob is not substituted, and the pack rejects the raw ${...} text.
+
+journeys:
+  - id: lightcraft-01-import-trip
+    split: train
+    title: "Import three trip photos and confirm they all landed"
+    prompt: >-
+      I am back from a long weekend and the three trip photos are sitting in Files at
+      /Photos/trip: beach-sunset.jpg, mountain-portrait.jpg and city-night.png. Bring all of
+      them into my LightCraft library, and once they are in check that the import really took
+      all three, because the last import I did quietly lost one file and I do not want to
+      discover it while sorting the rest of the trip.
+    setup:
+      - close_all: true
+      - open_app: lightcraft
+      - seed_fixture: { path: /Photos/trip/beach-sunset.jpg, fixture: beach-sunset.jpg }
+      - seed_fixture: { path: /Photos/trip/mountain-portrait.jpg, fixture: mountain-portrait.jpg }
+      - seed_fixture: { path: /Photos/trip/city-night.png, fixture: city-night.png }
+    oracle:
+      - { tool: lightcraft.import_file, path: /Photos/trip/beach-sunset.jpg }
+      - { tool: lightcraft.import_file, path: /Photos/trip/mountain-portrait.jpg }
+      - { tool: lightcraft.import_file, path: /Photos/trip/city-night.png }
+      - { tool: lightcraft.run_command, command: catalog.query, params: '{"filter":{"only":[25,26,27]}}' }
+      - { tool: lightcraft.run_command, command: photo.inspect, params: '{"id":25}' }
+      - { tool: lightcraft.run_command, command: photo.inspect, params: '{"id":26}' }
+      - { tool: lightcraft.run_command, command: catalog.query, params: '{"filter":{"only":[25,26,27]}}' }
+    checks:
+      - window_open: lightcraft
+      - craft_request: { app: lightcraft, method: photo.inspect, params: { id: 25 }, expect: { path: file_name, equals: beach-sunset.jpg } }
+      - craft_request: { app: lightcraft, method: photo.inspect, params: { id: 26 }, expect: { path: file_name, equals: mountain-portrait.jpg } }
+      - craft_request: { app: lightcraft, method: photo.inspect, params: { id: 27 }, expect: { path: file_name, equals: city-night.png } }
+    covers: [lightcraft.import_file, lightcraft.run_command]
+    notes: The library starts from the 24-photo demo library whose load still settles in the first moments after the reset, so the absolute photo count cannot be pinned; the read-back steps also give the imports' records time to settle (the store applies them a few calls after the import). The read-back command is not pinned, because the pack's import skill teaches the library_info count read and a correct model may use it; the end-state file names of all three imported ids pin that all three landed.
+
+  - id: lightcraft-02-rate-and-flag-keepers
+    split: train
+    title: "Select the keepers, rate them and flag them as picks"
+    prompt: >-
+      In my LightCraft library the beach photo and the mountain photo from the recent import
+      are the two keepers of the trip, and the city shot is just filler. Select the
+      beach-sunset and mountain-portrait photos, give both of them four stars, and flag both
+      as picks, so they line up with the other keepers when I cull the rest of the trip.
+    setup:
+      - close_all: true
+      - open_app: lightcraft
+      - seed_fixture: { path: /Photos/trip/beach-sunset.jpg, fixture: beach-sunset.jpg }
+      - seed_fixture: { path: /Photos/trip/mountain-portrait.jpg, fixture: mountain-portrait.jpg }
+      - seed_fixture: { path: /Photos/trip/city-night.png, fixture: city-night.png }
+      - { run: { tool: lightcraft.import_file, path: /Photos/trip/beach-sunset.jpg } }
+      - { run: { tool: lightcraft.import_file, path: /Photos/trip/mountain-portrait.jpg } }
+      - { run: { tool: lightcraft.import_file, path: /Photos/trip/city-night.png } }
+    oracle:
+      - { tool: lightcraft.select, ids: [25, 26] }
+      - { tool: lightcraft.rate, rating: 4 }
+      - { tool: lightcraft.run_command, command: photo.flag, params: flag=pick }
+    checks:
+      - craft_request: { app: lightcraft, method: photo.inspect, params: { id: 25 }, expect: { path: rating, equals: 4 } }
+      - craft_request: { app: lightcraft, method: photo.inspect, params: { id: 26 }, expect: { path: flag, equals: pick } }
+      - craft_request: { app: lightcraft, method: catalog.query, params: { filter: { flag: pick, only: [25, 26] } }, expect: { path: total, equals: 2 } }
+    covers: [lightcraft.select, lightcraft.rate, lightcraft.run_command]
+    notes: The imported photos are ids 25 and 26 (demo library holds 1..24); the pick scope is limited to the two acted-on ids, because the demo pick total drifts between rounds and the imports' born flags vary, while the journey's own flag action leaves both keepers pick-flagged.
+
+  - id: lightcraft-03-cull-the-best-first
+    split: train
+    title: "Filter to the keepers, sort best first, select them"
+    prompt: >-
+      I rated the three photos I imported last: the beach shot got five stars, the mountain
+      shot four and the city shot only one. I want to work through the good ones only, so
+      narrow my LightCraft view down to the photos rated four stars or better, sort that view
+      with the best rated first, and select everything in the view so my next editing step
+      lands on the keepers alone.
+    setup:
+      - close_all: true
+      - open_app: lightcraft
+      - seed_fixture: { path: /Photos/trip/beach-sunset.jpg, fixture: beach-sunset.jpg }
+      - seed_fixture: { path: /Photos/trip/mountain-portrait.jpg, fixture: mountain-portrait.jpg }
+      - seed_fixture: { path: /Photos/trip/city-night.png, fixture: city-night.png }
+      - { run: { tool: lightcraft.import_file, path: /Photos/trip/beach-sunset.jpg } }
+      - { run: { tool: lightcraft.import_file, path: /Photos/trip/mountain-portrait.jpg } }
+      - { run: { tool: lightcraft.import_file, path: /Photos/trip/city-night.png } }
+      - { run: { tool: lightcraft.rate, rating: 5, ids: [25] } }
+      - { run: { tool: lightcraft.rate, rating: 4, ids: [26] } }
+      - { run: { tool: lightcraft.rate, rating: 1, ids: [27] } }
+    oracle:
+      - { tool: lightcraft.filter, filter: '{"rating":4,"ratingOp":"atLeast"}' }
+      - { tool: lightcraft.sort, key: rating, ascending: false }
+      - { tool: lightcraft.run_command, command: library.selectAll }
+    checks:
+      - craft_request: { app: lightcraft, method: catalog.query, params: { filter: { rating: 4, ratingOp: atLeast, only: [25, 26, 27] } }, expect: { path: total, equals: 2 } }
+      - craft_request: { app: lightcraft, method: catalog.query, params: { filter: { only: [25, 26, 27] }, sort: { key: rating, ascending: false } }, expect: { path: 'photos[0].fileName', equals: beach-sunset.jpg } }
+      - craft_request: { app: lightcraft, method: catalog.query, params: { filter: { only: [25, 26, 27] }, sort: { key: rating, ascending: false } }, expect: { path: 'photos[2].fileName', equals: city-night.png } }
+    covers: [lightcraft.filter, lightcraft.sort, lightcraft.run_command]
+    notes: The demo rating baseline is not pinned, so both queries scope to the imported ids with Filter.only; inside that set the 5, 4, 1 order is unambiguous and pins the best-first sort.
+
+  - id: lightcraft-04-rotate-with-history
+    split: train
+    title: "Rotate the portrait left, undo, redo, and keep the history step"
+    prompt: >-
+      The mountain portrait I imported came out sideways and I want it straight, but I also
+      want the rotation to stay in the photo's history so I can check what I did to it later.
+      Rotate the selected photo a quarter turn to the left, undo that rotation, and then redo
+      it, so the photo ends rotated left and the rotate step is still sitting in its history.
+    setup:
+      - close_all: true
+      - open_app: lightcraft
+      - seed_fixture: { path: /Photos/trip/beach-sunset.jpg, fixture: beach-sunset.jpg }
+      - seed_fixture: { path: /Photos/trip/mountain-portrait.jpg, fixture: mountain-portrait.jpg }
+      - seed_fixture: { path: /Photos/trip/city-night.png, fixture: city-night.png }
+      - { run: { tool: lightcraft.import_file, path: /Photos/trip/beach-sunset.jpg } }
+      - { run: { tool: lightcraft.import_file, path: /Photos/trip/mountain-portrait.jpg } }
+      - { run: { tool: lightcraft.import_file, path: /Photos/trip/city-night.png } }
+      - { run: { tool: lightcraft.select, ids: [26] } }
+    oracle:
+      - { tool: lightcraft.rotate, direction: left }
+      - { tool: lightcraft.undo }
+      - { tool: lightcraft.redo }
+    checks:
+      - craft_request: { app: lightcraft, method: photo.inspect, params: { id: 26 }, expect: { path: file_name, equals: mountain-portrait.jpg } }
+      - craft_request: { app: lightcraft, method: history.list, params: { id: 26 }, expect: { path: history, contains: Rotate } }
+    covers: [lightcraft.rotate, lightcraft.undo, lightcraft.redo]
+    notes: The history step label is the app's own "Rotate" (measured in the oracle trace); reading it back on photo 26 pins that the rotate survived the undo then redo.
+
+  - id: lightcraft-05-clean-up-and-keep-one
+    split: holdout
+    title: "Rate the beach shot, delete two, restore one"
+    prompt: >-
+      I want the three photos I imported sorted out before I rate anything else. Give the
+      beach photo a five star rating, then delete the mountain photo and the city photo, and
+      bring back only the mountain photo, because I want to keep it after all. When you are
+      done, two of the three imported photos should be back in the library, the city photo
+      should be sitting in Recently Deleted, and the beach photo should carry the five star
+      rating.
+    setup:
+      - close_all: true
+      - open_app: lightcraft
+      - seed_fixture: { path: /Photos/trip/beach-sunset.jpg, fixture: beach-sunset.jpg }
+      - seed_fixture: { path: /Photos/trip/mountain-portrait.jpg, fixture: mountain-portrait.jpg }
+      - seed_fixture: { path: /Photos/trip/city-night.png, fixture: city-night.png }
+      - { run: { tool: lightcraft.import_file, path: /Photos/trip/beach-sunset.jpg } }
+      - { run: { tool: lightcraft.import_file, path: /Photos/trip/mountain-portrait.jpg } }
+      - { run: { tool: lightcraft.import_file, path: /Photos/trip/city-night.png } }
+    needs: "lightcraft.delete surface (app-level finding for build 16): the delete's tombstone does not reflect in any read on the current build - the oracle r16 settle ladder reads the photo at 5 s, 9 s and 13 s after the delete and catalog.query and photo.inspect still show it as not deleted (build 13 had the tombstone settled by ~4 s, oracle r8). The mutations are deterministic (delete changed:2, restore changed:1) but the end state is unreadable, so no check can pin 'the city photo is in Recently Deleted'; lightcraft.delete now verifies its post-condition (catalog.stats.deleted rising) and fails honestly with the teaching error instead."
+    checks:
+      - window_open: lightcraft
+      - tool_result: { tool: lightcraft.delete, path: changed, equals: 2 }
+      - tool_result: { tool: lightcraft.restore, path: changed, equals: 1 }
+      - tool_result: { tool: lightcraft.run_command, path: deleted, equals: true }
+      - craft_request: { app: lightcraft, method: catalog.query, params: { filter: { rating: 5, ratingOp: exactly, only: [25, 26, 27] } }, expect: { path: total, equals: 1 } }
+    covers: [lightcraft.rate, lightcraft.delete, lightcraft.restore, lightcraft.run_command]
+    notes: "Every requirement in the prompt was pinned on journey-local facts (delete and restore changes 2 and 1 from the oracle's own reads; the five star rating on the beach shot scoped to the imported ids), until the app-level finding: the delete's tombstone no longer surfaces in any read on the current build (oracle r16 settle ladder: not deleted at 5 s / 9 s / 13 s; r8 build 13 had it settled by ~4 s), so the 'city photo in Recently Deleted' pin is unreadable and the journey is needs: instead of pinning a check the end state cannot satisfy. Absolute library counts and tombstones at end state are not pinned: the demo library's load still settles during the journey and the end-state re-seed drops Recently Deleted tombstones."
+
+  - id: lightcraft-06-count-the-keepers
+    split: train
+    title: "Tell how many of the imports are four stars or better"
+    prompt: >-
+      I finished rating the three photos I imported last: the beach shot and the mountain
+      shot made the cut, and the city shot did not. Before I start culling the rest of the
+      trip I want the number to be right, so tell me how many of those three imported photos
+      are rated four stars or better.
+    setup:
+      - close_all: true
+      - open_app: lightcraft
+      - seed_fixture: { path: /Photos/trip/beach-sunset.jpg, fixture: beach-sunset.jpg }
+      - seed_fixture: { path: /Photos/trip/mountain-portrait.jpg, fixture: mountain-portrait.jpg }
+      - seed_fixture: { path: /Photos/trip/city-night.png, fixture: city-night.png }
+      - { run: { tool: lightcraft.import_file, path: /Photos/trip/beach-sunset.jpg } }
+      - { run: { tool: lightcraft.import_file, path: /Photos/trip/mountain-portrait.jpg } }
+      - { run: { tool: lightcraft.import_file, path: /Photos/trip/city-night.png } }
+      - { run: { tool: lightcraft.rate, rating: 4, ids: [25] } }
+      - { run: { tool: lightcraft.rate, rating: 4, ids: [26] } }
+      - { run: { tool: lightcraft.rate, rating: 2, ids: [27] } }
+    oracle:
+      - { tool: lightcraft.run_command, command: catalog.query, params: '{"filter":{"only":[25,26,27],"rating":4,"ratingOp":"atLeast"}}' }
+    checks:
+      - answer_contains: "2"
+      - craft_request: { app: lightcraft, method: catalog.query, params: { filter: { only: [25, 26, 27], rating: 4, ratingOp: atLeast } }, expect: { path: total, equals: 2 } }
+    covers: [lightcraft.run_command]
+    notes: "Read then answer: the query is scoped to the imported ids so the demo rating baseline does not enter the count; the oracle ends with the query whose result holds the fact."
+
+  - id: lightcraft-07-develop-nudge-and-confirm
+    split: train
+    title: "Nudge the exposure twice, then confirm exactly one edited import"
+    prompt: >-
+      The beach photo I imported looks a little flat. Nudge its exposure up a bit in the
+      develop editor, then nudge it up once more so it is a touch brighter still, and
+      afterwards check the library for me: the nudge should show in the beach photo's
+      exposure, and the city photo should still be untouched.
+    setup:
+      - close_all: true
+      - open_app: lightcraft
+      - seed_fixture: { path: /Photos/trip/beach-sunset.jpg, fixture: beach-sunset.jpg }
+      - seed_fixture: { path: /Photos/trip/mountain-portrait.jpg, fixture: mountain-portrait.jpg }
+      - seed_fixture: { path: /Photos/trip/city-night.png, fixture: city-night.png }
+      - { run: { tool: lightcraft.import_file, path: /Photos/trip/beach-sunset.jpg } }
+      - { run: { tool: lightcraft.import_file, path: /Photos/trip/mountain-portrait.jpg } }
+      - { run: { tool: lightcraft.import_file, path: /Photos/trip/city-night.png } }
+      - { run: { tool: lightcraft.select, ids: [25] } }
+    oracle:
+      - { tool: lightcraft.run_command, command: develop.adjust, params: '{"control":"light.exposure","delta":0.2}' }
+      - { tool: lightcraft.run_command, command: develop.adjust, params: '{"control":"light.exposure","delta":0.2}' }
+      - { tool: lightcraft.run_command, command: develop.get, params: '{"id":25}' }
+    checks:
+      - craft_request: { app: lightcraft, method: develop.get, params: { id: 25 }, expect: { path: 'light.exposure', at_least: 0.3 } }
+      - craft_request: { app: lightcraft, method: history.list, params: { id: 27 }, expect: { path: history, equals: [] } }
+    covers: [lightcraft.run_command]
+    notes: The exposure value on photo 25 pins the two nudges (two develop.adjust steps of 0.2 each, read back through the journey's own trailing develop.get); the untouched city photo is pinned by its empty history (history records develop actions, not the born attributes, which vary between rounds and are why no edited-count pin is stable).
+
+  - id: lightcraft-08-trip-album-and-label
+    split: holdout
+    title: "Group the keepers in an album, label them, and view by label"
+    prompt: >-
+      I want the two good shots from the import, the beach photo and the mountain photo,
+      grouped together for the slideshow. Create an album called Weekend Trip with the two
+      selected photos in it, give both of them a red colour label, and then show me only the
+      red labelled photos, so the album and the label agree on what belongs to the trip set.
+    setup:
+      - close_all: true
+      - open_app: lightcraft
+      - seed_fixture: { path: /Photos/trip/beach-sunset.jpg, fixture: beach-sunset.jpg }
+      - seed_fixture: { path: /Photos/trip/mountain-portrait.jpg, fixture: mountain-portrait.jpg }
+      - seed_fixture: { path: /Photos/trip/city-night.png, fixture: city-night.png }
+      - { run: { tool: lightcraft.import_file, path: /Photos/trip/beach-sunset.jpg } }
+      - { run: { tool: lightcraft.import_file, path: /Photos/trip/mountain-portrait.jpg } }
+      - { run: { tool: lightcraft.import_file, path: /Photos/trip/city-night.png } }
+      - { run: { tool: lightcraft.select, ids: [25, 26] } }
+    oracle:
+      - { tool: lightcraft.run_command, command: album.create, params: '{"name":"Weekend Trip","addSelected":true}' }
+      - { tool: lightcraft.run_command, command: photo.label, params: '{"ids":[25,26],"label":"red"}' }
+      - { tool: lightcraft.run_command, command: library.filter, params: '{"label":"red"}' }
+    checks:
+      - read_tool: { tool: lightcraft.run_command, args: { command: albums.list }, matches: '"count":2,((?:(?!\}).)*)?"name":"Weekend Trip"' }
+      - craft_request: { app: lightcraft, method: catalog.query, params: { filter: { label: red, only: [25, 26, 27] } }, expect: { path: total, equals: 2 } }
+    covers: [lightcraft.run_command]
+    notes: "The eval harness runs a fresh memory store per journey, so the new album's id drifts with the demo state (observed 8..15 across builds and runs) and is never pinned: the album is pinned by name and photo count via albums.list (the tempered-dot regex keeps the match inside the album's own object, so a demo album with count 2 cannot false-positive), and the red label (scoped to the imported ids) pins that the two keepers landed on the label."

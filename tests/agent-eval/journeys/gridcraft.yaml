@@ -1,0 +1,405 @@
+# GridCraft journeys (12). train 9, holdout 3 (gridcraft-03, gridcraft-07, gridcraft-11).
+# Revised after the lead's gate review and the first oracle run (2026-11-25): ids are
+# gridcraft-NN-slug, prompts are unquoted folded blocks with mixed phrasing, state checks
+# read state themselves with read_tool on the catalog read tools (gridcraft.get_cell,
+# gridcraft.inspect, gridcraft.read_range) and never depend on tools the agent chose,
+# answer journeys end the oracle with a read whose result holds the fact, the filter in
+# gridcraft-04 is pinned through the filter's own hiddenRows count, and the prompt's
+# assumed state is created by setup (the sales-q3.csv fixture via seed_fixture).
+# Live-measured facts applied: fill is edit.fillDown (no fillrange), the second sheet
+# comes from home.insertSheet, cell.get puts bold at style.font.bold, numbers are stored
+# without trailing zeros (8.90 lands as 8.9), and read_range includes hidden rows.
+# check_gap lines mark the parts no current check kind can pin.
+app: gridcraft
+journeys:
+  - id: gridcraft-01-quarter-budget
+    split: train
+    title: "Quarterly budget with real dates, a filled-down balance formula and a totals row"
+    prompt: >-
+      Put together a three month budget for April to June, one month per row, starting in
+      row 2. I want the first day of each month in column A under a Date header, my income
+      of 3800 each month in column B, expenses of 2400, 2750 and 2200 in column C, and a
+      Left column in D that works out what is left each month from one formula you fill
+      down over the three months. Finish with a total row under the months that sums every
+      column.
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+      - reset_app: gridcraft
+    oracle:
+      - tool: gridcraft.set_cells
+        start: A1
+        values:
+          - [Date, Income, Expenses]
+          - ["2026-04-01", 3800, 2400]
+          - ["2026-05-01", 3800, 2750]
+          - ["2026-06-01", 3800, 2200]
+      - tool: gridcraft.set_cell
+        cell: D1
+        input: Left
+      - tool: gridcraft.set_cell
+        cell: D2
+        input: "=B2-C2"
+      - tool: gridcraft.select
+        range: "D2:D4"
+        active: D2
+      - tool: gridcraft.run_command
+        command: "edit.fillDown"
+      - tool: gridcraft.set_cells
+        start: A5
+        values:
+          - [Total, "=SUM(B2:B4)", "=SUM(C2:C4)", "=SUM(D2:D4)"]
+    checks:
+      - cell: { app: gridcraft, cell: A2, input: "2026-04-01" }
+      - cell: { app: gridcraft, cell: A5, input: "Total" }
+      - read_tool: { tool: gridcraft.get_cell, args: { cell: "D3" }, path: "value", equals: 1050 }
+      - read_tool: { tool: gridcraft.get_cell, args: { cell: "D4" }, path: "value", equals: 1600 }
+      - read_tool: { tool: gridcraft.get_cell, args: { cell: "D5" }, path: "value", equals: 4050 }
+    covers: [gridcraft.set_cells, gridcraft.set_cell, gridcraft.select, gridcraft.run_command]
+    notes: "Real dates in column A; only D2 holds a typed formula, so the pinned D3 value proves the fill-down happened; D5 is the last balance. 3800-2750=1050, 3800-2200=1600, 1400+1050+1600=4050."
+    check_gap: "edit.fillDown is called on the existing D2:D4 selection (the live command table has no fillrange); the lead's oracle run confirms it fills over the selection."
+
+  - id: gridcraft-02-inventory-table
+    split: train
+    title: "Inventory sheet formatted as a named table with a bold header"
+    prompt: >-
+      I want an inventory sheet that is presentable enough to print. Product, Stock and
+      Unit cost should be the header row, and under it the rows Widget with 40 in stock at
+      1.20, Gadget with 15 at 8.90 and Gizmo with 230 at 0.45. Turn the whole block into a
+      table called Inventory with the header where it sits, and make that header row bold.
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+      - reset_app: gridcraft
+    oracle:
+      - tool: gridcraft.set_cells
+        start: A1
+        values:
+          - [Product, Stock, "Unit cost"]
+          - [Widget, 40, "1.20"]
+          - [Gadget, 15, "8.90"]
+          - [Gizmo, 230, "0.45"]
+      - tool: gridcraft.create_table
+        range: "A1:C4"
+        name: Inventory
+      - tool: gridcraft.format_range
+        range: "A1:C1"
+        bold: true
+    checks:
+      - cell: { app: gridcraft, cell: A1, input: "Product" }
+      - cell: { app: gridcraft, cell: C3, input: "8.9" }
+      - read_tool: { tool: gridcraft.inspect, contains: "Inventory" }
+    covers: [gridcraft.set_cells, gridcraft.create_table, gridcraft.format_range]
+    notes: "The table name is pinned through document.inspect, the wire method gridcraft.inspect calls; the skill says inspect lists the table with its name and range."
+    check_gap: "the banded style and the bold flag are not pinned here; the bold path is exercised in gridcraft-06."
+
+  - id: gridcraft-03-two-key-sort
+    split: holdout
+    title: "Sort a results sheet by score then by name"
+    prompt: >-
+      Here are this month's quiz results and I want them in a sensible order. Enter the
+      rows Ada North 88, Bo South 95, Cy North 95, Dee East 72, Eli South 81 and Fa West 60
+      with a header row of Name, Region, Score at the top, then sort the rows by score from
+      highest to lowest, breaking ties by name, and leave the header row in place.
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+      - reset_app: gridcraft
+    oracle:
+      - tool: gridcraft.set_cells
+        start: A1
+        values:
+          - [Name, Region, Score]
+          - [Ada, North, 88]
+          - [Bo, South, 95]
+          - [Cy, North, 95]
+          - [Dee, East, 72]
+          - [Eli, South, 81]
+          - [Fa, West, 60]
+      - tool: gridcraft.sort_range
+        keys: ["C desc", "A"]
+        range: "A1:C7"
+        header: true
+    checks:
+      - cell: { app: gridcraft, cell: A2, input: "Bo" }
+      - cell: { app: gridcraft, cell: A3, input: "Cy" }
+      - cell: { app: gridcraft, cell: C2, input: "95" }
+      - cell: { app: gridcraft, cell: A7, input: "Fa" }
+    covers: [gridcraft.set_cells, gridcraft.sort_range]
+    notes: "Two-key sort with a tie on 95: Bo must sit above Cy; the checks read the reordered rows, so an unsorted sheet fails."
+
+  - id: gridcraft-04-filter-and-total
+    split: train
+    title: "Filter the rows over a threshold and total what is visible"
+    prompt: >-
+      I have a product sales list and I only care about the big ones. Put the rows Widget
+      North 1250, Gadget South 300, Gizmo East 980, Sprocket North 1500, Cog West 450, Bolt
+      South 1001, Nut East 220 and Bearing West 760 under a header of Product, Region,
+      Amount, then hide every row whose amount is 1000 or less, and tell me the total of
+      the amounts you can still see.
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+      - reset_app: gridcraft
+    oracle:
+      - tool: gridcraft.set_cells
+        start: A1
+        values:
+          - [Product, Region, Amount]
+          - [Widget, North, 1250]
+          - [Gadget, South, 300]
+          - [Gizmo, East, 980]
+          - [Sprocket, North, 1500]
+          - [Cog, West, 450]
+          - [Bolt, South, 1001]
+          - [Nut, East, 220]
+          - [Bearing, West, 760]
+      - tool: gridcraft.filter
+        column: C
+        range: "A1:C9"
+        custom_op: ">"
+        custom_value: "1000"
+      - tool: gridcraft.read_range
+        range: "A1:C9"
+      - tool: gridcraft.evaluate_formula
+        formula: "=1250+1500+1001"
+    checks:
+      - read_tool: { tool: gridcraft.filter, args: { column: "C", range: "A1:C9", custom_op: ">", custom_value: "1000" }, path: "hiddenRows", equals: 5 }
+      - answer_contains: "3751"
+    covers: [gridcraft.set_cells, gridcraft.filter, gridcraft.read_range, gridcraft.evaluate_formula]
+    notes: "Read-then-decide: the visible rows are 1250, 1500 and 1001, which sum to 3751; the filter state itself is pinned through the filter's own hiddenRows count (5 of 8 rows hidden), and read_range is left in the oracle because its result carries the visible data."
+    check_gap: "read_range includes the hidden rows in its values (oracle run), so it cannot pin the filter; the filter result's hiddenRows field is the pin, and the read_tool re-runs the same filter, which is idempotent."
+
+  - id: gridcraft-05-column-chart
+    split: train
+    title: "Revenue by quarter as a column chart"
+    prompt: >-
+      I need a chart for the quarterly report. Put Quarter and Revenue across row 1 with
+      Q1 120, Q2 180, Q3 95 and Q4 150 in rows 2 to 5, and make a column chart of that
+      block titled Revenue by quarter.
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+      - reset_app: gridcraft
+    oracle:
+      - tool: gridcraft.set_cells
+        start: A1
+        values:
+          - [Quarter, Revenue]
+          - [Q1, 120]
+          - [Q2, 180]
+          - [Q3, 95]
+          - [Q4, 150]
+      - tool: gridcraft.insert_chart
+        range: "A1:B5"
+        type: column
+        title: "Revenue by quarter"
+    checks:
+      - cell: { app: gridcraft, cell: B3, input: "180" }
+      - read_tool: { tool: gridcraft.inspect, contains: "Revenue by quarter" }
+    covers: [gridcraft.set_cells, gridcraft.insert_chart]
+    notes: "Data plus chart; the skill says inspect lists the new chart, so the title is pinned through document.inspect."
+
+  - id: gridcraft-06-bold-and-currency
+    split: train
+    title: "Header bold, cost column formatted as currency"
+    prompt: >-
+      This sheet is going to be printed, so make it look the part. Item and Cost as the
+      header with Rent 1200, Food 400 and Transit 150 underneath, the header row bold, and
+      the three cost cells formatted as currency.
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+      - reset_app: gridcraft
+    oracle:
+      - tool: gridcraft.set_cells
+        start: A1
+        values:
+          - [Item, Cost]
+          - [Rent, 1200]
+          - [Food, 400]
+          - [Transit, 150]
+      - tool: gridcraft.format_range
+        range: "A1:B1"
+        bold: true
+      - tool: gridcraft.format_range
+        range: "B2:B4"
+        number_format: Currency
+    checks:
+      - cell: { app: gridcraft, cell: A1, input: "Item" }
+      - read_tool: { tool: gridcraft.get_cell, args: { cell: "A1" }, path: "style.font.bold", equals: true }
+    covers: [gridcraft.set_cells, gridcraft.format_range]
+    notes: "Formatting journey; the values are pinned by the cell check and the bold flag through cell.get, which puts it at style.font.bold (lead's live check)."
+    check_gap: "the currency number format is pinned nowhere; cell.get exposes it as style.num_fmt but a formatted display read is more fragile than the bold flag, so it stays unpinned."
+
+  - id: gridcraft-07-average-answer
+    split: holdout
+    title: "Read a column and answer its average"
+    prompt: >-
+      Some scores are sitting in column B and I want a quick read on them. Put 12, 8, 20,
+      15 and 7 into B2 through B6, one per row, then work out the average of the five to
+      one decimal place and tell me.
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+      - reset_app: gridcraft
+    oracle:
+      - tool: gridcraft.set_cells
+        start: B2
+        values:
+          - [12]
+          - [8]
+          - [20]
+          - [15]
+          - [7]
+      - tool: gridcraft.read_range
+        range: "B2:B6"
+      - tool: gridcraft.evaluate_formula
+        formula: "=AVERAGE(B2:B6)"
+    checks:
+      - cell: { app: gridcraft, cell: B4, input: "20" }
+      - answer_contains: "12.4"
+    covers: [gridcraft.set_cells, gridcraft.read_range, gridcraft.evaluate_formula]
+    notes: "Read-then-answer: (12+8+20+15+7)/5 = 12.4; the evaluate_formula step in the oracle ends the trace with a result that holds the fact, which is what the oracle-mode answer check reads."
+
+  - id: gridcraft-08-cross-sheet-summary
+    split: train
+    title: "Second sheet with a cross-sheet formula"
+    prompt: >-
+      I keep the raw data on its own sheet and I want the maths kept away from it. Enter
+      Item and Qty with the rows Alpha 3 and Beta 7, then add a second sheet called
+      Summary, put 10 in cell B2 of that sheet, and in cell A4 of the first sheet a
+      formula that reads that number back and doubles it.
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+      - reset_app: gridcraft
+    oracle:
+      - tool: gridcraft.set_cells
+        start: A1
+        values:
+          - [Item, Qty]
+          - [Alpha, 3]
+          - [Beta, 7]
+      - tool: gridcraft.run_command
+        command: "home.insertSheet"
+        params: "name=Summary"
+      - tool: gridcraft.set_cell
+        cell: "Summary!B2"
+        input: "10"
+      - tool: gridcraft.set_cell
+        cell: A4
+        input: "=Summary!B2*2"
+    checks:
+      - read_tool: { tool: gridcraft.get_cell, args: { cell: "A4" }, path: "value", equals: 20 }
+      - read_tool: { tool: gridcraft.get_cell, args: { cell: "Summary!B2" }, path: "value", equals: 10 }
+      - read_tool: { tool: gridcraft.inspect, contains: "Summary" }
+    covers: [gridcraft.set_cells, gridcraft.run_command, gridcraft.set_cell]
+    notes: "Multi-sheet: a second sheet plus a cross-sheet formula; the computed 20 can only come from the Summary reference."
+    check_gap: "home.insertSheet is called with name=Summary (the live command table has no sheet.insert); the lead's oracle run confirms the sheet naming."
+
+  - id: gridcraft-09-check-formula-first
+    split: train
+    title: "Verify a SUM before typing it in"
+    prompt: >-
+      Before I trust a total I want to check the maths. Type 100, 250 and 75 into A2
+      through A4, one per row, then work out what SUM(A2:A4) would give without typing it
+      anywhere, and tell me the number.
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+      - reset_app: gridcraft
+    oracle:
+      - tool: gridcraft.set_cells
+        start: A2
+        values:
+          - [100]
+          - [250]
+          - [75]
+      - tool: gridcraft.evaluate_formula
+        formula: "=SUM(A2:A4)"
+    checks:
+      - cell: { app: gridcraft, cell: A4, input: "75" }
+      - answer_contains: "425"
+    covers: [gridcraft.set_cells, gridcraft.evaluate_formula]
+    notes: "Answer journey: the check is the answer (100+250+75=425), so a correct answer reached any way passes."
+
+  - id: gridcraft-10-lookup-function
+    split: train
+    title: "Find the right lookup function"
+    prompt: >-
+      I need to look a price up by product id in a separate table and I cannot remember
+      the function for that. Find the lookup function in the spreadsheet functions and
+      tell me which one to use.
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+      - reset_app: gridcraft
+    oracle:
+      - tool: gridcraft.list_functions
+        search: vlookup
+    checks:
+      - answer_contains: "VLOOKUP"
+    covers: [gridcraft.list_functions]
+    notes: "Knowledge question; the answer is the pin, not the tool result."
+
+  - id: gridcraft-11-save-copy
+    split: holdout
+    title: "Build a small plan and keep a copy in Files"
+    prompt: >-
+      Make me a small cost plan with Plan and Cost as the header and the rows Alpha 900
+      and Beta 600, then save a copy of the workbook to /GridCraft/plan.xlsx so I have it
+      in my files.
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+      - reset_app: gridcraft
+    oracle:
+      - tool: gridcraft.set_cells
+        start: A1
+        values:
+          - [Plan, Cost]
+          - [Alpha, 900]
+          - [Beta, 600]
+      - tool: gridcraft.save_copy
+        path: /GridCraft/plan.xlsx
+    checks:
+      - cell: { app: gridcraft, cell: A1, input: "Plan" }
+      - file_exists: /GridCraft/plan.xlsx
+    covers: [gridcraft.set_cells, gridcraft.save_copy]
+    notes: "Export path; the file landing in Files is the end state."
+
+  - id: gridcraft-12-sales-by-region
+    split: train
+    title: "Open the Q3 sales CSV and summarise it by region"
+    prompt: >-
+      My Q3 sales export is in my files at /data/sales-q3.csv, with Date, Region, Product,
+      Units and Unit price per row. Open it in the spreadsheet, then add a summary block
+      starting at G1 with Region and Units as the header and one row per region, North,
+      South, East and West, each totalling the units that region sold from the table with
+      a formula, and tell me which region sold the most units.
+    setup:
+      - close_all: true
+      - open_app: gridcraft
+      - reset_app: gridcraft
+      - seed_fixture: { path: /data/sales-q3.csv, fixture: sales-q3.csv }
+    oracle:
+      - tool: gridcraft.open_file
+        path: /data/sales-q3.csv
+      - tool: gridcraft.set_cells
+        start: G1
+        values:
+          - [Region, Units]
+          - [North, "=SUMIF(B2:B9,\"North\",D2:D9)"]
+          - [South, "=SUMIF(B2:B9,\"South\",D2:D9)"]
+          - [East, "=SUMIF(B2:B9,\"East\",D2:D9)"]
+          - [West, "=SUMIF(B2:B9,\"West\",D2:D9)"]
+      - tool: gridcraft.read_range
+        range: "G1:H5"
+    checks:
+      - read_tool: { tool: gridcraft.get_cell, args: { cell: "H2" }, path: "value", equals: 23 }
+      - read_tool: { tool: gridcraft.get_cell, args: { cell: "H4" }, path: "value", equals: 33 }
+      - answer_contains: "East"
+    covers: [gridcraft.open_file, gridcraft.set_cells, gridcraft.read_range]
+    notes: "Edit of an existing seeded workbook: the fixture has 100 units total, North 23, South 27, East 33, West 17; East is the largest."
+    check_gap: "the CSV loading as one sheet with the data at A1:E9 is assumed from the fixture layout; the lead's oracle run confirms the column letters."

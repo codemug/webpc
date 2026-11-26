@@ -54,7 +54,7 @@ Gotchas: change bpm=; the app allows 30 to 300 BPM; tempo affects playback speed
 ## Play the song
 slug: play-the-song
 summary: Play the current song from the start position.
-keywords: play, listen, hear, start playback, audition, sound
+keywords: play, listen, hear, start playback, audition, sound, song
 tools: desktop.open_app, beepbox.play
 
 When: the user wants to hear the song.
@@ -67,7 +67,7 @@ Gotchas: if the app muted the audio (the WebPC audio guard), tell the user to ch
 ## Stop the song
 slug: stop-the-song
 summary: Stop the song that is playing.
-keywords: stop, pause, halt, quiet, silence, end playback
+keywords: stop, pause, halt, quiet, silence, end playback, song
 tools: desktop.open_app, beepbox.stop
 
 When: the user wants playback to stop.

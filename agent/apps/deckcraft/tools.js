@@ -24,7 +24,8 @@ const coerce = raw => (/^(true|false)$/i.test(raw) ? raw.toLowerCase() === 'true
 // run_command params: key=value lines -> object (plan 9, the generic long-tail tool).
 const parseParams = text => {
   const out = {};
-  for (const line of String(text ?? '').split('\n')) {
+  // A literal backslash-n counts as a line break too: small models often write \n in the text.
+  for (const line of String(text ?? '').split(/\n|\\n/)) {
     const row = line.trim();
     if (!row) continue;
     const eq = row.indexOf('=');
@@ -51,6 +52,33 @@ const parseStep = line => {
 
 // tools.rs add_shape/add_text_box: follow-up calls that fail do not fail the tool.
 const silently = promise => promise.catch(() => {});
+
+// The engine's name-rejection texts (wasm strings): 'no layout "x"', 'unknown layout `x`',
+// 'no theme `x`', 'unknown theme `x`', 'unknown preset `x`', and 'no such shape' for a bad
+// shape id (lfm3 deckcraft-12 passed the slide id). Each names the bad value but not the
+// valid ones (deckcraft-05: layout "first" was rejected and the model spent its remaining
+// rounds hunting for valid names). Re-throw as invalid_argument that names the valid values
+// the deck defines - layouts live from document.inspect (layouts[].name), shape ids live
+// from slide.inspect of the current slide (shapes[].id), themes and presets from the
+// engine's fixed lists - with the closest match filled into the call as the fix line.
+const NAME_REJECT = { layout: /(?:no|unknown) layout/i, theme: /(?:no|unknown) theme/i, preset: /unknown preset/i, shape: /no such shape/i };
+// The app's own layout normalisation (slide.rs): alphanumerics only, lowercased.
+const normLayout = s => String(s ?? '').replace(/[^A-Za-z0-9]/g, '').toLowerCase();
+const STATIC_NAMES = {
+  theme: ['DeckCraft', 'Harbor', 'Ember', 'Meadow', 'Nocturne', 'Paper', 'Coral Reef', 'Slate'],
+  preset: ['rect', 'roundRect', 'ellipse', 'triangle', 'diamond', 'rightArrow', 'chevron', 'star5', 'heart', 'cloud', 'line'],
+};
+const namedReject = async (kind, given, tool, fixArgs, craft) => {
+  const valid =
+    kind === 'layout' ? ((await craft.inspect()).layouts ?? []).map(entry => entry.name)
+    : kind === 'shape' ? ((await craft.execute('slide.inspect', {})).shapes ?? []).map(entry => entry.id)
+    : STATIC_NAMES[kind];
+  const near = closest(String(given), valid.map(String), 1)[0];
+  const param = kind === 'shape' ? 'id' : kind;
+  const label = kind === 'shape' ? 'shape id' : kind;
+  const defined = valid.length ? `; the ${kind === 'shape' ? 'current slide has' : 'deck defines'}: ${valid.join(', ')}` : '';
+  throw new ToolError('invalid_argument', `${given} is not a ${label}${defined}${near ? `; closest: ${near}` : ''}`, near ? callLine(tool, { ...fixArgs, [param]: near }) : '');
+};
 
 export const pack = { id: APP, title: 'DeckCraft' };
 
@@ -87,9 +115,17 @@ export const tools = [
     },
     effect: 'destructive',
     needs: NEEDS,
-    examples: [{ args: { theme: 'Harbor' }, says: 'Start a new deck with the Harbor theme' }],
+    examples: [{ args: { theme: 'Meadow' }, says: 'Start a new deck with the Meadow theme' }],
     // tools.rs:395 file.new. Destructive: the web app holds one presentation, so this replaces the open one.
-    run: async (args, ctx) => (await ctx.craft(APP)).execute('file.new', pick(args, ['theme', 'blank'])),
+    run: async (args, ctx) => {
+      const app = await ctx.craft(APP);
+      try {
+        return await app.execute('file.new', pick(args, ['theme', 'blank']));
+      } catch (error) {
+        if (args.theme !== undefined && NAME_REJECT.theme.test(String(error?.message ?? error))) await namedReject('theme', args.theme, 'deckcraft.new_presentation', pick(args, ['blank']), app);
+        throw error;
+      }
+    },
   },
   {
     name: 'deckcraft.add_slide',
@@ -102,9 +138,31 @@ export const tools = [
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { layout: 'titleAndContent', title: 'Q1 Plan' }, says: 'Add a slide titled Q1 Plan' }],
+    examples: [{ args: { layout: 'titleAndContent', title: 'Overview' }, says: 'Add a slide titled Overview' }],
     // tools.rs:410 slide.new
-    run: async (args, ctx) => (await ctx.craft(APP)).execute('slide.new', pick(args, ['layout', 'title', 'body'])),
+    run: async (args, ctx) => {
+      const app = await ctx.craft(APP);
+      // slide.new (upstream slide.rs) writes title= and body= only into the layout's title and
+      // body placeholders and silently drops them otherwise: live, a title on a Blank slide
+      // landed nowhere and the model kept building as if it had (deckcraft-05/12, lfm3).
+      if (normLayout(args.layout) === 'blank' && (args.title !== undefined || args.body !== undefined)) {
+        throw new ToolError('invalid_argument', 'Blank has no title or body placeholders, so the text would land nowhere; a titled slide is layout=titleAndContent, and free text on a slide goes in deckcraft.add_text_box', callLine('deckcraft.add_slide', pick({ layout: 'titleAndContent', title: args.title, body: args.body }, ['layout', 'title', 'body'])));
+      }
+      try {
+        const result = await app.execute('slide.new', pick(args, ['layout', 'title', 'body']));
+        // slide.new makes the new slide the current slide: b14 deckcraft-05 added its
+        // closing text box right after add_slide believing it was back on slide one -
+        // the box landed on the new slide and the slide-one pin failed. The note names
+        // the navigation call the model must copy to switch back.
+        if (result && typeof result === 'object' && !Array.isArray(result)) {
+          return { ...result, note: `the new slide is now the current slide; to add content to another one, first run ${callLine('deckcraft.go_to_slide', { index: 0 })}` };
+        }
+        return result;
+      } catch (error) {
+        if (args.layout !== undefined && NAME_REJECT.layout.test(String(error?.message ?? error))) await namedReject('layout', args.layout, 'deckcraft.add_slide', pick(args, ['title', 'body']), app);
+        throw error;
+      }
+    },
   },
   {
     name: 'deckcraft.go_to_slide',
@@ -119,7 +177,7 @@ export const tools = [
   },
   {
     name: 'deckcraft.add_shape',
-    purpose: 'Insert a preset shape with size, text and colors.',
+    purpose: 'Insert a preset shape on the current slide, with size, text and colors.',
     when: 'Use when the user wants a shape: rectangle, ellipse, arrow, star, line.',
     params: {
       preset: { type: 'string', required: true, description: 'Preset name: rect, roundRect, ellipse, triangle, diamond, rightArrow, chevron, star5, heart, cloud, line' },
@@ -137,7 +195,13 @@ export const tools = [
     // tools.rs:412-432 shape.insert, then optional shape.fill and shape.line on the new id
     run: async (args, ctx) => {
       const app = await ctx.craft(APP);
-      const result = await app.execute('shape.insert', pick({ preset: args.preset, rect: [args.x, args.y, args.w, args.h], text: args.text }, ['preset', 'rect', 'text']));
+      let result;
+      try {
+        result = await app.execute('shape.insert', pick({ preset: args.preset, rect: [args.x, args.y, args.w, args.h], text: args.text }, ['preset', 'rect', 'text']));
+      } catch (error) {
+        if (NAME_REJECT.preset.test(String(error?.message ?? error))) await namedReject('preset', args.preset, 'deckcraft.add_shape', { x: args.x, y: args.y, w: args.w, h: args.h }, app);
+        throw error;
+      }
       if (args.fill !== undefined) await app.execute('shape.fill', { id: result.id, color: args.fill });
       if (args.line !== undefined) await app.execute('shape.line', args.line === 'none' ? { id: result.id, none: true } : { id: result.id, color: args.line });
       return result;
@@ -145,7 +209,7 @@ export const tools = [
   },
   {
     name: 'deckcraft.add_text_box',
-    purpose: 'Insert a text box with optional size, color and alignment.',
+    purpose: 'Insert a text box on the current slide (size, color, alignment optional).',
     when: 'Use when the user wants free text on a slide.',
     params: {
       x: { type: 'number', required: true, description: 'Left, in points' },
@@ -159,7 +223,7 @@ export const tools = [
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { x: 40, y: 260, w: 500, text: 'Key numbers', size: 24, align: 'left' }, says: 'Add a heading text box' }],
+    examples: [{ args: { x: 40, y: 260, w: 520, text: 'Headline', size: 24, align: 'left' }, says: 'Add a heading text box' }],
     // tools.rs:433-450 insert.textBox, then text.exit, edit.select and the format.* calls
     run: async (args, ctx) => {
       const app = await ctx.craft(APP);
@@ -178,18 +242,26 @@ export const tools = [
     purpose: "Replace a shape's text, keeping its first run's formatting.",
     when: 'Use when the user wants to change the text of a shape on the current slide.',
     params: {
-      id: { type: 'integer', required: true, description: 'Shape id from deckcraft.inspect_slide' },
+      id: { type: 'integer', required: true, description: 'Shape id from deckcraft.inspect_slide (not the slide id; the slide id from add_slide or inspect is not a shape)' },
       text: { type: 'string', required: true, description: 'New text; leading tabs set bullet levels' },
     },
     effect: 'change',
     needs: NEEDS,
     examples: [{ args: { id: 7, text: 'Updated title' }, says: 'Change the title text' }],
     // tools.rs:451 text.set
-    run: async (args, ctx) => (await ctx.craft(APP)).execute('text.set', pick(args, ['id', 'text'])),
+    run: async (args, ctx) => {
+      const app = await ctx.craft(APP);
+      try {
+        return await app.execute('text.set', pick(args, ['id', 'text']));
+      } catch (error) {
+        if (NAME_REJECT.shape.test(String(error?.message ?? error))) await namedReject('shape', args.id, 'deckcraft.set_text', { text: args.text }, app);
+        throw error;
+      }
+    },
   },
   {
     name: 'deckcraft.insert_table',
-    purpose: 'Insert a table with rows and columns, optionally filled.',
+    purpose: 'Insert a table on the current slide, with rows and columns, optionally filled.',
     when: 'Use when the user wants a table on the slide.',
     params: {
       rows: { type: 'integer', required: true, description: 'Rows' },
@@ -202,7 +274,7 @@ export const tools = [
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { rows: 3, cols: 2, data: [['Item', 'Cost'], ['Rent', '1200'], ['Food', '400']] }, says: 'Add a small cost table' }],
+    examples: [{ args: { rows: 3, cols: 2, data: [['Name', 'Amount'], ['Lamp', '1850'], ['Chair', '910']] }, says: 'Add a small cost table' }],
     // tools.rs:459-465 insert.table; rect is sent only when all four box values are given
     run: async (args, ctx) => {
       const params = pick(args, ['rows', 'cols', 'data']);
@@ -212,13 +284,13 @@ export const tools = [
   },
   {
     name: 'deckcraft.insert_chart',
-    purpose: 'Insert a chart with categories and series.',
+    purpose: 'Insert a chart on the current slide, with categories and series.',
     when: 'Use when the user wants a chart, graph or plot on the slide.',
     params: {
       type: { type: 'string', description: 'Chart type: column, bar, line, pie, doughnut, area, scatter, stackedColumn' },
       title: { type: 'string', description: 'Chart title' },
       categories: { type: 'list', description: 'Category names, e.g. Q1, Q2' },
-      series: { type: 'table', description: 'Series as rows: [name, value, value, ...]' },
+      series: { type: 'table', flat: false, description: 'Series as rows: [[name, value, value, ...]]; a flat list of values is refused with both forms shown' },
       x: { type: 'number', description: 'Left (pt); all four set the box' },
       y: { type: 'number', description: 'Top (pt)' },
       w: { type: 'number', description: 'Width (pt)' },
@@ -226,7 +298,7 @@ export const tools = [
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { type: 'column', title: 'Sales', categories: ['Q1', 'Q2'], series: [['Sales', 12, 18]] }, says: 'Add a column chart of sales' }],
+    examples: [{ args: { type: 'column', title: 'Shipments', categories: ['North', 'South'], series: [['Units', 71, 58]] }, says: 'Add a column chart of shipments' }],
     // tools.rs:466-472 insert.chart; series rows [name, values...] become {name, values}
     run: async (args, ctx) => {
       const params = pick(args, ['type', 'title', 'categories']);

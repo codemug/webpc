@@ -1,0 +1,283 @@
+app: terminal
+# Terminal journeys (J1, OpenCode lane). The guest is an offline Alpine box with its own
+# persistent disk (terminal-unkernel.mjs): Files-app seeds are NOT visible to the shell, so
+# every journey works on guest-local files with unique names (the disk persists across
+# journeys, so earlier journeys' files may already exist - none of the checks depend on them).
+# terminal.run boots the guest itself when it is stopped (up to 90 s wait inside the tool).
+# Checks: tool_result on a terminal.run output (the command output is the deliverable), with
+# any: true where the prompt does not require the result to be the last command (T17 ruling:
+# "last" stays only where the prompt pins the order - 05 "end with", 06/07 "finish by",
+# 08 "End by printing"), read_tool terminal.status for guest state, answer checks for the
+# tell-me journeys.
+
+journeys:
+  - id: terminal-01-list-files
+    split: train
+    title: "List the home directory with details"
+    prompt: >-
+      I am not familiar with this Linux box and I want to see what is sitting in the home
+      directory before I start working. Open the terminal, run a plain directory listing with
+      details for the home folder, and confirm the guest is up when you are done, so I know
+      what files are there and that the box is healthy.
+    oracle:
+      - { tool: terminal.open }
+      - { tool: terminal.run, lang: sh, code: 'ls -la ~' }
+      - { tool: terminal.status }
+    checks:
+      - tool_result: { tool: terminal.run, path: output, contains: 'total', any: true }
+      - read_tool: { tool: terminal.status, path: state, equals: running }
+    covers: [terminal.open, terminal.run, terminal.status]
+    notes: >-
+      Three separate calls (open, list, read the state back): ls -la always starts with a total
+      line, so the output check is stable whatever the home directory holds, and the status
+      read pins that the guest is up after the first boot. The output check is any: true
+      (T17, 2026-11-25): the prompt asks for a listing but not for it to be the last command,
+      so a harmless follow-up (b20: whoami && id) after a good listing must not fail the run.
+
+  - id: terminal-02-box-details
+    split: train
+    title: "Report the kernel and distribution"
+    prompt: >-
+      Before I install anything on this machine I want to know exactly what I am dealing with.
+      First make sure the guest is up, then find the kernel version, and read the OS release
+      file for the distribution details, and put both the kernel version and the distro in your
+      reply so I can record them for our notes.
+    oracle:
+      - { tool: terminal.status }
+      - { tool: terminal.run, lang: sh, code: 'uname -r' }
+      - { tool: terminal.run, lang: sh, code: 'cat /etc/os-release' }
+    checks:
+      - answer_contains: 'Alpine'
+    covers: [terminal.status, terminal.run]
+    notes: >-
+      Answer journey, phrased without naming the app: three separate calls (state, kernel,
+      release file), and the prompt puts the release-file read last so the last result -
+      /etc/os-release - holds the distro name (Alpine Linux) that the answer check pins.
+
+  - id: terminal-03-word-count
+    split: train
+    title: "Write a file and count its words"
+    prompt: >-
+      I want to size up a short piece of text. Create a file called wc-demo.txt in the home
+      directory with exactly these three lines: The quick brown fox, jumps over the lazy dog,
+      Twinkle twinkle little star. Then count the words in the file, double-check the count
+      with a second method, and end your reply with just the number, so I can copy it into my
+      spreadsheet.
+    setup:
+      - close_all: true
+      - open_app: terminal
+    oracle:
+      - { tool: terminal.run, lang: sh, code: "printf '%s\\n' 'The quick brown fox' 'jumps over the lazy dog' 'Twinkle twinkle little star' > ~/wc-demo.txt" }
+      - { tool: terminal.run, lang: sh, code: 'wc -w < ~/wc-demo.txt' }
+      - { tool: terminal.run, lang: sh, code: "awk '{n += NF} END {print n}' ~/wc-demo.txt" }
+    checks:
+      - tool_result: { tool: terminal.run, path: output, matches: '\b13\b', any: true }
+    covers: [terminal.run]
+    notes: >-
+      Three calls: write, count with wc, double-check with awk field counts (also 13 words:
+      4 + 5 + 4). busybox grep -ow . returns nothing (a one-character pattern with -w only
+      matches one-letter words), so the re-count is awk; the check is \b13\b, not the bare
+      output, because wc with a file argument prints "13 /home/user/wc-demo.txt" and the
+      user asked for the count (lead's ruling, 2026-11-25). any: true (T17): the prompt
+      pins the reply ("end your reply with just the number"), not the order of the count
+      commands, so either count's output satisfies it.
+
+  - id: terminal-04-grep-errors
+    split: train
+    title: "Write a log and grep the error lines"
+    prompt: >-
+      I need the error lines out of a log quickly. Write a file called grep-demo.log in the home
+      directory with these five lines: INFO started, ERROR timeout after 30s, INFO retrying,
+      ERROR gave up, INFO done. Then search that file for the lines that contain ERROR, tell me
+      how many there are, and show me the matching lines.
+    setup:
+      - close_all: true
+      - open_app: terminal
+    oracle:
+      - { tool: terminal.run, lang: sh, code: "printf '%s\\n' 'INFO started' 'ERROR timeout after 30s' 'INFO retrying' 'ERROR gave up' 'INFO done' > ~/grep-demo.log" }
+      - { tool: terminal.run, lang: sh, code: 'grep -c ERROR ~/grep-demo.log' }
+      - { tool: terminal.run, lang: sh, code: 'grep ERROR ~/grep-demo.log' }
+    checks:
+      - tool_result: { tool: terminal.run, path: output, contains: 'ERROR timeout after 30s', any: true }
+      - tool_result: { tool: terminal.run, path: output, contains: 'ERROR gave up', any: true }
+    covers: [terminal.run]
+    notes: >-
+      Three calls: write, count the matches (2), show them. The checks are any: true (T17):
+      the prompt does not require the show to be the last command, and the grep -c output
+      ("2") cannot match either error line, so the count call cannot shadow them; the INFO
+      lines must not be the only matches.
+
+  - id: terminal-05-csv-total
+    split: train
+    title: "Sum a CSV column with awk"
+    prompt: >-
+      I need a quick total from a small table before the standup. Create sales-mini.csv in the
+      home directory with the header line region,units and these rows: North,23 / South,41 /
+      East,36. Then ignore the header row, print the average units per region, and end with
+      just the total so I can read it off the terminal.
+    oracle:
+      - { tool: terminal.run, lang: sh, code: "printf '%s\\n' 'region,units' 'North,23' 'South,41' 'East,36' > ~/sales-mini.csv" }
+      - { tool: terminal.run, lang: sh, code: "awk -F, 'NR>1 {s+=$2;n++} END {print s/n}' ~/sales-mini.csv" }
+      - { tool: terminal.run, lang: sh, code: "awk -F, 'NR>1 {s+=$2} END {print s}' ~/sales-mini.csv" }
+    checks:
+      - tool_result: { tool: terminal.run, path: output, matches: '^\s*100\s*$' }
+      - answer_contains: '33'
+    covers: [terminal.run]
+    notes: >-
+      Three actions: write the file, print the average (33.33, relayed in the reply but not
+      pinned beyond '33'), then print the total. The total is the last call's output, so the
+      bare-100 check pins the arithmetic independent of any echo or comment the model adds.
+
+  - id: terminal-06-most-often
+    split: holdout
+    title: "Sort, count duplicates, name the winner"
+    prompt: >-
+      I am cleaning a list of fruit names and I want to know which one repeats the most. Write
+      the lines apple, banana, apple, cherry, banana, apple to a file called fruit-list.txt in
+      the home directory, one fruit per line and in exactly that order. Then sort the file,
+      count the duplicates and show me the full counts, and finish by telling me which fruit
+      appears most often and how many times.
+    setup:
+      - close_all: true
+      - open_app: terminal
+    oracle:
+      - { tool: terminal.run, lang: sh, code: "printf '%s\\n' apple banana apple cherry banana apple > ~/fruit-list.txt" }
+      - { tool: terminal.run, lang: sh, code: 'sort ~/fruit-list.txt | uniq -c' }
+      - { tool: terminal.run, lang: sh, code: 'sort ~/fruit-list.txt | uniq -c | sort -rn | head -n 1' }
+    checks:
+      - tool_result: { tool: terminal.run, path: output, matches: '^\s*3\s+apple\s*$' }
+      - answer_contains: 'apple'
+    covers: [terminal.run]
+    notes: >-
+      Holdout, three calls (write, full counts, winner): apple appears 3 times, so the last
+      output - "3 apple" - pins the pipeline, and the answer pins that the model read its own
+      output.
+
+  - id: terminal-07-project-layout
+    split: train
+    title: "Create a project directory tree and back it up"
+    prompt: >-
+      Set up a small project layout for me in the home directory. Create a directory called
+      proj-t7, put a file inside it named readme.txt containing the single line Project notes go
+      here, make a backup copy of the whole directory as proj-t7-backup, and finish by listing
+      both directories so I can verify the layout looks right.
+    setup:
+      - close_all: true
+      - open_app: terminal
+    oracle:
+      - { tool: terminal.run, lang: sh, code: "mkdir -p ~/proj-t7 && echo 'Project notes go here' > ~/proj-t7/readme.txt && cp -r ~/proj-t7 ~/proj-t7-backup && ls -R ~/proj-t7 ~/proj-t7-backup" }
+    checks:
+      - tool_result: { tool: terminal.run, path: output, contains: 'readme.txt' }
+      - tool_result: { tool: terminal.run, path: output, contains: 'proj-t7-backup' }
+      - read_tool: { tool: terminal.run, args: { lang: sh, code: 'ls -R ~/proj-t7 ~/proj-t7-backup' }, path: output, contains: 'readme.txt' }
+    covers: [terminal.run]
+    notes: >-
+      One shell line with && chains the whole layout; the ls -R listing must show the file and
+      the backup directory, so both operations are pinned from the output. The read_tool end
+      state re-runs ls -R itself (lead's ruling, 2026-11-25): a model that only echoed a
+      listing or copied in the Files app cannot pass - the backup must exist in the guest with
+      readme.txt inside it. The tool_result checks keep last (T17 audit, 2026-11-25): the
+      prompt says "finish by listing both directories", so a model that ends on a one-directory
+      listing (b20) fails on purpose - precision, not check design.
+
+  - id: terminal-08-sed-fix
+    split: train
+    title: "Fix a config value with sed"
+    prompt: >-
+      A config value in one of my files is wrong and I want it corrected in place, but kept
+      around. Create config-t8.ini in the home directory with the line port=8080, then use sed
+      to replace 8080 with 9090 and save the result to a new file called config-t8-new.ini. End
+      by printing the new file so I can see the corrected value.
+    oracle:
+      - { tool: terminal.run, lang: sh, code: "echo 'port=8080' > ~/config-t8.ini && sed 's/8080/9090/' ~/config-t8.ini > ~/config-t8-new.ini && cat ~/config-t8-new.ini" }
+    checks:
+      - tool_result: { tool: terminal.run, path: output, contains: 'port=9090' }
+      - read_tool: { tool: terminal.run, args: { lang: sh, code: 'cat ~/config-t8-new.ini' }, path: output, contains: 'port=9090' }
+    covers: [terminal.run]
+    notes: >-
+      The cat at the end of the chain is the deliverable; the pinned line proves the sed
+      substitution ran and the new file exists. The read_tool end state re-reads the file
+      itself (lead's ruling, 2026-11-25): a model that only claimed the fix cannot pass -
+      config-t8-new.ini must actually contain port=9090 in the guest.
+
+  - id: terminal-09-head-and-tail
+    split: holdout
+    title: "Preview the first and last lines of a list"
+    prompt: >-
+      I want to preview a long list without scrolling through it. Create a file seq-t9.txt in
+      the home directory containing the numbers 1 through 20, one per line. Then print the
+      first three lines, a line with only three dashes, and the last three lines, all in a
+      single run, so I can see the shape of the list in one glance.
+    setup:
+      - close_all: true
+      - open_app: terminal
+    oracle:
+      - { tool: terminal.run, lang: sh, code: 'seq 1 20 > ~/seq-t9.txt && head -n 3 ~/seq-t9.txt && echo --- && tail -n 3 ~/seq-t9.txt' }
+    checks:
+      - tool_result: { tool: terminal.run, path: output, matches: '^1\s+2\s+3\s+---\s+18\s+19\s+20\s*$', any: true }
+    covers: [terminal.run]
+    notes: >-
+      Holdout: the output must be exactly 1, 2, 3, ---, 18, 19, 20 - both the head and the tail
+      are pinned from one run. any: true (T17): the prompt requires the single run but not that
+      it be the last command.
+
+  - id: terminal-10-even-sum
+    split: train
+    title: "Sum the even numbers with a Python one-liner"
+    prompt: >-
+      Run a quick calculation for me in the Linux terminal. Make sure the guest is up, then
+      compute the sum of all the even numbers between 1 and 20, inclusive of both ends, as a
+      Python one-liner, and verify it with a shell pipeline, so I can check your arithmetic
+      against mine.
+    oracle:
+      - { tool: terminal.status }
+      - { tool: terminal.run, lang: python, code: 'print(sum(range(2, 21, 2)))' }
+      - { tool: terminal.run, lang: sh, code: "seq 2 20 | awk '$1 % 2 == 0 {s += $1} END {print s}'" }
+    checks:
+      - tool_result: { tool: terminal.run, path: output, matches: '^\s*110\s*$', any: true }
+    covers: [terminal.status, terminal.run]
+    notes: >-
+      Three calls: state, Python sum (2+4+...+20 = 110), shell verification (seq | awk, also
+      110). any: true (T17): the prompt orders compute-then-verify but does not require the
+      verification to be the last command, and both language routes print the bare 110, so the
+      check pins the arithmetic whichever route the model takes.
+
+  - id: terminal-11-free-space
+    split: holdout
+    title: "Report the free disk space"
+    prompt: >-
+      Before I copy some large files over I want to know how much room is left on this box.
+      First make sure the guest is up, then check the free space in kilobytes for my notes, and
+      report it in a human readable form in your reply, like a number with a megabyte or
+      gigabyte unit, so I can plan the copy size.
+    oracle:
+      - { tool: terminal.status }
+      - { tool: terminal.run, lang: sh, code: 'df -k ~' }
+      - { tool: terminal.run, lang: sh, code: 'df -h ~' }
+    checks:
+      - answer_matches: '(?i)\d+(\.\d+)?\s*[KMGT](i?b)?'
+    covers: [terminal.status, terminal.run]
+    notes: >-
+      Holdout answer journey, three calls (state, kilobytes for the notes, human-readable):
+      the last output is df -h, which always carries a number plus a K/M/G/T unit (as a bare
+      unit, like 1.9G, so the regex does not require the 'b') - the exact size is machine
+      dependent and is not pinned.
+
+  - id: terminal-12-guest-up
+    split: train
+    title: "Make sure the Linux guest is running"
+    prompt: >-
+      Something on this machine feels off and I want to check the basics. Find out whether the
+      Linux guest is actually running right now; if it is not up, start it and wait until it is
+      ready. Tell me in your reply whether the guest is running and what its status says.
+    oracle:
+      - { tool: terminal.start }
+      - { tool: terminal.run, lang: sh, code: 'true' }
+      - { tool: terminal.status }
+    checks:
+      - read_tool: { tool: terminal.status, path: state, equals: running }
+      - answer_contains: 'running'
+    covers: [terminal.start, terminal.run, terminal.status]
+    notes: >-
+      terminal.run boots a stopped guest before it runs (up to 90 s), so the oracle is two
+      steps; the state is re-read by the checker itself after the agent's run.

@@ -2,14 +2,27 @@
 slug: check-the-document
 summary: Read the open PDF: its state, page, zoom and mode.
 keywords: document info, metadata, pages, what is in, inspect, bookmarks
-tools: desktop.open_app, pdfcraft.doc_info, pdfcraft.doc_inspect
+tools: desktop.open_app, pdfcraft.doc_info, pdfcraft.doc_inspect, pdfcraft.ui_inspect
 
 When: the user asks what is in the open PDF or how many pages it has.
 Steps:
 1. call_tool tool=desktop.open_app app=pdfcraft
 2. call_tool tool=pdfcraft.doc_info
 Check: the result shows the document's state, page, zoom and mode; doc_inspect reads the same state.
-Gotchas: both tools take no params and read the document's ui.state; the page's file.properties only opens the Properties dialog and returns nothing, so it is not a read tool.
+Gotchas: both tools take no params and read the document's ui.state; the page's file.properties only opens the Properties dialog and returns nothing, so it is not a read tool; ui_inspect reads the on-screen accessibility tree instead (controls and open dialogs, id, role, label and rect per element).
+
+## Read the document text
+slug: read-the-document-text
+summary: Read what the PDF says, page by page, through the app's text export.
+keywords: text, what does it say, read, content, quote, page text, words
+tools: desktop.open_app, pdfcraft.read_text
+
+When: the user asks what the document or a page says, or wants a quote from it.
+Steps:
+1. call_tool tool=desktop.open_app app=pdfcraft
+2. call_tool tool=pdfcraft.read_text
+Check: the result's text field holds the document text in reading order; name is the exported text file.
+Gotchas: the export runs in the app and also downloads the text file in the browser; a PDF with no extractable text (a scan) makes the tool say so instead of returning empty text.
 
 ## Find a phrase in the document
 slug: find-a-phrase
@@ -48,7 +61,7 @@ When: the user wants pages rotated to another orientation.
 Steps:
 1. call_tool tool=desktop.open_app app=pdfcraft
 2. call_tool tool=pdfcraft.doc_info
-3. call_tool tool=pdfcraft.page_rotate degrees=90
+3. call_tool tool=pdfcraft.page_rotate degrees=180
 Check: pdfcraft.doc_info still lists the same pages (rotation changes the size, which the state does not report).
 Gotchas: degrees= is a multiple of 90, positive clockwise; undo with pdfcraft.edit_undo.
 
@@ -64,7 +77,7 @@ Steps:
 2. call_tool tool=pdfcraft.doc_info
 3. call_tool tool=pdfcraft.page_duplicate pages=1
 Check: pdfcraft.doc_info shows one more page.
-Gotchas: page_delete is destructive (the pages are removed from the document); pages= takes 1-based numbers or ranges like 2-4; page_insert_blank at=2 puts the blank page before page 2.
+Gotchas: page_delete is destructive (the pages are removed from the document); pages= takes 1-based numbers or ranges like 2-4; page_insert_blank at=2 puts the blank page before page 2 (a position past the end is refused with the page count, and the result reports the new count - stop when it is the count the user asked for); when the user wants the result as a new file, save it with pdfcraft.save_copy (not doc_save, which saves in place) and do not doc_close before the copy exists - after a close the app has no active document and every pdfcraft call fails.
 
 ## Write text onto a page
 slug: write-text-on-a-page
@@ -78,7 +91,7 @@ Steps:
 2. call_tool tool=pdfcraft.doc_info
 3. call_tool tool=pdfcraft.page_add_text page=1 text=CONFIDENTIAL x=50 y=50 size=24 bold=true
 Check: pdfcraft.doc_info still shows the same page count; the text is page content, not a comment.
-Gotchas: x= and y= are points from the top-left of the displayed page; width= sets the wrap width (default 200); font= is helvetica, times or courier.
+Gotchas: x= and y= are points from the top-left of the displayed page; width= sets the wrap width (default 200); font= is helvetica, times or courier; in this PDFCraft build page_add_text fails honestly (the app does not apply added page text), so do the page work, tell the user the line was not written, and do not retry the call.
 
 ## Add a link to a page
 slug: add-a-page-link
@@ -106,7 +119,7 @@ Steps:
 2. call_tool tool=pdfcraft.doc_info
 3. call_tool tool=pdfcraft.doc_save
 Check: doc_save reports the saved file; doc_close fails while changes are unsaved unless discard_changes=true.
-Gotchas: doc_close and doc_save are destructive (close the document / write to disk).
+Gotchas: doc_close and doc_save are destructive (close the document / write to disk); use this only when the task is done - if the user wants a copy under a new name, run pdfcraft.save_copy for it first, and doc_close ends the work on the document (after a close the app has no active document and every pdfcraft call fails).
 
 ## Find and run any menu command
 slug: run-any-menu-command

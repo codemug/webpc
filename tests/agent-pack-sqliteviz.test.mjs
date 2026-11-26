@@ -21,7 +21,9 @@
 // anchored to a line start (in textContent the last cell runs into it, "80" + "2 rows
 // retrieved" would read as "802"); a SQL error renders in the panel as a span.msg-text
 // "Error: <message>" (the global .error div, the same element as #error, stays empty for
-// query errors).
+// query errors). The run state resets one microtask after the run click (the live app does
+// it asynchronously), so the previous run's terminal state, a DML empty preview included,
+// is visible through the gap: the T8 oracle-run race the tool must not read.
 // Run: node --test tests/agent-pack-sqliteviz.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -96,35 +98,41 @@ const fakeSqliteviz = () => {
     queueMicrotask(hop);
   });
   // The app's run: it executes the model's SQL (state.query), not whatever is in the textarea.
-  // A SQL error renders in the result panel as a span.msg-text "Error: <message>" (live: the
-  // global .error div and #error stay empty for query errors); the panel resets it when a new
-  // run starts. A SELECT from a table of the seeded database returns rows (a GROUP BY on sales
-  // returns the region totals the live recheck expects, every other SELECT the capped 250-row
-  // dataset); an unknown table is the app's own "no such table" error.
+  // The run state resets asynchronously after the click (a gap in which the previous run's
+  // terminal state is still visible, as in the live app: the r4 oracle run read a write's
+  // empty preview as the next SELECT's result), so the reset and the completion are each one
+  // microtask after the click. A SQL error renders in the result panel as a span.msg-text
+  // "Error: <message>" (live: the global .error div and #error stay empty for query errors);
+  // the panel resets it when a new run starts. A SELECT from a table of the seeded database
+  // returns rows (a GROUP BY on sales returns the region totals the live recheck expects,
+  // every other SELECT the capped 250-row dataset); an unknown table is the app's own
+  // "no such table" error.
   const executeQuery = () => {
     if (!state.query) return;
-    state.running = true; state.result = 'pending'; state.error = '';
-    runBtn.disabled = true;
     queueMicrotask(() => {
-      state.running = false;
-      state.runs += 1; // the footer's elapsed time varies per run (the stale-guard input)
-      const q = state.query.trim();
-      const lower = q.toLowerCase();
-      const from = /\bfrom\s+([a-z0-9_]+)/i.exec(lower);
-      const unknownTable = from && !SCHEMA.includes(from[1]);
-      if (/^(select|pragma)\b/i.test(lower) && unknownTable) {
-        state.result = 'error';
-        state.error = `no such table: ${from[1]}.`; // the live app text ends with a period
-      } else if (/^(select|pragma)\b/i.test(lower)) {
-        state.columns = /group\s+by/i.test(lower) ? GROUP_COLUMNS : COLUMNS;
-        state.rows = /group\s+by/i.test(lower) ? GROUP_ROWS : BODY_ROWS;
-        state.result = 'rows';
-      } else if (/^(insert|update|delete|create|drop|alter|vacuum|begin|commit|rollback)\b/i.test(lower)) {
-        state.result = 'empty';
-      } else {
-        state.result = 'error';
-        state.error = `near "${q.slice(0, 10)}": syntax error`;
-      }
+      state.running = true; state.result = 'pending'; state.error = '';
+      runBtn.disabled = true;
+      queueMicrotask(() => {
+        state.running = false;
+        state.runs += 1; // the footer's elapsed time varies per run (the stale-guard input)
+        const q = state.query.trim();
+        const lower = q.toLowerCase();
+        const from = /\bfrom\s+([a-z0-9_]+)/i.exec(lower);
+        const unknownTable = from && !SCHEMA.includes(from[1]);
+        if (/^(select|pragma)\b/i.test(lower) && unknownTable) {
+          state.result = 'error';
+          state.error = `no such table: ${from[1]}.`; // the live app text ends with a period
+        } else if (/^(select|pragma)\b/i.test(lower)) {
+          state.columns = /group\s+by/i.test(lower) ? GROUP_COLUMNS : COLUMNS;
+          state.rows = /group\s+by/i.test(lower) ? GROUP_ROWS : BODY_ROWS;
+          state.result = 'rows';
+        } else if (/^(insert|update|delete|create|drop|alter|vacuum|begin|commit|rollback)\b/i.test(lower)) {
+          state.result = 'empty';
+        } else {
+          state.result = 'error';
+          state.error = `near "${q.slice(0, 10)}": syntax error`;
+        }
+      });
     });
   };
   // table.sqliteviz-table (live probe): the rows are the tbody tr > td cell text.
@@ -353,6 +361,22 @@ test('sqliteviz.open_db passes the Files error code through for a missing file',
   });
 });
 
+test('sqliteviz.run_query refuses a ? placeholder with the inline-values fix before touching the app', async () => {
+  const sv = fakeSqliteviz();
+  // No open_db: the guard must fire before any app access (lfm3-1.7b sent VALUES (7,?, 13.50)
+  // on sqliteviz-04 and the ? landed as a silent NULL).
+  await assert.rejects(sv.runTool('sqliteviz.run_query', { sql: 'INSERT INTO orders (customer_id, product_id, amount) VALUES (7, ?, 13.50)' }), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.match(error.message, /write the values inline/);
+    return true;
+  });
+  // A ? inside a string literal is ordinary SQL text: it runs.
+  await sv.runTool('sqliteviz.open_db', { path: '/data/shop.db' });
+  const got = await sv.runTool('sqliteviz.run_query', { sql: "SELECT * FROM sales WHERE name LIKE 'what?'" });
+  assert.deepEqual(got.columns, COLUMNS);
+});
+
 test('sqliteviz.run_query returns the result table, capped, with the app row count', async () => {
   const sv = fakeSqliteviz();
   await sv.runTool('sqliteviz.open_db', { path: '/data/shop.db' });
@@ -361,6 +385,8 @@ test('sqliteviz.run_query returns the result table, capped, with the app row cou
   assert.equal(got.rowCount, 250, 'the footer count is the app total');
   assert.equal(got.rows.length, 200, 'the rows are capped for the model');
   assert.equal(got.truncated, true);
+  // b17 sqliteviz-04: the capped result points at SQL aggregation instead of hand counting.
+  assert.match(got.note, /aggregate in SQL/);
   assert.deepEqual(got.rows[0], ['0', 'v0']);
   assert.equal(sv.ta.focused, true, 'the hidden textarea was focused before typing');
 });
@@ -387,6 +413,7 @@ test('sqliteviz.run_query returns the exact GROUP BY answer the live probe showe
   assert.deepEqual(got.rows, [['North', '160'], ['South', '80']], 'text cells, as the live result table renders them');
   assert.equal(got.rowCount, 2, 'the rowCount comes from the app footer, not the row cap');
   assert.equal(got.truncated, false);
+  assert.equal(got.note, undefined, 'no aggregation note when the result is not capped');
   // The second identical run must pass the stale guard: the footer's elapsed time varies per
   // run in the fake (as in the live app), so the container text differs from the pre-run capture.
   const again = await sv.runTool('sqliteviz.run_query', { sql });
@@ -399,6 +426,20 @@ test('sqliteviz.run_query reports a DML statement as an empty result', async () 
   await sv.runTool('sqliteviz.open_db', { path: '/data/shop.db' });
   const got = await sv.runTool('sqliteviz.run_query', { sql: "INSERT INTO sales (region, amount) VALUES ('East', 40)" });
   assert.deepEqual(got, { columns: [], rows: [], rowCount: 0, truncated: false });
+});
+
+test('sqliteviz.run_query right after a DML waits for its own run instead of reading the write empty preview (T8)', async () => {
+  const sv = fakeSqliteviz();
+  await sv.runTool('sqliteviz.open_db', { path: '/data/shop.db' });
+  await sv.runTool('sqliteviz.run_query', { sql: "INSERT INTO sales (region, amount) VALUES ('East', 40)" });
+  // The write left the app's empty result preview on the panel, and the app resets the run
+  // state only after the click (the live gap). The SELECT must not accept that stale empty
+  // preview: it waits for its own run's result (this test fails on the pre-T8 tool, whose
+  // empty branch fired on the first poll before the run was observed).
+  const got = await sv.runTool('sqliteviz.run_query', { sql: 'SELECT region, SUM(amount) AS total FROM sales GROUP BY region ORDER BY region' });
+  assert.deepEqual(got.columns, ['region', 'total']);
+  assert.deepEqual(got.rows, [['North', '160'], ['South', '80']], 'the new run rows, not the write empty preview');
+  assert.equal(got.rowCount, 2);
 });
 
 test('sqliteviz.run_query second run executes the new SQL, not the previous query', async () => {
@@ -489,7 +530,7 @@ const { skills, errors: skillErrors } = parseSkills(SKILLS_MD, 'sqliteviz');
 
 test('skills.md parses with the runtime parser without errors and has 5 skills', () => {
   assert.deepEqual(skillErrors, []);
-  assert.equal(skills.length, 5);
+  assert.equal(skills.length, 6);
   for (const skill of skills) {
     assert.ok(skill.slug && skill.summary, `skill ${skill.slug} slug/summary`);
     assert.ok(skill.summary.length <= 160, `skill ${skill.slug} summary is ${skill.summary.length} chars`);

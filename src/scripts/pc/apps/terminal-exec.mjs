@@ -67,6 +67,14 @@ export function execReply(result) {
   return { exitCode, output, truncated };
 }
 
+// The agent's terminal.run proves the shell with a readiness sentinel before the first
+// command of a boot (agent/apps/terminal/tools.js): those probe runs are hidden from the
+// xterm - the user should not see probe commands. The pattern is the pack's
+// `echo wcpc-ready-<rand>` (Math.random base36, lowercase); keep the two in sync.
+export function isAgentProbeRun({ lang, code }) {
+  return lang === 'sh' && /^echo wcpc-ready-[a-z0-9]+$/.test(String(code ?? ''));
+}
+
 // Whether this tab may run the request: one run at a time (busy), the guest must be running,
 // and only the tab that holds the saved disk's Web Lock (owner, the boot's lock.held) runs -
 // a snapshot tab replies not-running so the owner tab wins (its exec-pending ack cancels the

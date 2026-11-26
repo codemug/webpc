@@ -1,0 +1,348 @@
+# Files journeys (12). train 9, holdout 3 (files-03, files-07, files-11).
+# Revised for gate round 2 (2026-11-25): eight journeys have three or more actions
+# (01, 02, 04, 05, 06, 08, 09, 12) with the long ones at five (04, 08), the coverage
+# gaps from the review are covered (files-12 deletes files, files-10 and files-12
+# list folders), and every setup is close_all, open_app, reset_app in that order.
+# Text notes are seeded with seed_file; the real photo and CSV fixtures come from
+# tests/agent-eval/fixtures via seed_fixture. There is no copy tool, so the backup
+# journey is read-then-write, and the rename-collision journey relies on the pack's
+# documented " (2)" before-extension suggestion (agent/files/tools.js).
+app: files
+journeys:
+  - id: files-01-trip-folder
+    split: train
+    title: "Make a trip folder with a plan note and a packing list"
+    prompt: >-
+      Make a folder for my trip planning at /notes/trip and save two notes inside it:
+      a plan at /notes/trip/plan.txt with three lines (book the flights, rent a car
+      for the first week, check the visa rules) and a packing list at
+      /notes/trip/packing.txt with two lines (car windows, spare cables).
+    setup:
+      - close_all: true
+      - open_app: files
+      - reset_app: files
+    oracle:
+      - tool: files.mkdir
+        path: /notes/trip
+      - tool: files.write
+        path: /notes/trip/plan.txt
+        text: "Book the flights\nRent a car for the first week\nCheck the visa rules"
+      - tool: files.write
+        path: /notes/trip/packing.txt
+        text: "Car windows\nSpare cables"
+    checks:
+      - file_exists: /notes/trip/plan.txt
+      - file_contains: { path: /notes/trip/plan.txt, text: "rent a car for the first week" }
+      - file_contains: { path: /notes/trip/packing.txt, text: "spare cables" }
+    covers: [files.mkdir, files.write]
+    notes: "Three actions; the missing parents of /notes are created by mkdir, and both notes are pinned by their own content."
+
+  - id: files-02-todo-append
+    split: train
+    title: "Add two todo lines and report the line count"
+    prompt: >-
+      My todo note at /notes/todo.txt needs two more lines: one for reviewing the pull
+      requests and one for booking the demo room. Keep everything that is already
+      there, and when you are done tell me how many lines the note has now.
+    setup:
+      - close_all: true
+      - open_app: files
+      - reset_app: files
+      - seed_file: { path: /notes/todo.txt, text: "Buy milk\nCall Ana" }
+    oracle:
+      - tool: files.read
+        path: /notes/todo.txt
+      - tool: files.append
+        path: /notes/todo.txt
+        text: "\nReview the pull requests\nBook the demo room"
+      - tool: system.calculate
+        expression: "2 + 2"
+    checks:
+      - file_contains: { path: /notes/todo.txt, text: "Review the pull requests" }
+      - file_contains: { path: /notes/todo.txt, text: "Book the demo room" }
+      - file_contains: { path: /notes/todo.txt, text: "Buy milk" }
+      - answer_matches: "(?<!\\d)4(?!\\d)"
+    covers: [files.read, files.append, system.calculate]
+    notes: "Read-then-append-then-report; the original first line is pinned so an overwrite instead of an append fails, and the count (2 lines seeded plus 2 appended = 4) is held by the calculate result the oracle-mode answer check reads, pinned with word boundaries."
+    check_gap: "the answer may say four instead of 4; the lead confirms the phrasing in the agent run."
+
+  - id: files-03-budget-total
+    split: holdout
+    title: "Read a budget note and answer the total"
+    prompt: >-
+      My budget note is at /notes/budget.txt with a line per expense. Read it and tell
+      me the total of the three items, and which one is the biggest.
+    setup:
+      - close_all: true
+      - open_app: files
+      - reset_app: files
+      - seed_file: { path: /notes/budget.txt, text: "Rent 1200\nFood 400\nTransit 150" }
+    oracle:
+      - tool: files.read
+        path: /notes/budget.txt
+      - tool: system.calculate
+        expression: "1200 + 400 + 150"
+    checks:
+      - answer_contains: "1750"
+      - answer_contains: "Rent"
+    covers: [files.read, system.calculate]
+    notes: "Read-then-decide: 1200 + 400 + 150 = 1750 and Rent is the biggest; the calculate step ends the oracle trace with a result that holds the total, which the oracle-mode answer check reads."
+    check_gap: "the answer may lowercase Rent; the lead confirms the phrasing in the agent run."
+
+  - id: files-04-invoices-archive
+    split: train
+    title: "Gather the invoice notes into a folder with an index"
+    prompt: >-
+      My inbox at /inbox has three notes and the two about invoices are cluttering it.
+      Find every note in /inbox that mentions invoices, move them into a new /invoices
+      folder, and write an index at /invoices/index.txt listing the file names you
+      moved, one per line.
+    setup:
+      - close_all: true
+      - open_app: files
+      - reset_app: files
+      - seed_file: { path: /inbox/invoice-march.txt, text: "Invoice 1042 from the printer, 240 due." }
+      - seed_file: { path: /inbox/invoice-june.txt, text: "Invoice 1077 from the landlord, 1200 due." }
+      - seed_file: { path: /inbox/notes.txt, text: "Team sync notes" }
+    oracle:
+      - tool: files.find
+        query: invoice
+        under: /inbox
+      - tool: files.mkdir
+        path: /invoices
+      - tool: files.rename
+        path: /inbox/invoice-march.txt
+        to: /invoices/invoice-march.txt
+      - tool: files.rename
+        path: /inbox/invoice-june.txt
+        to: /invoices/invoice-june.txt
+      - tool: files.write
+        path: /invoices/index.txt
+        text: "invoice-march.txt\ninvoice-june.txt"
+    checks:
+      - file_contains: { path: /invoices/index.txt, text: "invoice-march.txt" }
+      - file_contains: { path: /invoices/index.txt, text: "invoice-june.txt" }
+      - read_tool: { tool: files.list, args: { path: "/invoices" }, contains: "invoice-june.txt" }
+      - file_exists: /inbox/notes.txt
+    covers: [files.find, files.mkdir, files.rename, files.write]
+    notes: "Five-action workflow: find, move both invoice notes, write the index; the decoy note staying in /inbox is pinned too."
+    check_gap: "if the find result or the list result shape differs, the read_tool pin may need a path in the oracle run."
+
+  - id: files-05-tidy-archive
+    split: train
+    title: "Gather three loose inbox files into an archive folder"
+    prompt: >-
+      My inbox has three loose files, a.txt, b.txt and c.txt, and I want them gathered
+      into an archive. Make an /archive folder and move all three files into it,
+      keeping their names.
+    setup:
+      - close_all: true
+      - open_app: files
+      - reset_app: files
+      - seed_file: { path: /inbox/a.txt, text: "First loose note" }
+      - seed_file: { path: /inbox/b.txt, text: "Second loose note" }
+      - seed_file: { path: /inbox/c.txt, text: "Third loose note" }
+    oracle:
+      - tool: files.mkdir
+        path: /archive
+      - tool: files.rename
+        path: /inbox/a.txt
+        to: /archive/a.txt
+      - tool: files.rename
+        path: /inbox/b.txt
+        to: /archive/b.txt
+      - tool: files.rename
+        path: /inbox/c.txt
+        to: /archive/c.txt
+    checks:
+      - file_exists: /archive/a.txt
+      - file_exists: /archive/b.txt
+      - file_exists: /archive/c.txt
+    covers: [files.mkdir, files.rename]
+    notes: "Multi-step reorganisation; all three files pinned in the new folder."
+
+  - id: files-06-backup-copy
+    split: train
+    title: "Back up a recipe before editing it"
+    prompt: >-
+      Before I start editing my recipe at /notes/recipe.txt I want a backup. Make a
+      copy of it at /archive/recipe-backup.txt with the same content, and keep the
+      original exactly where it is.
+    setup:
+      - close_all: true
+      - open_app: files
+      - reset_app: files
+      - seed_file: { path: /notes/recipe.txt, text: "Sourdough: 500g flour, 350ml water, 10g salt." }
+    oracle:
+      - tool: files.mkdir
+        path: /archive
+      - tool: files.read
+        path: /notes/recipe.txt
+      - tool: files.write
+        path: /archive/recipe-backup.txt
+        text: "Sourdough: 500g flour, 350ml water, 10g salt."
+    checks:
+      - file_contains: { path: /archive/recipe-backup.txt, text: "500g flour" }
+      - file_contains: { path: /notes/recipe.txt, text: "10g salt" }
+    covers: [files.mkdir, files.read, files.write]
+    notes: "There is no copy tool for text, so the read-then-write is the flow; both the backup and the original are pinned."
+
+  - id: files-07-find-report
+    split: holdout
+    title: "Find a file by part of its name and answer the path"
+    prompt: >-
+      Somewhere in my inbox there is a file about the Q2 report, and I cannot remember
+      what I called it. Find it and tell me its full path.
+    setup:
+      - close_all: true
+      - open_app: files
+      - reset_app: files
+      - seed_file: { path: /inbox/q2-report.txt, text: "Q2 numbers" }
+      - seed_file: { path: /inbox/meeting-notes.txt, text: "Notes from the sync" }
+    oracle:
+      - tool: files.find
+        query: q2-report
+        under: /inbox
+    checks:
+      - answer_contains: "q2-report.txt"
+    covers: [files.find]
+    notes: "Read-then-answer over a folder with a decoy file; the file name is pinned verbatim."
+
+  - id: files-08-csv-summary
+    split: train
+    title: "Summarise the sales CSV and tuck the raw file away"
+    prompt: >-
+      The sales file is in my files at /data/sales-q3.csv. Read it, write a summary
+      note at /reports/sales-q3-summary.txt with the total units sold and the best
+      region by units, and then move the CSV itself to /archive so it stops cluttering
+      /data.
+    setup:
+      - close_all: true
+      - open_app: files
+      - reset_app: files
+      - seed_fixture: { path: /data/sales-q3.csv, fixture: sales-q3.csv }
+    oracle:
+      - tool: files.read
+        path: /data/sales-q3.csv
+      - tool: files.mkdir
+        path: /reports
+      - tool: files.write
+        path: /reports/sales-q3-summary.txt
+        text: "Total units: 100. Best region: East (33 units)."
+      - tool: files.mkdir
+        path: /archive
+      - tool: files.rename
+        path: /data/sales-q3.csv
+        to: /archive/sales-q3.csv
+    checks:
+      - file_contains: { path: /reports/sales-q3-summary.txt, text: "100" }
+      - file_contains: { path: /reports/sales-q3-summary.txt, text: "East" }
+      - file_exists: /archive/sales-q3.csv
+    covers: [files.read, files.mkdir, files.write, files.rename]
+    notes: "Five-action workflow over the real fixture: total units is 100 and East leads with 33 (North 23, South 27, West 17)."
+    check_gap: "the summary wording is the oracle's; the pins are the two computed facts the user asked for and the moved CSV."
+
+  - id: files-09-port-update
+    split: train
+    title: "Update the port in a server note and log the change"
+    prompt: >-
+      The server note at /app/server.txt still points at the old port. Update it so
+      the port is 9090 and the host line stays exactly as it is, with nothing else in
+      the file changing, and write a change note at /app/changes.txt saying which
+      port you moved from and which you moved to.
+    setup:
+      - close_all: true
+      - open_app: files
+      - reset_app: files
+      - seed_file: { path: /app/server.txt, text: "port=8080\nhost=local" }
+    oracle:
+      - tool: files.read
+        path: /app/server.txt
+      - tool: files.overwrite
+        path: /app/server.txt
+        text: "port=9090\nhost=local"
+      - tool: files.write
+        path: /app/changes.txt
+        text: "Changed port from 8080 to 9090."
+    checks:
+      - file_matches: { path: /app/server.txt, regex: "^port=9090\nhost=local$" }
+      - file_contains: { path: /app/changes.txt, text: "8080" }
+      - file_contains: { path: /app/changes.txt, text: "9090" }
+    covers: [files.read, files.overwrite, files.write]
+    notes: "The whole-file regex pins the exact end state (new port, kept host line, no trace of 8080) and the change note carries both ports."
+
+  - id: files-10-list-photos
+    split: train
+    title: "List the photos folder and name every file"
+    prompt: >-
+      I have a photos folder at /photos and I cannot remember what is inside it. List
+      the folder and tell me every file it contains.
+    setup:
+      - close_all: true
+      - open_app: files
+      - reset_app: files
+      - seed_fixture: { path: /photos/beach-sunset.jpg, fixture: beach-sunset.jpg }
+      - seed_file: { path: /photos/captions.txt, text: "Sunset at 19:40, shot on the phone." }
+    oracle:
+      - tool: files.list
+        path: /photos
+    checks:
+      - read_tool: { tool: files.list, args: { path: "/photos" }, contains: "beach-sunset.jpg" }
+      - answer_contains: "beach-sunset.jpg"
+      - answer_contains: "captions.txt"
+    covers: [files.list]
+    notes: "The list journey: the folder holds the real beach-sunset.jpg fixture plus a caption note, and both names are pinned in the list state and the answer."
+    check_gap: "if the list result names files differently (for example with the full path only), the read_tool pin is fine but the answer may phrase it that way; the lead confirms."
+
+  - id: files-11-rename-collision
+    split: holdout
+    title: "Rename onto a taken name and keep both files"
+    prompt: >-
+      I have two notes in /notes, a.txt and b.txt, and I want to rename a.txt to
+      b.txt. The existing b.txt should keep its name and its content, and the renamed
+      file should end up with a different name in the same folder.
+    setup:
+      - close_all: true
+      - open_app: files
+      - reset_app: files
+      - seed_file: { path: /notes/a.txt, text: "First list" }
+      - seed_file: { path: /notes/b.txt, text: "Second list" }
+    oracle:
+      - tool: files.rename
+        path: /notes/a.txt
+        to: "/notes/b (2).txt"
+    checks:
+      - file_exists: "/notes/b (2).txt"
+      - file_contains: { path: "/notes/b (2).txt", text: "First list" }
+      - file_contains: { path: /notes/b.txt, text: "Second list" }
+    covers: [files.rename]
+    notes: "Collision handling: renaming onto a taken name fails with a fix hint that suggests the name plus (2) before the extension (oracle run), so the agent's second attempt lands on b (2).txt; the oracle models that end state in one step, and both files and both contents are pinned."
+    check_gap: "the oracle cannot include the failed first rename (a failed step fails the oracle), so the two-attempt flow is only exercised in the agent run."
+
+  - id: files-12-tidy-scratch
+    split: train
+    title: "Delete the scratch files and report what is left"
+    prompt: >-
+      My scratch folder at /scratch has three files and two of them are junk: the
+      temporary scratch file and the old cache file. Delete just those two, leave the
+      other file alone, then list the folder and tell me what is left.
+    setup:
+      - close_all: true
+      - open_app: files
+      - reset_app: files
+      - seed_file: { path: /scratch/keep.txt, text: "Keep this one." }
+      - seed_file: { path: /scratch/tmp-1.txt, text: "Temporary scratch." }
+      - seed_file: { path: /scratch/old-cache.txt, text: "Stale cache dump." }
+    oracle:
+      - tool: files.delete
+        path: /scratch/tmp-1.txt
+      - tool: files.delete
+        path: /scratch/old-cache.txt
+      - tool: files.list
+        path: /scratch
+    checks:
+      - read_tool: { tool: files.list, args: { path: "/scratch" }, matches: "(?=.*keep.txt)(?!.*tmp-1)(?!.*old-cache)" }
+      - answer_contains: "keep.txt"
+    covers: [files.delete, files.list]
+    notes: "The delete journey: two files removed, the survivor and the absence of both deleted names are pinned through the folder list itself."
+    check_gap: "if the list result includes extra fields that mention the deleted names (for example a recent-deletes history), the negative lookahead pins would need adjusting."

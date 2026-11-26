@@ -95,6 +95,32 @@ test('cloud arguments as a JSON object string merge the same way', () => {
   assert.deepEqual(garbage.args, {}, 'a non-object arguments string is dropped');
 });
 
+test('an unquoted multi-word value runs to the next <key>= pair, not the first space (A19, filmcraft-03/06 traces)', () => {
+  // j3-filmcraft-3-b14: the model sent "filmcraft.new_project name=Outro Marks" and the repair
+  // cut the value at the first space, so the project was named "Outro".
+  const out = repairCall({ tool: 'filmcraft.new_project name=Outro Marks' }, OPTS);
+  assert.equal(out.tool, 'filmcraft.new_project');
+  assert.deepEqual(out.args, { name: 'Outro Marks' });
+  assert.deepEqual(out.repairs, ['parsed inline pairs from tool']);
+  // Every following single-word pair is still split at its own <key>=.
+  const place = repairCall({ tool: 'filmcraft.place item=3 track=V1 seconds=0' }, OPTS);
+  assert.deepEqual(place.args, { item: '3', track: 'V1', seconds: '0' });
+  // A shell command keeps its flags and paths whole (the same cut hit terminal.run).
+  const run = repairCall({ tool: 'terminal.run command=ls -la /tmp' }, OPTS);
+  assert.equal(run.tool, 'terminal.run');
+  assert.deepEqual(run.args, { command: 'ls -la /tmp' });
+  // The double-quoted form is unchanged, and a following pair still splits after it.
+  const quoted = repairCall({ tool: 'filmcraft.rename name="Hero Shot" item=2' }, OPTS);
+  assert.deepEqual(quoted.args, { name: 'Hero Shot', item: '2' });
+});
+
+test('a bare spaced tool name with no pairs stays whole for the separator rule (A19 step 3 guard)', () => {
+  const out = repairCall({ tool: 'Desktop Open-App' }, OPTS);
+  assert.equal(out.tool, 'desktop.open_app', 'the whole name reaches the separator rule, uncut');
+  assert.deepEqual(out.args, {});
+  assert.ok(!out.repairs.includes('parsed inline pairs from tool'));
+});
+
 test('explicit keys win over inline pairs', () => {
   const out = repairCall({ tool: 'files.mkdir path=inline', path: 'flat' }, OPTS);
   assert.equal(out.args.path, 'flat');

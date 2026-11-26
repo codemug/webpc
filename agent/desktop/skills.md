@@ -69,8 +69,8 @@ tools: desktop.move
 
 When: the user wants a window at a particular spot on the desktop.
 Steps:
-1. call_tool tool=desktop.move app=terminal x=40 y=60
-Check: desktop.list_windows shows the window at x 40 and y 60.
+1. call_tool tool=desktop.move app=terminal x=36 y=32
+Check: desktop.list_windows shows the window at x 36 and y 32.
 Gotchas: change app=, x and y; the values are pixels from the desktop top-left corner and are clamped inside the desktop.
 
 ## Resize a window
@@ -81,8 +81,8 @@ tools: desktop.resize
 
 When: the user wants a window bigger or smaller, or a certain size.
 Steps:
-1. call_tool tool=desktop.resize app=docs width=800 height=500
-Check: desktop.list_windows shows the window at width 800 and height 500.
+1. call_tool tool=desktop.resize app=docs width=760 height=480
+Check: desktop.list_windows shows the window at width 760 and height 480.
 Gotchas: change app=, width and height; width is at least 200 and height at least 150, and both are clamped to the desktop.
 
 ## Put windows side by side

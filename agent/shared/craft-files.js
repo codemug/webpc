@@ -75,22 +75,47 @@ export const filesCall = (ctx, fn, fixFor) => {
  * from the tool description - and loops). path is not required in the tool specs
  * (the runtime must not emit a missing_argument fix that echoes an example path), so a
  * missing or empty path is the missing_argument pointing at desktop.open_app. A
- * missing file becomes ToolError('not_found') saying the app itself opens with
- * desktop.open_app and a file is found with files.find. Both fixes point at
- * desktop.open_app (small models copy fix lines).
+ * wrong path (a file that is not in Files) becomes ToolError('not_found') whose fix is
+ * files.find on the file's own name: the app is already open, so desktop.open_app is a dead
+ * end, and files.find recovers the real path (soundcraft-05 trace: /soundCraft/ vs the seeded
+ * /SoundCraft/). Small models copy fix lines, so the fix line is the recovery.
+ *
+ * The read is bounded (readTimeoutMs, default 30 s): a Files-store promise that never
+ * settles would stall the open the same way a silent app inspect does (deckcraft-10,
+ * b19/b20: the model's first open_file outlived the 240 s turn timer with an empty trace).
+ * A healthy read is milliseconds; 30 s leaves room for a file at the 256 MB wrapper cap,
+ * and with this + appWindow (30 s) + craftApi (30 s) + openAndAwait (30 s) the whole open
+ * path answers well inside the turn timer.
  */
-export const readOpenFile = async (ctx, path, { id, title }) => {
+export const READ_TIMEOUT_MS = 30000;
+
+export const readOpenFile = async (ctx, path, { id, title, missingHint, readTimeoutMs = READ_TIMEOUT_MS }) => {
   const openAppFix = `call_tool tool=desktop.open_app app=${id}`;
   if (typeof path !== 'string' || path.length === 0) {
     throw new ToolError('missing_argument', `Give the Files path of the file to open. To open ${title} itself, use desktop.open_app.`, openAppFix);
   }
-  return filesCall(ctx, files => files.readBytes(path))
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new ToolError('app_error', `${title} did not answer the Files read within ${Math.max(1, Math.round(readTimeoutMs / 1000))} s (the Files store may be busy). Retry the open, or check the file in the Files app.`, '')), readTimeoutMs);
+  });
+  return Promise.race([
+    filesCall(ctx, files => files.readBytes(path)),
+    deadline,
+  ])
     .catch(error => {
       if (error instanceof ToolError && error.type === 'not_found') {
-        throw new ToolError('not_found', `${path} is not in Files. To open ${title} itself, use desktop.open_app; to open a file, find it first with files.find.`, openAppFix);
+        // The model supplied a path but it is wrong (wrong case, typo, or not seeded). The app
+        // is already open here, so desktop.open_app is a dead end; files.find on the file's own
+        // name recovers the real path (soundcraft-05 trace: /soundCraft/ vs seeded /SoundCraft/).
+        // missingHint (optional, app-specific) adds the app's own next step when no file is the
+        // point (gridcraft: the data comes from the user message - type it with set_cells).
+        const name = path.split('/').filter(Boolean).pop() || path;
+        const hint = missingHint ? ` ${missingHint}` : '';
+        throw new ToolError('not_found', `${path} is not in Files. The path may be wrong - find the file with files.find, then open that path.${hint}`, `call_tool tool=files.find query=${name}`);
       }
       throw error;
-    });
+    })
+    .finally(() => clearTimeout(timer));
 };
 
 /**
@@ -203,8 +228,42 @@ export const extOf = name => {
   return ext.includes(' ') ? '' : ext.toLowerCase();
 };
 
+// The model-facing next on every successful open (deckcraft-10, b21: the open succeeded
+// in round 2, then the model re-opened the same file ~10 times to "check it loaded";
+// each re-open tripped the app's dialog and the turn died at the 240 s timer). Built
+// from the app id; every openAndAwait caller passes it, import tools included.
+const openNextNote = (id, name) => `${name} is open. To check it, call ${id}.inspect. Opening it again shows a dialog and blocks the app.`;
+
 // The open result's opened field: a short confirmation the model can read.
 const COUNT_WORDS = { sheets: 'sheet', slides: 'slide', tabs: 'tab', documents: 'document', pages: 'page' };
+
+// The already-open re-open (live b14: pdfcraft-05 guessed a wrong extension after the
+// misreport; gridcraft-12 and desktop-13 looped on it for 15 rounds each). Identity
+// fields only (lead ruling): the name must be the document or sheet the app says it has
+// open - documents[].name (pdfcraft), sheets[].name (gridcraft names the sheet after
+// the file stem) - or the app's own path/file field. A name anywhere else in the state
+// (a photo catalog row, a recent-files list) must not count, or the next import of that
+// file would silently skip. Import tools pass checkAlreadyOpen: false instead.
+// DeckCraft's only identity field is the deck's title - excluded from the general
+// checks because a deck can be titled after anything - but a file-opened deck is
+// titled after the file's stem (live b21: opening outline.md reports "outline"), so
+// for deckcraft an exact stem match is the already-open proof (deckcraft-10: ten
+// re-opens of the open deck, each driving the blocking dialog); a partial title is not.
+const alreadyOpenDoc = (state, name, id) => {
+  if (!state || typeof state !== 'object' || Array.isArray(state)) return null;
+  const docs = Array.isArray(state.documents) ? state.documents : [];
+  const doc = docs.find(d => d && typeof d.name === 'string' && d.name === name);
+  if (doc) return doc.doc != null ? `already open as document ${doc.doc}` : `already open as ${name}`;
+  const stem = name.replace(/\.[^.]*$/, '');
+  const sheets = Array.isArray(state.sheets) ? state.sheets : [];
+  if (sheets.some(s => s && typeof s.name === 'string' && (s.name === name || (stem.length >= 4 && s.name === stem)))) return `already open as ${name}`;
+  if (id === 'deckcraft' && typeof state.title === 'string' && state.title === stem) return `already open as ${name}`;
+  for (const key of ['path', 'file']) {
+    const own = state[key];
+    if (typeof own === 'string' && own.split('/').pop() === name) return `already open as ${name}`;
+  }
+  return null;
+};
 const openedSummary = info => {
   const parts = [];
   if (info && typeof info === 'object' && !Array.isArray(info)) {
@@ -217,11 +276,29 @@ const openedSummary = info => {
   return parts.length > 0 ? parts.join(' ') : 'the app state changed';
 };
 
+// The cross-frame awaits of the save path (T18 follow-up, lead ruling): the same mechanism
+// as the open path - while the app's event loop is blocked (a waiting dialog, a conversion),
+// the page API's promises, including their 30 s reject, stay unsettled. Bound every craft
+// call the save makes; a stuck call rejects with the honest app_error instead of hanging
+// the turn. saveCopy (the capture path) is already bounded by its own capture timeout.
+export const SAVE_TIMEOUT_MS = 30000;
+
+const boundedCraftCall = (call, title, boundMs) => {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new ToolError('app_error', `${title} stopped answering during the save (it may be showing a dialog); it did not finish within ${Math.max(1, Math.round(boundMs / 1000))} s.`, '')), boundMs);
+  });
+  return Promise.race([
+    Promise.resolve().then(() => call()),
+    deadline,
+  ]).finally(() => clearTimeout(timer));
+};
+
 // The produced save name when the saveBytes result carries none: the inspect path's
 // base name when it has an extension, else the inspect title, else the display name.
-const producedName = async (craft, title) => {
+const producedName = async (craft, title, boundMs = SAVE_TIMEOUT_MS) => {
   try {
-    const info = await craft.inspect({});
+    const info = await boundedCraftCall(() => craft.inspect({}), title, boundMs);
     if (typeof info?.path === 'string') {
       const base = info.path.split('/').filter(Boolean).pop();
       if (base && extOf(base) !== '') return base;
@@ -241,7 +318,7 @@ const producedName = async (craft, title) => {
 // corrupt save. When r.bytes is a number the decoded length must equal it. The produced
 // name is r.name, else the inspect title/path; a name without an extension gets the
 // app's native extension appended.
-const inlineSave = async (r, craft, title, nativeExt, source) => {
+const inlineSave = async (r, craft, title, nativeExt, source, boundMs = SAVE_TIMEOUT_MS) => {
   const encoded = r?.base64 ?? r?.data ?? r?.dataBase64;
   const bytes = typeof encoded === 'string' ? base64ToBytes(encoded)
     : typeof r?.text === 'string' ? new TextEncoder().encode(r.text)
@@ -252,7 +329,7 @@ const inlineSave = async (r, craft, title, nativeExt, source) => {
     throw new ToolError('app_error', `${title} reported ${r.bytes} bytes but returned ${bytes.byteLength}; the save is corrupt.`, '');
   }
   let name = r.name;
-  if (typeof name !== 'string' || name.length === 0) name = await producedName(craft, title);
+  if (typeof name !== 'string' || name.length === 0) name = await producedName(craft, title, boundMs);
   if (extOf(name) === '') name += nativeExt;
   return { name, bytes };
 };
@@ -282,11 +359,14 @@ const inlineSave = async (r, craft, title, nativeExt, source) => {
  * capture; the default is execute('file.save', {}), which retries once with
  * execute('file.saveAs', { path: '<title><native ext>' }) when the app refuses the
  * no-path save for a missing file name), guard (false skips the extension guard),
- * timeoutMs (capture timeout, default 60000).
+ * timeoutMs (capture timeout, default 60000), saveTimeoutMs (the bound for the craft
+ * calls the save makes - commands, the save execute, the no-path trigger and the
+ * produced-name inspect; a stuck call answers with the honest app_error, default
+ * SAVE_TIMEOUT_MS).
  * Returns { name, bytes, note }; note is '' except on the capture path, which says the
  * app also downloaded the file in the browser.
  */
-export async function saveBytesCopy(craft, { id, title = id, wrapperWindow, target = '', tool, nativeExt = '', fallbackTrigger = null, inlineCommand = null, guard = true, timeoutMs = 60000 } = {}) {
+export async function saveBytesCopy(craft, { id, title = id, wrapperWindow, target = '', tool, nativeExt = '', fallbackTrigger = null, inlineCommand = null, guard = true, timeoutMs = 60000, saveTimeoutMs = SAVE_TIMEOUT_MS } = {}) {
   // The extension guard, before the save starts when the native extension is known: a
   // rejected target must not start a save (the capture would wait out its timeout, and in
   // host mode the wrapper would download a file nobody asked for). With nativeExt '' (the
@@ -304,11 +384,11 @@ export async function saveBytesCopy(craft, { id, title = id, wrapperWindow, targ
   let save;
   let note = '';
   if (inlineCommand) {
-    save = await inlineSave(await craft.execute(inlineCommand.command, inlineCommand.params ?? {}), craft, title, nativeExt, inlineCommand.command);
+    save = await inlineSave(await boundedCraftCall(() => craft.execute(inlineCommand.command, inlineCommand.params ?? {}), title, saveTimeoutMs), craft, title, nativeExt, inlineCommand.command, saveTimeoutMs);
   } else {
-    const ids = craft ? (await craft.commands()).map(command => command.id ?? command) : [];
+    const ids = craft ? (await boundedCraftCall(() => craft.commands(), title, saveTimeoutMs)).map(command => command.id ?? command) : [];
     if (ids.includes('file.saveBytes')) {
-      save = await inlineSave(await craft.execute('file.saveBytes', {}), craft, title, nativeExt, 'file.saveBytes');
+      save = await inlineSave(await boundedCraftCall(() => craft.execute('file.saveBytes', {}), title, saveTimeoutMs), craft, title, nativeExt, 'file.saveBytes', saveTimeoutMs);
     } else {
       // The default no-path trigger with the untitled-document retry (lead live check): a
       // fresh document can refuse file.save {} ("no file name yet; use saveas {path}"),
@@ -317,12 +397,12 @@ export async function saveBytesCopy(craft, { id, title = id, wrapperWindow, targ
       // effectcraft (the packs that still use the capture path).
       const startSave = async () => {
         try {
-          await craft.execute('file.save', {});
+          await boundedCraftCall(() => craft.execute('file.save', {}), title, saveTimeoutMs);
         } catch (error) {
           if (error instanceof Error && /no (file )?(name|path)/i.test(String(error.message))) {
-            let name = await producedName(craft, title);
+            let name = await producedName(craft, title, saveTimeoutMs);
             if (extOf(name) === '') name += nativeExt;
-            return craft.execute('file.saveAs', { path: name });
+            return boundedCraftCall(() => craft.execute('file.saveAs', { path: name }), title, saveTimeoutMs);
           }
           throw error;
         }
@@ -335,37 +415,71 @@ export async function saveBytesCopy(craft, { id, title = id, wrapperWindow, targ
   return { name: save.name, bytes: save.bytes, note };
 }
 
+// The page API's promises can stay unsettled while the app's event loop is busy (deckcraft
+// b19: a .md open left the model's first call in flight until the 240 s turn timer; the
+// 30 s page-side reject is only as reliable as the app's own event loop, which a WASM
+// conversion or a waiting dialog can block). Bound every inspect with a race so the
+// deadline check in openAndAwait always runs: { value }, { threw } or { hung }.
+const boundedInspect = (craft, boundMs) => Promise.race([
+  Promise.resolve().then(() => craft.inspect({})).then(value => ({ value })),
+  new Promise(resolve => setTimeout(() => resolve({ hung: true }), boundMs)),
+]).catch(() => ({ threw: true }));
+
 /**
  * Open a file from Files in the app and wait until the app has actually loaded it.
  * Snapshots craft.inspect() before the open, drives the wrapper's own #file input
  * (openFromBytes), then polls craft.inspect() every intervalMs (default 250 ms,
  * timeoutMs cap, default 30 s) until the result JSON differs from the snapshot; an
  * inspect that threw before and succeeds after also counts as changed (cadcraft:
- * "no drawing open" while no drawing is open).
+ * "no drawing open" while no drawing is open). Every inspect is bounded (boundedInspect):
+ * a promise that never settles counts as "not loaded yet" (or "unknown" before the open),
+ * so the cap always holds and the tool cannot outlive the turn timer.
  *
  * craft: the craftApi result (or teachApp-wrapped; an inspect rejection is read as
  * "not loaded yet" and swallowed). options: id (app id), title (display name, for the
  * timeout error), wrapperWindow (the appWindow result), name and bytes (the file from
  * files.readBytes), accept (the releases accept list, quoted in the timeout error),
- * timeoutMs, intervalMs, sleep (injectable for tests).
- * Returns { name, bytes: <size>, opened }, opened a short summary of the post-open
- * inspect (title, path, sheet/slide/tab count).
+ * timeoutMs, intervalMs, sleep (injectable for tests), checkAlreadyOpen (default
+ * true; open-or-import tools pass false to skip the pre-open already-open check).
+ * Returns { name, bytes: <size>, opened, next }, opened a short summary of the post-open
+ * inspect (title, path, sheet/slide/tab count) - or, when the file is already open
+ * (its name in the state's identity fields: documents[].name, sheets[].name, the
+ * app's path/file field, or - for deckcraft only - a title equal to the file's stem),
+ * an immediate "already open as ..." confirmation without driving the input (no
+ * dialog). next tells the model the file is open and that checking is <id>.inspect.
  * Throws ToolError('invalid_argument') for a bad name or non-binary bytes,
  * ('not_available') when the wrapper has no #file input, ('app_error') above 256 MB or
- * when the app state never changes within the cap.
+ * when the app state never changes within the cap (the message then notes when the
+ * inspect stopped answering, so a waiting dialog reads as such, and names
+ * <id>.inspect as the check once the dialog is cleared).
  */
-export async function openAndAwait(craft, { id, title = id, wrapperWindow, name, bytes, accept = '', timeoutMs = 30000, intervalMs = 250, sleep = ms => new Promise(done => setTimeout(done, ms)) } = {}) {
-  let before = null;
-  let beforeThrew = false;
-  try { before = JSON.stringify(await craft.inspect({})); } catch { beforeThrew = true; }
+export async function openAndAwait(craft, { id, title = id, wrapperWindow, name, bytes, accept = '', timeoutMs = 30000, intervalMs = 250, sleep = ms => new Promise(done => setTimeout(done, ms)), checkAlreadyOpen = true } = {}) {
+  const beforeOut = await boundedInspect(craft, timeoutMs);
+  const beforeThrew = beforeOut.threw || beforeOut.hung;
+  const before = beforeThrew ? null : JSON.stringify(beforeOut.value);
+  // A re-open of an open file changes nothing in the app state, so the poll below would
+  // burn the full timeout, then misreport "did not open ... It accepts: <ext>." (the
+  // open actually happened - or never needed to; the state already shows the file).
+  // checkAlreadyOpen: false for open-or-import tools: their state lists imported files,
+  // so a present name is not proof this file is the open one.
+  if (!beforeThrew && checkAlreadyOpen) {
+    const already = alreadyOpenDoc(JSON.parse(before), name, id);
+    if (already !== null) return { name, bytes: bytes.byteLength, opened: already, next: openNextNote(id, name) };
+  }
   const driven = await openFromBytes(wrapperWindow, id, name, bytes);
   const deadline = Date.now() + timeoutMs;
+  let hungPolls = 0;
   for (;;) {
+    const out = await boundedInspect(craft, Math.max(1, deadline - Date.now()));
     let after = null;
     let afterThrew = false;
-    try { after = JSON.stringify(await craft.inspect({})); } catch { afterThrew = true; }
-    if (!afterThrew && (beforeThrew || after !== before)) return { ...driven, opened: openedSummary(JSON.parse(after)) };
-    if (Date.now() >= deadline) throw new ToolError('app_error', `${title} did not open ${name}. It accepts: ${accept}.`, '');
+    if (out.threw || out.hung) { afterThrew = true; if (out.hung) hungPolls += 1; }
+    else after = JSON.stringify(out.value);
+    if (!afterThrew && (beforeThrew || after !== before)) return { ...driven, opened: openedSummary(JSON.parse(after)), next: openNextNote(id, name) };
+    if (Date.now() >= deadline) {
+      const hung = hungPolls > 0 ? ` Its inspect stopped answering during the wait (a dialog may be waiting for input); after the dialog is cleared, call ${id}.inspect.` : '';
+      throw new ToolError('app_error', `${title} did not open ${name}.${hung} It accepts: ${accept}.`, '');
+    }
     await sleep(intervalMs);
   }
 }

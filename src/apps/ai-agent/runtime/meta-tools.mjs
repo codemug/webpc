@@ -3,15 +3,16 @@
 // search handles and the executor are all injected through deps, so this module stays pure
 // and testable. repairCall comes from repair.mjs, which another lane is writing in
 // parallel: it is an injected dependency with the identity default below, never imported.
-import { closest, checkArgs, ToolError, templateLine, templateStep } from './args.mjs';
+import { closest, checkArgs, ToolError, templateLine, templateStep, snapToUserText } from './args.mjs';
 import { describe, templateKeys } from './catalog.mjs';
 import { renderSkill } from './skills.mjs';
-import { search, excerpt, namedApps, preferNamed } from './search.mjs';
+import { search, excerpt, namedApps, preferNamed, cleanQuery, TIE_EPSILON } from './search.mjs';
 
 /** The meta tool names in the order the tool table presents them. */
 export const META_TOOL_NAMES = ['lookup_skill_index', 'read_skill', 'find_in_skill', 'find_tool', 'describe_tool', 'call_tool'];
 
 const HITS_LIMIT = 5;
+const LIST_LIMIT = 20;
 const REGEX_MAX_SOURCE = 200;
 const WORD_SPLIT = /[\n\r\p{Z}\p{P}]+/u;
 
@@ -43,6 +44,32 @@ function unknownSkillError(path, skills) {
       ...(best ? { fix: `read_skill path=${best}` } : {})
     }
   };
+}
+
+// The model reaches for the app name as the skill path (lfm3-1.7b loops on find_in_skill
+// path="effectcraft" / "figcraft", J2 effectcraft 0/12, figcraft 3 of 6 train journeys).
+// The app is not a skill, but its skills are what the model wants.
+function appSkills(path, skills) {
+  return skills.filter(skill => skill.path.startsWith(`${path}/`));
+}
+
+// A15 (2026-11-25): lfm3 searches by the bare app name (gridcraft-01 on build 10: the query
+// "gridcraft" never surfaced build-a-budget-with-formula-columns), and a MiniSearch for the
+// app name can only match generic words. Filler words a query may carry around the name.
+const APP_FILLER = new Set(['skill', 'skills', 'help', 'how', 'tool', 'tools']);
+
+/** The app a query names, when the query is only that app's id or title plus filler words.
+ *  Pure: a task word anywhere keeps the query normal ("gridcraft budget" is not bare). */
+export function bareApp(query, apps) {
+  const words = cleanQuery(query).split(' ').filter(word => word && !APP_FILLER.has(word));
+  if (!words.length) return null;
+  for (const app of apps ?? []) {
+    for (const name of [app?.id, app?.title]) {
+      const nameWords = String(name ?? '').toLowerCase().split(/\s+/).filter(Boolean);
+      if (nameWords.length && words.length === nameWords.length && nameWords.every(word => words.includes(word))) return app;
+    }
+  }
+  return null;
 }
 
 // The three closest names/paths: search hits over the query first, then edit distance over
@@ -121,17 +148,47 @@ export function createMetaTools(deps) {
         },
         required: ['query']
       },
-      run: async (args) => {
+      run: async (args, ctx) => {
         const query = String(args?.query ?? '');
+        // A bare app name lists the app's whole skills (compact rows) instead of a search:
+        // the app id matches no skill field, so a search only surfaces generic words.
+        const bare = bareApp(query, apps);
+        if (bare) {
+          const all = appSkills(bare.id, skills);
+          return { hits: all.slice(0, LIST_LIMIT).map(skill => ({ path: skill.path, title: skill.title })), note: `the ${bare.id} skills - read_skill the one that fits the task`, more: all.length > LIST_LIMIT };
+        }
         // Search wider, then rank the apps the query names first, so a common word ("open")
         // cannot put another app's skill on top; nothing is dropped.
         const named = namedApps(query, apps);
+        // A24: the user's message names one app and the query names none: that app's skills
+        // lead the list as a partition (the figcraft/filmcraft runs searched "import a still"
+        // with no app in the query and read the rival app's skill). A query that names an
+        // app itself, or two or more apps named in the message: the existing ranking stands.
+        const userNamed = namedApps(ctx?.userText ?? '', apps);
+        const leadApp = named.length === 0 && userNamed.length === 1 ? userNamed[0] : null;
+        // b17 (excalidraw-08, the prefetch-off path): the query scopes no app and the user
+        // names none - the active on-screen app's skills lead the list when the search found
+        // some: the same scoping the prefetch note applies, but eval runs never see the note,
+        // so this is the measured path (a "pipeline diagram" query with excalidraw on screen
+        // must not hand the model a cyberchef skill). One or two apps named in the message
+        // keep the existing ranking (A24's partition / cross-app journeys).
+        const activeLead = leadApp === null && named.length === 0 && userNamed.length === 0 && ctx?.activeApp ? ctx.activeApp : null;
+        // A22: the active app's skills get the tie-break boost unless the query names a
+        // rival app (the prefetch note has the same rule); applied before the named reorder.
+        const boostApp = ctx?.activeApp && (!named.length || named.includes(ctx.activeApp)) ? ctx.activeApp : null;
         const { hits: wide, more } = search(skillIndex, query, {
-          mode: args?.mode ?? 'auto', limit: named.length ? HITS_LIMIT * 4 : HITS_LIMIT, docs: skillDocs
+          mode: args?.mode ?? 'auto', limit: named.length || leadApp || activeLead ? HITS_LIMIT * 4 : HITS_LIMIT, docs: skillDocs
         });
         if (wide.length === 0) return { hits: [], note: 'No skill matches. Try find_tool.' };
-        const order = preferNamed(wide.map(hit => hit.id), named);
-        const hits = order.slice(0, HITS_LIMIT).map(id => wide.find(hit => hit.id === id));
+        const top = wide[0]?.score ?? 0;
+        const ranked = wide.map(hit => ({ ...hit, score: boostApp && hit.id.startsWith(`${boostApp}/`) ? hit.score + top * TIE_EPSILON : hit.score }))
+          .sort((a, b) => b.score - a.score);
+        const order = preferNamed(ranked.map(hit => hit.id), named);
+        const lead = leadApp ?? activeLead;
+        const ordered = lead
+          ? [...order.filter(id => id.startsWith(`${lead}/`)), ...order.filter(id => !id.startsWith(`${lead}/`))]
+          : order;
+        const hits = ordered.slice(0, HITS_LIMIT).map(id => ranked.find(hit => hit.id === id));
         return { hits: hits.map(hit => ({ path: hit.id, title: hit.title, summary: hit.summary })), more: more || wide.length > HITS_LIMIT };
       }
     },
@@ -148,7 +205,13 @@ export function createMetaTools(deps) {
       run: async (args) => {
         const path = normalisePath(args?.path);
         const skill = skills.find(candidate => candidate.path === path);
-        if (!skill) return unknownSkillError(path, skills);
+        if (!skill) {
+          const app = appSkills(path, skills);
+          if (app.length) {
+            return { ok: false, error: { type: 'unknown_skill', message: `'${path}' is an app, not a skill; its skills: ${app.slice(0, 10).map(candidate => candidate.path).join(', ')}`, fix: `read_skill path=${app[0].path}` } };
+          }
+          return unknownSkillError(path, skills);
+        }
         return { path: skill.path, text: renderSkill(skill, args?.section).split('\n').map(templateStep).join('\n') };
       }
     },
@@ -165,10 +228,35 @@ export function createMetaTools(deps) {
       },
       run: async (args) => {
         const path = normalisePath(args?.path);
-        const skill = skills.find(candidate => candidate.path === path);
-        if (!skill) return unknownSkillError(path, skills);
         const query = String(args?.query ?? '');
         const mode = args?.mode ?? 'auto';
+        // B17 (cyberchef-09): a dotted query is a tool name, not skill text - the model made ten
+        // such searches inside the cyberchef skills (files.read, desktop.open_app) and found
+        // nothing there. Point it at the tool index; a name that is in the catalog gets the
+        // tool's purpose straight away, so the model can act without another search.
+        if (mode !== 'regex' && /^[a-z0-9_-]{2,}(?:\.[a-z0-9_-]{2,})+$/i.test(query)) {
+          const tool = catalog.tools.get(query);
+          return {
+            hits: [],
+            note: tool
+              ? `"${query}" is a tool, not skill text: ${tool.purpose} describe_tool tool=${query} for its arguments, call_tool tool=${query} to run it.`
+              : `"${query}" looks like a tool name, not skill text - find_tool query=${query} to look it up in the tool index.`,
+          };
+        }
+        const skill = skills.find(candidate => candidate.path === path);
+        if (!skill) {
+          const app = appSkills(path, skills);
+          if (app.length) {
+            // Rank the app's skills by how many of their lines carry a query word, so the
+            // model's bare-app search becomes a scoped skill index in one round.
+            const words = queryWords(args?.query);
+            const ranked = app.map(candidate => [candidate, skillLines(candidate).filter(line => words.some(word => line.text.toLowerCase().includes(word))).length]);
+            ranked.sort((a, b) => b[1] - a[1] || a[0].path.localeCompare(b[0].path));
+            const hits = ranked.slice(0, HITS_LIMIT).map(([candidate]) => ({ path: candidate.path, title: candidate.title, summary: candidate.summary }));
+            return { hits, note: `'${path}' is an app, not a skill: matching skills listed.` };
+          }
+          return unknownSkillError(path, skills);
+        }
         const lines = skillLines(skill);
         let matched;
         if (mode === 'regex') {
@@ -212,8 +300,14 @@ export function createMetaTools(deps) {
         },
         required: ['query']
       },
-      run: async (args) => {
+      run: async (args, ctx) => {
         const app = String(args?.app ?? '').trim();
+        // A bare app name lists the app's tools by purpose (same reason as lookup_skill_index).
+        const bare = bareApp(String(args?.query ?? ''), apps);
+        if (bare) {
+          const ids = [...catalog.tools.keys()].filter(id => id.startsWith(`${bare.id}.`)).slice(0, LIST_LIMIT);
+          return { hits: ids.map(id => ({ tool: id, does: catalog.tools.get(id)?.purpose ?? '' })), note: `the ${bare.id} tools - call_tool the one that fits` };
+        }
         const hasAppParam = (id) => {
           const tool = catalog.tools.get(id);
           return Boolean(tool && tool.params && 'app' in tool.params);
@@ -221,12 +315,36 @@ export function createMetaTools(deps) {
         const filter = app
           ? (hit) => hit.id.startsWith(`${app}.`) || (hit.id.startsWith('desktop.') && hasAppParam(hit.id))
           : undefined;
+        // A24: the user's message names one app and the call scopes none (no app=, and the
+        // query names no app of its own): that app's tools lead the list as a partition, not
+        // an epsilon - the A22 boost (0.15 x top) lost to lightcraft.import_file for the
+        // figcraft/filmcraft "import a still" queries (b16). Two or more named apps: a
+        // cross-app journey, the raw ranking stands.
+        const named = namedApps(String(args?.query ?? ''), apps);
+        const userNamed = namedApps(ctx?.userText ?? '', apps);
+        const leadApp = !app && named.length === 0 && userNamed.length === 1 ? userNamed[0] : null;
+        // b17 (excalidraw-08 path, the find_tool half): the same on-screen scoping as
+        // lookup_skill_index - eval runs never see the prefetch note, and 08's model searched
+        // with find_tool. Unscoped call, query names no app, the user names none: the active
+        // app's tools lead when it has a matching hit (an empty partition is the identity);
+        // A24's user-named partition wins, two or more named apps keep the raw ranking.
+        const activeLead = leadApp === null && !app && named.length === 0 && userNamed.length === 0 && ctx?.activeApp ? ctx.activeApp : null;
         const { hits } = search(toolIndex, String(args?.query ?? ''), {
-          mode: args?.mode ?? 'auto', limit: HITS_LIMIT, docs: toolDocs, filter
+          mode: args?.mode ?? 'auto', limit: leadApp || activeLead ? HITS_LIMIT * 4 : HITS_LIMIT, docs: toolDocs, filter
         });
         if (hits.length === 0) return { hits: [], note: 'No tool matches. Try lookup_skill_index.' };
+        // A22: the active app's tools get the tie-break boost - unless the query names a
+        // rival app, or the call scoped the search with app= (that scope is the answer).
+        const boostApp = !app && ctx?.activeApp && (!named.length || named.includes(ctx.activeApp)) ? ctx.activeApp : null;
+        const top = hits[0]?.score ?? 0;
+        const ranked = hits.map(hit => ({ ...hit, score: boostApp && hit.id.startsWith(`${boostApp}.`) ? hit.score + top * TIE_EPSILON : hit.score }))
+          .sort((a, b) => b.score - a.score);
+        const lead = leadApp ?? activeLead;
+        const ordered = lead
+          ? [...ranked.filter(hit => hit.id.startsWith(`${lead}.`)), ...ranked.filter(hit => !hit.id.startsWith(`${lead}.`))]
+          : ranked;
         return {
-          hits: hits.map(hit => {
+          hits: ordered.slice(0, HITS_LIMIT).map(hit => {
             const tool = catalog.tools.get(hit.id);
             // A template, not the example: small models copy example values verbatim (eval M6).
             return { tool: hit.id, does: hit.purpose ?? tool?.purpose ?? '', call: templateLine(hit.id, templateKeys(tool)) };
@@ -270,11 +388,24 @@ export function createMetaTools(deps) {
           const close = closestTools(name, catalog, toolIndex, toolDocs);
           return { ok: false, error: { type: 'unknown_tool', message: close.message, ...(close.exampleFix ? { fix: close.exampleFix } : {}) } };
         }
-        const checked = checkArgs(tool, args, { choices, aliases });
+        // A16: snap a near-miss text argument (input/text carrying the user's own content) back
+        // to the exact span of the user's message; the note says which text ran.
+        let snapNote = null;
+        const userText = ctx?.userText;
+        if (typeof userText === 'string' && userText) {
+          for (const key of Object.keys(args ?? {})) {
+            const span = snapToUserText(userText, key, args[key]);
+            if (span !== null) { args[key] = span; snapNote = `used your exact text '${span}'`; }
+          }
+        }
+        // B17: the missing-arg fix example for a live app enum is context-aware - the active
+        // window's app, else the app of the last skill read this turn, else the placeholder
+        // (the pack's example app lured 09 into opening gridcraft).
+        const checked = checkArgs(tool, args, { choices, aliases, liveApp: ctx?.activeApp ?? ctx?.lastSkillApp ?? null });
         if (!checked.ok) return { ok: false, error: checked.error };
         try {
           const result = await run(tool.name, checked.args, ctx);
-          return { ok: true, tool: tool.name, result, ...(repairs.length > 0 ? { repaired: repairs } : {}) };
+          return { ok: true, tool: tool.name, result, ...(snapNote ? { note: snapNote } : {}), ...(repairs.length > 0 ? { repaired: repairs } : {}) };
         } catch (err) {
           // By name too: a pack bundled on its own has its own copy of the ToolError class.
           if (err instanceof ToolError || err?.name === 'ToolError') {

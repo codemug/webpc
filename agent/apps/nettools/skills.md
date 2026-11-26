@@ -48,7 +48,7 @@ Steps:
 1. call_tool tool=desktop.open_app app=nettools
 2. call_tool tool=nettools.password_strength text=correct-horse-battery-staple
 Check: the result has the score out of 4 and the offline and online attack estimates.
-Gotchas: change text=; the check is fully local (the password is not stored, logged or sent); if the user pastes a real password into the chat, tell them it now sits in the conversation.
+Gotchas: change text= to the exact password string the user named - if the user says "my old password is falcon", the password is falcon (not the words "old password"); score each of the user's passwords with its own call; the check is fully local (the password is not stored, logged or sent); if the user pastes a real password into the chat, tell them it now sits in the conversation.
 
 ## Encrypt a file with age
 slug: encrypt-a-file-with-age

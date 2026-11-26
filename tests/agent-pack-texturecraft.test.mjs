@@ -154,8 +154,8 @@ test('texturecraft.open_file turns a store not_found into a teaching ToolError',
   await assert.rejects(byName('texturecraft.open_file').run({ path: '/missing.tcraft' }, ctx), error => {
     assert.ok(error instanceof ToolError);
     assert.equal(error.type, 'not_found');
-    assert.equal(error.message, '/missing.tcraft is not in Files. To open TextureCraft itself, use desktop.open_app; to open a file, find it first with files.find.');
-    assert.equal(error.fix, 'call_tool tool=desktop.open_app app=texturecraft');
+    assert.equal(error.message, '/missing.tcraft is not in Files. The path may be wrong - find the file with files.find, then open that path.');
+    assert.equal(error.fix, 'call_tool tool=files.find query=missing.tcraft');
     return true;
   });
   assert.equal(wrapper.opened.length, 0);

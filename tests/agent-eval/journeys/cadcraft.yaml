@@ -1,0 +1,227 @@
+app: cadcraft
+# CADCraft journeys (J1, Craft Integrator lane), rewritten after oracle round 2.
+# State checks read through craft_request on the engine's query commands, whose shapes are
+# pinned by the upstream source (storytold/cadcraft v0.20.1, crates/engine/src/cmd/inquiry.rs):
+# drawing.inspect -> {title, entityCount, counts: {Type: n}, extents: [[minx,miny],[maxx,maxy]],
+# layers: [{name, ...}], undo: [labels], ...}; entities -> {count, returned, offset, entities};
+# texts -> {count, returned, offset, texts: [{handle, type, layer, text, at, height, ...}]}.
+#
+# Command-line semantics, measured on the live v0.20.1 web build (the pinned source's
+# "spaces act as Enter" is only half of what the web build does):
+#   - command_line: whitespace-separated tokens each become one input, but the call never
+#     presses Enter: a trailing space on a call that starts a command is swallowed, and an
+#     empty or whitespace-only call is now a bare Enter that ends an open command (T6 pack
+#     behavior; spaces act as Enter in the web build). One input per call is the reliable
+#     form.
+#   - script: one input per line, a blank line is an Enter, and the first line may start the
+#     command; measured reliable, unlike multi-token command_line calls. The pack appends
+#     the terminating blank line when it is missing (T6), so a continuing command always
+#     ends with its script.
+#   - LINE is a continuing command: after every point it keeps asking for the next one and
+#     ends only on that Enter, which commits the segments as Line entities. CIRCLE ends
+#     after its radius, so "circle 20,0 5" works in one call.
+#   - MOVE: a window select (a leftwards drag is a crossing select), then a blank line to
+#     finish the selection, then the base point, then a second point whose difference is the
+#     displacement. Without the selection-finishing Enter the next points become another
+#     window select and the move never happens.
+#   - The interactive TEXT flow: start point, height, rotation (blank for the default 0),
+#     text; after the text it stays open at "Enter text:", and a blank line ends it.
+#   - A literal backslash-n in a script or in run_command params is converted to a line
+#     break by the pack (tools.js).
+
+journeys:
+  - id: cadcraft-01-wall-plan-lines
+    split: train
+    title: "Start a metric drawing and plot two wall lines"
+    prompt: >-
+      I am starting the wall plan in CADCraft and I want the two baseline walls on the page
+      before I add anything else. Start a new metric drawing and plot a line from 0,0 to 10,0
+      and a second line from 10,0 to 10,5, so the plan has an L of two walls at the origin.
+    setup:
+      - close_all: true
+      - open_app: cadcraft
+    oracle:
+      - { tool: cadcraft.new_drawing, metric: true }
+      - { tool: cadcraft.line, p1: '0,0', p2: '10,0' }
+      - { tool: cadcraft.line, p1: '10,0', p2: '10,5' }
+    checks:
+      - craft_request: { app: cadcraft, method: drawing.inspect, expect: { path: entityCount, equals: 2 } }
+      - craft_request: { app: cadcraft, method: drawing.inspect, expect: { path: counts.Line, equals: 2 } }
+    covers: [cadcraft.new_drawing, cadcraft.line]
+    notes: The flat line tool commits each line in one engine call (the engine's points form), so no terminating Enter is needed; the entity count and the per-type count both pin that exactly two lines exist. The oracle exercises the flat tool's wire shape live (every new or changed tool gets an oracle step).
+
+  - id: cadcraft-02-door-swing-circle
+    split: train
+    title: "Add a door swing circle to the plan"
+    prompt: >-
+      The plan needs the door swing marked. Start a new drawing and draw a circle with centre
+      20,0 and radius 5, so the swing arc is where the door will sit in the plan.
+    setup:
+      - close_all: true
+      - open_app: cadcraft
+    oracle:
+      - { tool: cadcraft.new_drawing }
+      - { tool: cadcraft.circle, center: '20,0', radius: 5 }
+    checks:
+      - craft_request: { app: cadcraft, method: entities, params: { type: Circle, limit: 1 }, expect: { path: count, equals: 1 } }
+    covers: [cadcraft.new_drawing, cadcraft.circle]
+    notes: The flat circle tool draws it in one engine call, so the oracle exercises its wire shape live; the entities query pinned to the Circle type proves the swing circle is in the drawing.
+
+  - id: cadcraft-03-room-labels
+    split: train
+    title: "Add two room labels with the text tool"
+    prompt: >-
+      I need the room names on the plan before I send it to review. Start a new drawing in
+      CADCraft and add a label that says Room 101 at 0,0 with a text height of 100, and a
+      second label that says Corridor A at 0,300 with the same height, both left at the
+      default rotation.
+    setup:
+      - close_all: true
+      - open_app: cadcraft
+    oracle:
+      - { tool: cadcraft.new_drawing }
+      - { tool: cadcraft.text, at: '0,0', text: 'Room 101', height: 100 }
+      - { tool: cadcraft.text, at: '0,300', text: 'Corridor A', height: 100 }
+    checks:
+      - craft_request: { app: cadcraft, method: texts, params: { contains: 'Room 101' }, expect: { path: count, equals: 1 } }
+      - craft_request: { app: cadcraft, method: texts, params: { contains: 'Corridor A' }, expect: { path: count, equals: 1 } }
+      - craft_request: { app: cadcraft, method: texts, params: { limit: 10 }, expect: { path: count, equals: 2 } }
+    covers: [cadcraft.new_drawing, cadcraft.text, cadcraft.find_text]
+    notes: The flat text tool adds each label in one engine call at the default rotation, so the oracle exercises its wire shape live; the texts query pins each label and the total.
+
+  - id: cadcraft-04-save-the-plan-dxf
+    split: train
+    title: "Draw a small plan and save it as a DXF file"
+    prompt: >-
+      I want the base plan as a file I can hand to the structural team. Start a new drawing in
+      CADCraft, draw a line from 0,0 to 12,0 and a circle with centre 12,0 and radius 3, and
+      then save the drawing as /CadCraft/plan.dxf so the team gets a real DXF of what is on the
+      page.
+    setup:
+      - close_all: true
+      - open_app: cadcraft
+    oracle:
+      - { tool: cadcraft.new_drawing }
+      - { tool: cadcraft.script, text: 'line\n0,0\n12,0\n\n' }
+      - { tool: cadcraft.command_line, text: 'circle 12,0 3' }
+      - { tool: cadcraft.save_copy, path: /CadCraft/plan.dxf }
+    checks:
+      - file_exists: /CadCraft/plan.dxf
+      - file_contains: { path: /CadCraft/plan.dxf, text: LINE }
+      - file_contains: { path: /CadCraft/plan.dxf, text: CIRCLE }
+    covers: [cadcraft.new_drawing, cadcraft.script, cadcraft.command_line, cadcraft.save_copy]
+    notes: The line script's final blank line commits the line before the circle starts, because a circle typed into an open LINE becomes its points instead; the DXF is text, so the entity tags on disk pin that both entities made it into the saved copy.
+
+  - id: cadcraft-05-open-seeded-dxf
+    split: holdout
+    title: "Open a small DXF from Files and save a native copy"
+    prompt: >-
+      I have a one-line test drawing at /CadCraft/import.dxf and I want to make sure it reads
+      cleanly before I rely on it. Open that file for me and confirm the line actually loaded,
+      then save a copy of the open drawing as /CadCraft/import-copy.dxf so I can diff the two
+      later.
+    setup:
+      - close_all: true
+      - open_app: cadcraft
+      - seed_file:
+          path: /CadCraft/import.dxf
+          text: |
+            0
+            SECTION
+            2
+            ENTITIES
+            0
+            LINE
+            8
+            0
+            10
+            0.0
+            20
+            0.0
+            11
+            10.0
+            21
+            0.0
+            0
+            ENDSEC
+            0
+            EOF
+    oracle:
+      - { tool: cadcraft.open_file, path: /CadCraft/import.dxf }
+      - { tool: cadcraft.save_copy, path: /CadCraft/import-copy.dxf }
+    checks:
+      - craft_request: { app: cadcraft, method: drawing.inspect, expect: { path: entityCount, equals: 1 } }
+      - craft_request: { app: cadcraft, method: drawing.inspect, expect: { path: counts.Line, equals: 1 } }
+      - file_exists: /CadCraft/import-copy.dxf
+    covers: [cadcraft.open_file, cadcraft.save_copy]
+    notes: The seed is a minimal one-line DXF with real line breaks (a DXF is line-based, so the group codes must sit on separate lines); the entity count proves the import loaded it, not an empty drawing.
+
+  - id: cadcraft-06-move-and-verify-extents
+    split: train
+    title: "Move the plan contents and verify the extents moved"
+    prompt: >-
+      The plan content sits at the origin and the client wants it offset to clear the sheet
+      border. The drawing already has a line from 0,0 to 10,0 and a circle with centre 0,0 and
+      radius 5. Move everything by 5,5, so the line ends at 5,5 to 15,5 and the circle centre
+      is at 5,5.
+    setup:
+      - close_all: true
+      - open_app: cadcraft
+      - { run: { tool: cadcraft.new_drawing } }
+      - { run: { tool: cadcraft.script, text: 'line\n0,0\n10,0\n\n' } }
+      - { run: { tool: cadcraft.command_line, text: 'circle 0,0 5' } }
+    oracle:
+      - { tool: cadcraft.move, dx: 5, dy: 5 }
+    checks:
+      - craft_request: { app: cadcraft, method: drawing.inspect, expect: { path: 'extents[0][0]', equals: 0 } }
+      - craft_request: { app: cadcraft, method: drawing.inspect, expect: { path: 'extents[1][1]', equals: 10 } }
+      - craft_request: { app: cadcraft, method: drawing.inspect, expect: { path: undo, contains: Move } }
+    covers: [cadcraft.move]
+    notes: "Before the move the extents are -5,-5 to 10,5; after it they are 0,0 to 15,10, so the two corner pins only pass once the move happened. The flat move tool selects all first (omitted handles move the selection, which live is empty: {moved: 0} on build 15) and then sends the engine's delta form, so both the line and the circle move in one call."
+
+  - id: cadcraft-07-layer-set-up
+    split: holdout
+    title: "Create the wall and door layers and put a test object on each"
+    prompt: >-
+      Before I start the next plan I want the layer set ready. Start a new drawing and create
+      two layers called Walls and Doors. Then, as a test, draw a line from 0,0 to 10,0 on the
+      Walls layer and a circle with centre 20,0 and radius 5 on the Doors layer, so I can see
+      objects land on the right layers from the start.
+    setup:
+      - close_all: true
+      - open_app: cadcraft
+    oracle:
+      - { tool: cadcraft.new_drawing }
+      - { tool: cadcraft.run_command, command: layer.new, params: 'name=Walls\ncurrent=true' }
+      - { tool: cadcraft.script, text: 'line\n0,0\n10,0\n\n' }
+      - { tool: cadcraft.run_command, command: layer.new, params: 'name=Doors\ncurrent=true' }
+      - { tool: cadcraft.command_line, text: 'circle 20,0 5' }
+    checks:
+      - craft_request: { app: cadcraft, method: entities, params: { type: Line, layer: Walls, limit: 10 }, expect: { path: count, equals: 1 } }
+      - craft_request: { app: cadcraft, method: entities, params: { type: Circle, layer: Doors, limit: 10 }, expect: { path: count, equals: 1 } }
+    covers: [cadcraft.new_drawing, cadcraft.run_command, cadcraft.command_line]
+    notes: "layer.new takes a current flag, and the current layer is where the next object lands, so the line is drawn right after Walls becomes current and the circle after Doors; the layer-filtered entity counts pin that both layers exist and take their objects. A query for an unknown layer returns zero, so the checks fail if a layer was never created."
+
+  - id: cadcraft-08-count-the-circles
+    split: train
+    title: "Count the circles in the open drawing"
+    prompt: >-
+      I have a test drawing open in CADCraft and I need the numbers before the review. Tell me
+      how many circles it has and how many lines, so the review notes have the right numbers.
+    setup:
+      - close_all: true
+      - open_app: cadcraft
+      - { run: { tool: cadcraft.new_drawing } }
+      - { run: { tool: cadcraft.script, text: 'line\n0,0\n10,0\n\n' } }
+      - { run: { tool: cadcraft.command_line, text: 'circle 0,0 5' } }
+      - { run: { tool: cadcraft.command_line, text: 'circle 20,0 5' } }
+      - { run: { tool: cadcraft.command_line, text: 'circle 40,0 5' } }
+    oracle:
+      - { tool: cadcraft.query_entities, type: Circle, limit: 10 }
+      - { tool: cadcraft.query_entities, type: Line, limit: 10 }
+    checks:
+      - answer_contains: '3'
+      - answer_contains: '1'
+      - craft_request: { app: cadcraft, method: entities, params: { type: Circle, limit: 10 }, expect: { path: count, equals: 3 } }
+    covers: [cadcraft.query_entities]
+    notes: "Read then answer; the prompt does not state the content, the setup leaves exactly three circles and one line, and the oracle ends with the two queries whose results hold both numbers."

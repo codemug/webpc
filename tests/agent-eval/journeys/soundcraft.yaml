@@ -1,0 +1,116 @@
+app: soundcraft
+# SoundCraft journeys (J1, Craft Integrator lane), written to the post-gate rules.
+# SoundCraft is a standalone wrapper app with no page API (no request/execute/commands
+# surface), so there is no craft_request read: the app's own observable state is the
+# wrapper's status line, which the soundcraft.status tool reads. The wrapper sets it to
+# "Export .scraftz to keep your session" when the editor reports ready, and to
+# "Opened: <file name>" whenever a file is handed to the editor (scripts/pc/craft/app.mjs
+# openFile). save_copy is deliberately not exercised in any journey: it waits for the
+# editor's own Save Session download, which no catalog tool can trigger, so a save journey
+# would time out by design. Journeys therefore cover the open surface and the status
+# read, and question journeys check the answer plus the status line itself.
+
+journeys:
+  - id: soundcraft-01-load-audio-file
+    split: train
+    title: Load the tone file into SoundCraft
+    prompt: >-
+      The 440 hz tone I recorded for the level test is sitting in Files at
+      /SoundCraft/tone-440hz-2s.wav and I need it on the canvas before we start arranging.
+      Load that file into SoundCraft for me so I can drag it into the arrangement and check
+      how it sits against the rest of the session.
+    setup:
+      - close_all: true
+      - open_app: soundcraft
+      - seed_fixture: { path: /SoundCraft/tone-440hz-2s.wav, fixture: tone-440hz-2s.wav }
+    oracle:
+      - { tool: soundcraft.open_file, path: /SoundCraft/tone-440hz-2s.wav }
+    checks:
+      - window_open: soundcraft
+      - read_tool: { tool: soundcraft.status, path: status, contains: 'Opened: tone-440hz-2s.wav' }
+    covers: [soundcraft.open_file]
+    notes: The wrapper's status line is the app's observable state (there is no page API), and it reports Opened plus the file name once the file is handed to the editor.
+
+  - id: soundcraft-02-report-what-is-loaded
+    split: train
+    title: Load the tone and report the file name from the status line
+    prompt: >-
+      I loaded a file into SoundCraft a moment ago but the canvas is busy and I cannot work
+      out which file it was. Load /SoundCraft/tone-440hz-2s.wav into SoundCraft, then look at
+      what the app is reporting and tell me the exact file name the status line says was
+      opened, so I know the tone I am arranging is the one I think it is.
+    setup:
+      - close_all: true
+      - open_app: soundcraft
+      - seed_fixture: { path: /SoundCraft/tone-440hz-2s.wav, fixture: tone-440hz-2s.wav }
+    oracle:
+      - { tool: soundcraft.open_file, path: /SoundCraft/tone-440hz-2s.wav }
+      - { tool: soundcraft.status }
+    checks:
+      - answer_contains: tone-440hz-2s.wav
+      - read_tool: { tool: soundcraft.status, path: status, contains: 'Opened:' }
+    covers: [soundcraft.open_file, soundcraft.status]
+    notes: Read then answer; the answer carries the file name and the status line independently confirms the open, so the two checks pin the same fact from both sides.
+
+  - id: soundcraft-03-reopen-a-lost-file
+    split: train
+    title: Reopen the tone and confirm it is the loaded file
+    prompt: >-
+      I think my tone got lost when I closed the window and the SoundCraft canvas looks empty
+      to me. Load /SoundCraft/tone-440hz-2s.wav back into SoundCraft and confirm from the app
+      status that the file is the one that is open, so I can stop worrying about the missing
+      audio and get back to the arrangement.
+    setup:
+      - close_all: true
+      - open_app: soundcraft
+      - seed_fixture: { path: /SoundCraft/tone-440hz-2s.wav, fixture: tone-440hz-2s.wav }
+    oracle:
+      - { tool: soundcraft.open_file, path: /SoundCraft/tone-440hz-2s.wav }
+      - { tool: soundcraft.status }
+    checks:
+      - read_tool: { tool: soundcraft.status, path: status, equals: 'Opened: tone-440hz-2s.wav' }
+      - answer_contains: tone-440hz-2s.wav
+    covers: [soundcraft.open_file, soundcraft.status]
+    notes: The user believes the tone was lost when the window closed; the oracle loads it and the exact status line pins that the load landed on the same file, while the answer confirms the agent reported it.
+
+  - id: soundcraft-04-what-the-status-says
+    split: holdout
+    title: Report what a fresh SoundCraft wrapper status says
+    prompt: >-
+      I just opened SoundCraft fresh and before I load anything I want to understand how the
+      wrapper handles my work, because I have lost sessions before. Read the app status and
+      tell me what the wrapper is telling me right now, and what it means for keeping the
+      session I am about to build, so I know how to save it before the window closes.
+    setup:
+      - close_all: true
+      - open_app: soundcraft
+    oracle:
+      - { tool: soundcraft.status }
+    checks:
+      - answer_contains: .scraftz
+      - read_tool: { tool: soundcraft.status, path: status, equals: 'Export .scraftz to keep your session' }
+    covers: [soundcraft.status]
+    notes: A fresh editor reports ready and the wrapper sets its ready status line; the answer check wants the .scraftz export fact and the status check pins the exact line the wrapper shows.
+
+  - id: soundcraft-05-double-open-confirmation
+    split: train
+    title: Open the tone twice and confirm the final state
+    prompt: >-
+      The first time I opened the tone in SoundCraft the canvas seemed to freeze and I am not
+      sure it took. Open /SoundCraft/tone-440hz-2s.wav once more, and then open it a second
+      time right after, because I want the reload to be certain. When you are done, tell me
+      that the tone is loaded and that the status line confirms the file name.
+    setup:
+      - close_all: true
+      - open_app: soundcraft
+      - seed_fixture: { path: /SoundCraft/tone-440hz-2s.wav, fixture: tone-440hz-2s.wav }
+    oracle:
+      - { tool: soundcraft.open_file, path: /SoundCraft/tone-440hz-2s.wav }
+      - { tool: soundcraft.open_file, path: /SoundCraft/tone-440hz-2s.wav }
+      - { tool: soundcraft.status }
+    checks:
+      - window_open: soundcraft
+      - read_tool: { tool: soundcraft.status, path: status, equals: 'Opened: tone-440hz-2s.wav' }
+      - answer_contains: tone-440hz-2s.wav
+    covers: [soundcraft.open_file, soundcraft.status]
+    notes: Reopening the same file reports the same status line, so the exact status check plus the answer confirm the final state after the two opens.

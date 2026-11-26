@@ -5,6 +5,7 @@ import { pickFile } from './picker.mjs';
 import { createFileHost } from './files-host.js';
 import { createSearchHost } from './search-host.js';
 import { AgentSession } from './session.js';
+import { createTools } from './agent.js';
 import { ConversationStore, validateConversation, MODEL_KEY, LEGACY_MODEL_KEY } from './storage.js';
 import { MODELS, DEFAULT_MODEL } from './models.js';
 import { checkImage, IMAGE_MAX_SIDE } from './agent.js';
@@ -70,7 +71,7 @@ const traceResult = (name, args, result) => {
 const CLOUD_MODELS = { 'cloud:anthropic': 'Claude · cloud (your key)', 'cloud:openai': 'OpenAI-compatible · cloud (your key)' };
 const isCloud = key => Boolean(CLOUD_MODELS[key]);
 const CHROME_MODEL = 'chrome:builtin'; const isChrome = key => key === CHROME_MODEL;
-const store = new ConversationStore(); let initialized = false, loading = false, loadVersion = 0, loadError = null, selected = DEFAULT_MODEL, pendingImage = null;
+const store = new ConversationStore(); let initialized = false, loading = false, loadVersion = 0, loadError = null, selected = DEFAULT_MODEL, pendingImage = null, pendingAudio = null, recording = null;
 let threads = null; // the thread store, built at startup from idb-keyval (see the startup section)
 try { const saved = localStorage.getItem(MODEL_KEY) ?? localStorage.getItem(LEGACY_MODEL_KEY); if (MODELS[saved]) selected = saved; } catch {}
 for (const [key, model] of Object.entries(MODELS)) $('model').add(new Option(`${model.label} · ${model.size}`, key));
@@ -86,10 +87,11 @@ function storageError(text) { $('storage-warning').hidden = false; $('storage-wa
 function controls() {
   $('load-model').disabled = !initialized || loading || Boolean(session.active) || client.ready || isCloud(selected) || (isChrome(selected) && chrome.ready);
   $('stop').disabled = !(loading || session.active || client.ready || cloud.ready || chrome.ready);
-  $('send').disabled = !initialized || Boolean(session.active) || !$('message').value.trim();
+  $('send').disabled = !initialized || Boolean(session.active) || (!$('message').value.trim() && !pendingAudio);
   $('new-chat').disabled = !initialized; $('import').disabled = !initialized; $('previous').disabled = !initialized; $('chats').disabled = !initialized;
   $('model-state').textContent = loading ? 'Loading…' : cloud.ready ? `Cloud · ${cloud.host}` : isChrome(selected) && chrome.ready ? 'Chrome · on device' : client.ready ? session.active ? 'Working locally' : 'Ready · on device' : 'Not loaded';
   imageInputControls();
+  audioInputControls();
 }
 // Image input is offered by the Qwen vision models and by an active cloud model; LFM3 and the on-device
 // Chrome model are text-only.
@@ -432,6 +434,34 @@ const desktopHost = () => { try { return parent !== window && parent.pcHost ? pa
 const filesCtx = createFilesCtx(fileStore, { broadcast: path => filesChangeChannel?.postMessage({ type: 'changed', path }) });
 // ctx.craft(id): an ArtCraft app's page API (window.<id> inside its editor frame), opened if needed.
 const craft = async id => craftApi(await desktopHost().appWindow(id), id);
+// ?eval=1 oracle hook: run a catalog tool through the exact path a model's call_tool takes
+// (the same meta tool, the same session ctx: legacy, host, files, craft, signal), record the
+// call in __buddyTrace like any other call and return its result. Defined only when EVAL_TRACE
+// is on; the eval runner's --oracle mode drives it with no model, so a journey is proven
+// achievable before the agent ever sees it.
+if (EVAL_TRACE) {
+  // An eval opens a chat per journey: drop the saved chats (all but the visible one) before each,
+  // so a long run never reaches the 200-chat limit (the queue runner died there after ~180 runs).
+  window.__buddyPruneThreads = async () => {
+    let removed = 0;
+    for (const row of await threads.list()) {
+      if (row.id === visibleId) continue;
+      await threads.remove(row.id).catch(() => {}); statusMap.delete(row.id); sessions.delete(row.id); removed++;
+    }
+    await renderChats();
+    return removed;
+  };
+  window.__buddyRun = async (tool, args) => {
+    const options = { signal: new AbortController().signal, allowReaderProxy: false };
+    const legacy = createTools({ allowedHosts: () => new Set(), webSearch: q => webSearch(q, options), httpGet: url => httpGet(url, options), runJavaScript: code => runJavaScript(code, options), translate: chromeTools.translate, summarize: chromeTools.summarize, detectLanguage: chromeTools.detectLanguage, listFiles: fileTools.list, readFile: fileTools.read, writeFile: fileTools.write, searchFiles: fileTools.search, runCode, ocrImage: visionTools.ocr, removeBackground: visionTools.remove });
+    const ctx = { legacy, host: desktopHost() ?? null, files: filesCtx, craft, signal: options.signal };
+    const raw = { tool, ...(args ?? {}) };
+    const result = await agent.metaTools.call_tool.run(raw, ctx);
+    traceStart('call_tool', raw);
+    traceResult('call_tool', raw, result);
+    return result;
+  };
+}
 // M3: one AgentSession per open thread, each saving through the thread store. `session` is the
 // visible one, so the single-session code paths (controls, composer, export) keep reading it.
 // Every thread's model work goes through the shared model (part A): per-thread scheduling and
@@ -754,6 +784,7 @@ $('model').addEventListener('change', () => {
   cloud.clear(); bindClient(); rebindSessions();
   // Cloud and on-device selections are per session only: never persisted to MODEL_KEY.
   if (!isCloud(selected) && !isChrome(selected)) { try { localStorage.setItem(MODEL_KEY, selected); } catch {} if (!MODELS[selected]?.vision) clearPendingImage(); }
+  if (!audioAvailable()) clearPendingAudio();
   modelInfo(); controls();
 });
 // New chat never stops, cancels or kills anything: it creates a thread and switches to it.
@@ -765,7 +796,7 @@ $('new-chat').addEventListener('click', async () => {
 });
 $('composer').addEventListener('submit', async event => {
   event.preventDefault(); if ($('send').disabled) return;
-  const text = $('message').value; if (!text.trim()) return;
+  const text = $('message').value; if (!text.trim() && !pendingAudio) return;
   error('');
   $('message').value = ''; // clear at once; restored below if the send fails before the message reaches the chat
   try {
@@ -801,8 +832,12 @@ $('composer').addEventListener('submit', async event => {
     if (pendingImage && !isCloud(selected) && !image) {
       image = { name: pendingImage.name, width: pendingImage.width, height: pendingImage.height, data: pendingImage.data, type: pendingImage.type };
     }
-    await session.send(text, image);
+    // The recording rides this turn only: the samples go out with the prompt, and the stored
+    // message keeps just the [audio … s] marker (session.send drops the payload after the turn).
+    const audio = pendingAudio;
+    await session.send(text, image, audio);
     if (image) clearPendingImage();
+    if (audio) clearPendingAudio();
   } catch (err) {
     error(err.message);
     $('message').value = text; // the message never reached the chat: put the text back
@@ -855,6 +890,72 @@ $('image-input').addEventListener('change', async () => {
     await startLoad(true);
   }
 });
+// ---------- audio input (models with an audio encoder) ----------
+// The recording is page memory only: the samples ride one turn's prompt (session.send), and the
+// stored message keeps just the [audio … s] marker, like the image marker.
+const AUDIO_MAX_SECONDS = 30;
+// Only local models with an audio encoder offer the microphone (Gemma 4 E2B so far); the cloud
+// and on-device backends have no audio input.
+const audioAvailable = () => Boolean(MODELS[selected]?.audio) && !isCloud(selected) && !isChrome(selected);
+function renderMic() {
+  const b = $('mic');
+  b.hidden = !audioAvailable();
+  b.disabled = recording ? false : !audioAvailable() || loading || Boolean(session.active);
+  b.textContent = recording ? `⏺ ${Math.round((Date.now() - recording.startedAt) / 1000)} s` : '🎙';
+  b.title = recording ? 'Stop recording' : 'Record a question';
+  b.setAttribute('aria-label', recording ? 'Stop recording' : 'Record a question');
+}
+// Tearing down the recorder always stops the stream; only a torn-down-recording stop skips the chip.
+function teardownRecording() {
+  const rec = recording; if (!rec) return null;
+  recording = null; clearInterval(rec.timer); clearTimeout(rec.limit);
+  rec.stream.getTracks().forEach(t => t.stop());
+  return rec;
+}
+async function finishRecording(rec, blob) {
+  if (rec.dropped || !audioAvailable()) { renderMic(); return; } // dropped (remove, model switch) or the model lost audio
+  try {
+    // Resample to 16 kHz mono (the encoder's input rate), channel 0.
+    const decoded = await new OfflineAudioContext(1, 1, 16000).decodeAudioData(await blob.arrayBuffer());
+    const seconds = Math.round(decoded.length / decoded.sampleRate * 10) / 10;
+    pendingAudio = { name: 'recording', seconds, sampleRate: decoded.sampleRate, samples: decoded.getChannelData(0) };
+    $('audio-name').textContent = `🎙 ${seconds} s`;
+    $('audio-name').title = 'Recordings are not kept after a reload; the chat stores a text marker.';
+    $('audio-chip').hidden = false;
+  } catch { error('Could not decode the recording. Try again.'); }
+  renderMic(); controls();
+}
+function clearPendingAudio() {
+  const rec = teardownRecording();
+  if (rec) { rec.dropped = true; try { rec.recorder.stop(); } catch {} }
+  pendingAudio = null;
+  $('audio-chip').hidden = true;
+  renderMic(); controls();
+}
+function audioInputControls() {
+  if (!audioAvailable() && (pendingAudio || recording)) { clearPendingAudio(); return; }
+  renderMic();
+}
+$('mic').addEventListener('click', async () => {
+  if (recording) { const rec = teardownRecording(); try { rec.recorder.stop(); } catch {} return; }
+  if (!audioAvailable() || loading || session.active) return;
+  error('');
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const recorder = new MediaRecorder(stream);
+    const chunks = [];
+    recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+    const rec = recording = { stream, recorder, startedAt: Date.now(), timer: null, limit: null, dropped: false };
+    recorder.onstop = () => finishRecording(rec, new Blob(chunks));
+    rec.timer = setInterval(renderMic, 250); // tick the visible seconds
+    rec.limit = setTimeout(() => { if (recording === rec) { const t = teardownRecording(); if (t) try { t.recorder.stop(); } catch {} } }, AUDIO_MAX_SECONDS * 1000); // 30 s hard stop
+    try { recorder.start(250); } catch (err) { const t = teardownRecording(); if (t) { t.dropped = true; error(`Could not start the microphone: ${err.message}`); } return; }
+    renderMic();
+  } catch (err) {
+    error(err.name === 'NotAllowedError' || err.name === 'SecurityError' ? 'Microphone access was denied, so no audio was recorded.' : `Could not start the microphone: ${err.message}`);
+  }
+});
+$('audio-remove').addEventListener('click', () => clearPendingAudio());
 // ---------- cloud model (BYOK, opt-in per session) ----------
 const cloudProvider = () => document.querySelector('input[name="cloud-provider"]:checked').value;
 function cloudNotice() {

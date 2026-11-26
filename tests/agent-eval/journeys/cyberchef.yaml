@@ -1,0 +1,237 @@
+# CyberChef journeys (9). train 7, holdout 2 (cyberchef-03, cyberchef-06).
+# Rewritten for the round 2 rules and the fixture oracle (2026-11-25): six of nine
+# journeys have three or more actions, with the long one at four bakes (cyberchef-02);
+# every setup is close_all, open_app, reset_app; prompts never name a tool or a call
+# (base64, SHA-256, rot13 and Caesar are the formats, not the app); checks pin only
+# what the user asked for. The bake output is the user-facing command result, so the
+# cyberchef_check (the exact last bake output) is the state pin, with answer patterns
+# for the values the user asked to be reported. Digests and encodings were computed
+# locally for the exact inputs. The hash step uses the explicit SHA256 alias: a plain
+# SHA2 bakes the 512-bit default (the first oracle run confirmed it on cyberchef-03).
+# cyberchef-04 and -05 also fixed wrong first-draft expectations (a morse string that
+# decoded to HEDEY and a rot13 line that decoded to The and). All nine journeys are
+# oracles; cyberchef-08's custom Caesar shift is a per-operation arg in the recipe
+# (ROT13(Amount=19): the 7-backward decode as a 19-forward rotation).
+app: cyberchef
+journeys:
+  - id: cyberchef-01-base64-roundtrip
+    split: train
+    title: "Base64 a note, decode it back, and give it in capitals"
+    prompt: >-
+      I need to smuggle a short note through a header that only allows base64. Encode
+      the text meeting at noon in base64 for me, then decode the encoded text back so I
+      can see it round-trips, and give me the recovered note in capital letters.
+    setup:
+      - close_all: true
+      - open_app: cyberchef
+      - reset_app: cyberchef
+    oracle:
+      - tool: cyberchef.bake
+        recipe: To_Base64
+        input: meeting at noon
+      - tool: cyberchef.bake
+        recipe: From_Base64
+        input: bWVldGluZyBhdCBub29u
+      - tool: cyberchef.bake
+        recipe: To_Upper_case
+        input: meeting at noon
+    checks:
+      - answer_contains: "bWVldGluZyBhdCBub29u"
+      - cyberchef_output: "MEETING AT NOON"
+    covers: [cyberchef.bake]
+    notes: "Three-bake pipeline: encode, decode back, capitalise; the encoded result and the recovered capitals are both pinned, and the capitalised note is the final bake output."
+
+  - id: cyberchef-02-hex-pipeline
+    split: train
+    title: "Decode hex, capitalise, base64 the capitals, digest the base64"
+    prompt: >-
+      I have a hex string that should be human readable: 48656c6c6f20576f726c64. Decode
+      it from hex, put the result in capitals, base64-encode those capitals for a second
+      field, and give me the SHA-256 of that base64 string for a manifest.
+    setup:
+      - close_all: true
+      - open_app: cyberchef
+      - reset_app: cyberchef
+    oracle:
+      - tool: cyberchef.bake
+        recipe: From_Hex
+        input: 48656c6c6f20576f726c64
+      - tool: cyberchef.bake
+        recipe: To_Upper_case
+        input: Hello World
+      - tool: cyberchef.bake
+        recipe: To_Base64
+        input: HELLO WORLD
+      - tool: cyberchef.bake
+        recipe: SHA256
+        input: SEVMTE8gV09STEQ=
+    checks:
+      - answer_contains: "HELLO WORLD"
+      - answer_contains: "SEVMTE8gV09STEQ="
+      - cyberchef_output: "ae1306b81859d3c99e5fa9bf29c7e3ad97965af7e4644b7802e0c00ee73c5839"
+    covers: [cyberchef.bake]
+    notes: "The long four-bake pipeline: hex to text, capitals, base64 of the capitals, and the SHA-256 of that base64 string; the hex digest is computed locally and is exact for the input."
+
+  - id: cyberchef-03-sha256-digest
+    split: holdout
+    title: "SHA-256 of a pass phrase"
+    prompt: >-
+      I want the SHA-256 of my new pass phrase, s3cure-2026, so I can store the hash
+      instead of the phrase itself. Give me the hex digest so I can put it in the vault.
+    setup:
+      - close_all: true
+      - open_app: cyberchef
+      - reset_app: cyberchef
+    oracle:
+      - tool: cyberchef.bake
+        recipe: SHA256
+        input: s3cure-2026
+    checks:
+      - cyberchef_output: "69268dbba4831866fe58fac3a912946f20f7f8a7e5e60234ac6000c84e6707ad"
+    covers: [cyberchef.bake]
+    notes: "Holdout hash journey; the digest is computed locally for the exact input and the SHA256 alias makes the 256-bit size explicit."
+
+  - id: cyberchef-04-morse-and-base64
+    split: train
+    title: "Decode a morse string and base64 the word"
+    prompt: >-
+      This morse came in on the channel and I cannot read it fast enough by hand: ....
+      . .-.. .-.. --- Decode it and give me the word it spells, plus the base64 of the
+      word for the ticketing system.
+    setup:
+      - close_all: true
+      - open_app: cyberchef
+      - reset_app: cyberchef
+    oracle:
+      - tool: cyberchef.bake
+        recipe: From_Morse_Code
+        input: ".... . .-.. .-.. ---"
+      - tool: cyberchef.bake
+        recipe: To_Base64
+        input: HELLO
+    checks:
+      - answer_contains: "HELLO"
+      - cyberchef_output: "SEVMTE8="
+    covers: [cyberchef.bake]
+    notes: "Decode plus a derived field: the morse is HELLO (H ...., E ., L .-.., L .-.., O ---) and its base64 is SEVMTE8=, both pinned."
+
+  - id: cyberchef-05-rot13-verify
+    split: train
+    title: "Decode a rot13 log line and verify it re-encodes"
+    prompt: >-
+      One of the lines in my log is rot13 encoded and it reads Guvf jnf. Decode it for
+      me and tell me what it says in plain words, then rotate the decoded text with
+      rot13 again so I can confirm the pipeline works both ways.
+    setup:
+      - close_all: true
+      - open_app: cyberchef
+      - reset_app: cyberchef
+    oracle:
+      - tool: cyberchef.bake
+        recipe: ROT13
+        input: Guvf jnf
+      - tool: cyberchef.bake
+        recipe: ROT13
+        input: This was
+    checks:
+      - answer_contains: "This was"
+      - cyberchef_output: "Guvf jnf"
+    covers: [cyberchef.bake]
+    notes: "Decode plus a verification re-encode: rot13 is its own inverse, so the re-encoding of the decoded text returns the original line."
+
+  - id: cyberchef-06-url-decode
+    split: holdout
+    title: "Decode a percent-encoded link"
+    prompt: >-
+      The link in the file I received is percent-encoded and I cannot read where it
+      points: %48ello%20World. Decode it so I can see the real text it contains, in
+      plain form.
+    setup:
+      - close_all: true
+      - open_app: cyberchef
+      - reset_app: cyberchef
+    oracle:
+      - tool: cyberchef.bake
+        recipe: URL_Decode
+        input: "%48ello%20World"
+    checks:
+      - cyberchef_output: "Hello World"
+    covers: [cyberchef.bake]
+    notes: "URL decode journey; the decoded text is pinned exactly."
+
+  - id: cyberchef-07-double-checksum
+    split: train
+    title: "MD5 and SHA-256 of a string, plus the base64 of the MD5"
+    prompt: >-
+      I need two checksums of the string hello world for a verification form that
+      expects lowercase hex: give me the MD5 and the SHA-256, and also base64-encode
+      the MD5 hex for the compact field on the form.
+    setup:
+      - close_all: true
+      - open_app: cyberchef
+      - reset_app: cyberchef
+    oracle:
+      - tool: cyberchef.bake
+        recipe: hash
+        input: hello world
+      - tool: cyberchef.bake
+        recipe: SHA256
+        input: hello world
+      - tool: cyberchef.bake
+        recipe: To_Base64
+        input: 5eb63bbbe01eeed093cb22bb8f5acdc3
+    checks:
+      - answer_contains: "5eb63bbbe01eeed093cb22bb8f5acdc3"
+      - answer_contains: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+      - cyberchef_output: "NWViNjNiYmJlMDFlZWVkMDkzY2IyMmJiOGY1YWNkYzM="
+    covers: [cyberchef.bake]
+    notes: "Three bakes for two digests and a compact field; both digests are computed locally and are exact for the input. The first bake is the bare recipe=hash: the B17 alias resolves it to MD5 live (the prompt names the MD5 before the SHA-256; the model-less oracle run takes the MD5 fallback either way)."
+
+  - id: cyberchef-08-caesar-shift
+    split: train
+    title: "Decode a Caesar cipher with a custom shift"
+    prompt: >-
+      I have a word encoded with a Caesar cipher using a shift of 7, and it came
+      through as OLSSV. Decode it with the right shift and tell me what the original
+      word is.
+    setup:
+      - close_all: true
+      - open_app: cyberchef
+      - reset_app: cyberchef
+    oracle:
+      - tool: cyberchef.bake
+        recipe: ROT13(Amount=19)
+        input: OLSSV
+    checks:
+      - answer_contains: "HELLO"
+      - cyberchef_output: "HELLO"
+    covers: [cyberchef.bake]
+    notes: "OLSSV with a shift of 7 decodes to HELLO; ROT13's Amount is the forward rotation, so the 7-backward decode is Amount=19 (the per-op arg in the recipe, which the bake alias path fills and coerces)."
+    check_gap: "the answer may answer in lowercase; the lead confirms the phrasing in the agent run."
+
+  - id: cyberchef-09-files-roundtrip
+    split: train
+    title: "Decode a base64 note from Files and save the result back to Files"
+    prompt: >-
+      There is a note in my files at /notes/encoded.txt that is full of base64, and I
+      want it in plain text. Read it, decode the base64, and save the decoded text as a
+      new note at /notes/decoded.txt so I can read it without the encoding in between.
+    setup:
+      - close_all: true
+      - open_app: cyberchef
+      - reset_app: cyberchef
+      - seed_file: { path: /notes/encoded.txt, text: "bWVldGluZyBhdCBub29u" }
+    oracle:
+      - tool: files.read
+        path: /notes/encoded.txt
+      - tool: cyberchef.bake
+        recipe: From_Base64
+        input: bWVldGluZyBhdCBub29u
+      - tool: files.write
+        path: /notes/decoded.txt
+        text: meeting at noon
+    checks:
+      - file_contains: { path: /notes/decoded.txt, text: "meeting at noon" }
+      - cyberchef_output: "meeting at noon"
+    covers: [cyberchef.bake, files.read, files.write]
+    notes: "The cross-app round trip the review asked for: the note comes from Files, the decode is the bake, and the decoded text lands back in Files, pinned by the file itself."

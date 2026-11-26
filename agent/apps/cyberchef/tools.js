@@ -7,8 +7,9 @@
 // (app.manager.background.bake(input, recipeConfig, options, progress, step, callback)), which
 // the worker answers with bakeComplete {dish, result, type, ...} or bakeError {error}.
 // app.operations is the operation registry keyed by name (grep marker key:"filterOperations").
-import { ToolError, closest } from '../../../src/apps/ai-agent/runtime/args.mjs';
+import { ToolError, closest, callLine } from '../../../src/apps/ai-agent/runtime/args.mjs';
 import { innerApi } from '../../shared/inner-app.js';
+import { OPERATION_NAMES } from './operations.js';
 
 const APP = 'cyberchef';
 const FRAME = 'cyberchef-frame';
@@ -36,12 +37,174 @@ const getApi = async (host, ctx) => innerApi(await host.appWindow(APP), FRAME, w
   return app && app.operations && typeof app.bake === 'function' && typeof app.manager?.background?.bake === 'function' ? app : null;
 }, { sleep: ctx.sleep, timeoutMs: ctx.timeoutMs });
 
-// A recipe is a comma-separated list of operation names; underscores become spaces, so
-// "To_Base64" and "From_Hex,To_Upper_case" both parse. Operation names use spaces.
-const parseRecipe = text => {
-  const names = String(text ?? '').split(',').map(name => name.trim().replace(/_/g, ' ')).filter(Boolean);
-  if (names.length === 0) throw new ToolError('invalid_argument', 'recipe is empty; give at least one operation, e.g. "To_Base64"', '');
-  return names;
+// Matching normalization for operation and arg names: lowercase, underscores/dashes/whitespace
+// collapse to one space, so "To_Base64", "to-base64" and "To Base64" all read "to base64".
+const normName = name => String(name ?? '').trim().toLowerCase().replace(/[_\s-]+/g, ' ');
+
+// cyberchef-08 (build 14, lfm3-1.7b): every caesar/rot/shift miss ranked "Caesar Box Cipher"
+// as closest, and its fix line baked "successfully" - a different grid cipher - so the model
+// looped on it for 25 rounds instead of the app's only shift op. A caesar/rot/shift miss
+// teaches the ROT13(Amount=...) form instead of that suggestion (the guard keeps the teaching
+// honest if a vendor bump ever adds a real Caesar Cipher op).
+const SHIFT_MISS = /caesar|rot ?\d*|shift|rotate/;
+const isShiftMiss = name => SHIFT_MISS.test(normName(name));
+
+// Plain phrasings the models use in place of the exact operation name (the lfm3 train attempts
+// from review/agent-lfm3-1.7b-cyberchef.md): keys are normalized phrasings, values the exact
+// registry names, verified present in the vendored v11.5.0 list.
+const PHRASINGS = {
+  'base64 encode': 'To Base64',
+  'encode base64': 'To Base64',
+  'base64 decode': 'From Base64',
+  'decode base64': 'From Base64',
+  'hex encode': 'To Hex',
+  'encode hex': 'To Hex',
+  'hex decode': 'From Hex',
+  'decode hex': 'From Hex',
+  'from hex': 'From Hex',
+  'uppercase': 'To Upper case',
+  'upper case': 'To Upper case',
+  'lowercase': 'To Lower case',
+  'lower case': 'To Lower case',
+  'rot13 decode': 'ROT13',
+  'decode rot13': 'ROT13',
+  'url decode': 'URL Decode',
+  'url encode': 'URL Encode',
+  'morse': 'To Morse Code',
+  'morse code': 'To Morse Code',
+  'morse encode': 'To Morse Code',
+  'morse decode': 'From Morse Code',
+  'from morse': 'From Morse Code',
+  // v11.5.0 has no Caesar-shift op; the lead's ruling routes a Caesar shift through ROT13
+  // with its Amount arg (default 13), so the plain name lands there too.
+  'caesar': 'ROT13',
+};
+
+// B17 (cyberchef-07, lfm3-1.7b): the model bakes recipe=hash while the user's message names the
+// algorithm, and the unknown-op "closest" list (LM Hash, NT Hash, GOST Hash) lured it to the wrong
+// one. A bare hash/checksum/digest bakes the algorithm the user's own message names - read from
+// ctx.userText the way A16 reads it, first mention winning - and MD5 (the hash-text skill's stated
+// default) when the message names no algorithm at all.
+const HASH_WORDS = new Set(['hash', 'checksum', 'digest']);
+const userHashOp = (userText) => {
+  const t = ` ${normName(userText ?? '')} `;
+  const cands = [
+    [/\bmd5\b/, { op: 'MD5' }],
+    [/\bsha ?1\b/, { op: 'SHA1' }],
+    [/\bsha ?256\b/, { op: 'SHA2', size: '256' }],
+    [/\bsha ?224\b/, { op: 'SHA2', size: '224' }],
+    [/\bsha ?384\b/, { op: 'SHA2', size: '384' }],
+    [/\bsha ?512\b/, { op: 'SHA2', size: '512' }],
+    [/\bsha ?2\b/, { op: 'SHA2' }],
+  ];
+  let best = null;
+  for (const [re, op] of cands) {
+    const m = t.match(re);
+    if (m && (!best || m.index < best.index)) best = { index: m.index, op };
+  }
+  return best ? { ...best.op } : null;
+};
+
+// The bare-word resolution bake applies when the recipe step is exactly a generic word: the
+// user-named algorithm, or MD5 (the skill's default) when the user names none. Anything else
+// (MD5, SHA-256, "file hash") still goes through the normal unknown-op error.
+const userHashResolution = (name, known, userText) => {
+  if (!HASH_WORDS.has(normName(name))) return null;
+  const named = userHashOp(userText);
+  if (named && known.includes(named.op)) return named;
+  return known.includes('MD5') ? { op: 'MD5' } : null;
+};
+
+// The common ops a generic word should rank first among (B17): the token ranking alone put the
+// *Hash family (LM Hash, NT Hash, GOST Hash) before MD5 for "hash" and the model took the first.
+const GENERIC_PREFERRED = { hash: ['MD5', 'SHA1', 'SHA2'], checksum: ['MD5', 'SHA1', 'SHA2'], digest: ['MD5', 'SHA1', 'SHA2'] };
+
+// A recipe is a comma-separated list of operations; a step may carry per-operation args in parens,
+// e.g. "From_Hex,To_Upper_case" or "ROT13(Amount=23)". The parens keep arg-list commas from
+// splitting the step.
+const splitSteps = text => {
+  const steps = [];
+  let depth = 0;
+  let buf = '';
+  for (const ch of String(text ?? '')) {
+    if (ch === '(') depth += 1;
+    else if (ch === ')') depth -= 1;
+    if (ch === ',' && depth === 0) { steps.push(buf); buf = ''; }
+    else buf += ch;
+  }
+  steps.push(buf);
+  return steps.map(s => s.trim()).filter(Boolean);
+};
+
+// One step: "Name" or "Name(arg=value, arg2=value2)".
+const parseStep = step => {
+  const open = step.indexOf('(');
+  if (open < 0) return { name: step, overrides: {} };
+  if (!step.endsWith(')')) throw new ToolError('invalid_argument', `recipe step "${step}" has an unbalanced ( - per-operation args look like ROT13(Amount=23)`, '');
+  const name = step.slice(0, open).trim();
+  if (!name) throw new ToolError('invalid_argument', `recipe step "${step}" is missing the operation name before (`, '');
+  const overrides = {};
+  for (const pair of step.slice(open + 1, -1).split(',').map(p => p.trim()).filter(Boolean)) {
+    const eq = pair.indexOf('=');
+    if (eq < 1) throw new ToolError('invalid_argument', `recipe arg "${pair}" must be arg=value (e.g. ROT13(Amount=23))`, '');
+    let value = pair.slice(eq + 1).trim();
+    if (value.length > 1 && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))) value = value.slice(1, -1);
+    overrides[pair.slice(0, eq).trim()] = value;
+  }
+  return { name, overrides };
+};
+
+const renderStep = (name, overrides) => {
+  const entries = Object.entries(overrides);
+  return entries.length ? `${name}(${entries.map(([key, value]) => `${key}=${value}`).join(', ')})` : name;
+};
+
+// Resolve a recipe name to the exact registry name: the exact name, then the SHA-2 size aliases
+// (SHA256/SHA-256/SHA_256 bake SHA2 with its Size arg; MD5 and SHA1 are their own operations and
+// are never aliased), then the plain phrasings, then the case- and separator-insensitive registry
+// match ("rot13" -> ROT13, "to_base64" -> "To Base64").
+const resolveOp = (name, known, knownNorm) => {
+  if (known.includes(name)) return { op: name };
+  const normalized = normName(name);
+  // The separator is optional: "sha256" stays digit-glued after normalization, "sha-256" becomes "sha 256".
+  const alias = normalized.match(/^sha ?(224|256|384|512)$/);
+  if (alias && known.includes('SHA2')) return { op: 'SHA2', size: alias[1] };
+  const phrase = PHRASINGS[normalized];
+  if (phrase && known.includes(phrase)) return { op: phrase };
+  const normed = knownNorm.get(normalized);
+  return normed ? { op: normed } : null;
+};
+
+// Direction guard (2026-11-25, cyberchef-04): the model bakes an encoder op on input that
+// already has that shape (To Morse Code on a morse line - the encoder re-encodes it). When the
+// FIRST recipe step is an encoder and the input already looks like its output, name the matching
+// From op so the mistake shows in the first result. Shapes are strict on purpose: normal text
+// must never trigger.
+const ENCODER_GUARDS = [
+  { op: 'To Morse Code', from: 'From Morse Code', shape: 'Morse code', looks: s => /^[.\-/\s]+$/.test(s) && /[.\-]/.test(s) },
+  { op: 'To Hex', from: 'From Hex', shape: 'hex', looks: s => s.length >= 4 && s.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(s) },
+  { op: 'To Base64', from: 'From Base64', shape: 'Base64', looks: s => /^[A-Za-z0-9+/]{4,}={1,2}$/.test(s) },
+  { op: 'URL Encode', from: 'URL Decode', shape: 'URL-encoded text', looks: s => /^([^%]|%[0-9a-fA-F]{2})*$/.test(s) && /%[0-9a-fA-F]{2}/.test(s) },
+];
+const directionNote = (op, input) => {
+  const guard = ENCODER_GUARDS.find(g => g.op === op);
+  if (!guard || !input || !guard.looks(input)) return '';
+  return `The input already looks like ${guard.shape}; to read it, use ${guard.from}`;
+};
+
+// Coerce a recipe-supplied arg value to the arg's type: numbers to Number, booleans to true/false,
+// option-type args to the option with the same label (case- and separator-insensitive), everything
+// else stays a string. A {name, value} option takes the value string (the editableOption alphabets).
+const optionValue = option => (option && typeof option === 'object' ? (option.value !== undefined ? option.value : option.name) : option);
+const coerceArgValue = (raw, arg) => {
+  if (arg?.type === 'number' && /^-?(?:\d+\.?\d*|\.\d+)$/.test(raw)) return Number(raw);
+  if (arg?.type === 'boolean') return raw === 'true' || raw === '1';
+  const options = Array.isArray(arg?.value) ? arg.value : [];
+  if (options.length && ['option', 'editableOption', 'list', 'argSelector'].includes(arg?.type)) {
+    const hit = options.find(option => normName(option?.name ?? option) === normName(raw));
+    if (hit !== undefined) return optionValue(hit);
+  }
+  return raw;
 };
 
 // Strip HTML tags and cap the length, for the one-line description shown to the model.
@@ -78,15 +241,23 @@ export const tools = [
     name: 'cyberchef.bake',
     purpose: 'Run a CyberChef recipe of operations on some input text and return the result.',
     when: 'Use when the user wants to encode, decode, hash, cipher or otherwise transform text.',
+    // A4: the operation names live inside the recipe, not in the tool text, so an inner name
+    // (find_tool "sha256") would not match. Index every registry name (generated from the
+    // vendored release, operations.js) plus the SHA-2 size aliases bake accepts (SHA2 with a
+    // Size arg; MD5 and SHA1 are real operations and are already in the list). Both the bare
+    // and dashed alias forms: the dashed form keeps the digits as exact terms ("sha-256" must
+    // outrank the "sha" prefix match of "shape" in the drawing apps).
+    keywords: [...OPERATION_NAMES, 'sha256', 'sha-256', 'sha224', 'sha-224', 'sha384', 'sha-384', 'sha512', 'sha-512'],
     params: {
-      recipe: { type: 'text', required: true, description: 'Comma-separated operation names, underscores for spaces: "To_Base64" or "From_Hex,To_Upper_case"' },
-      input: { type: 'text', description: 'The text to run through the recipe; empty when the operation makes its own input' },
+      recipe: { type: 'text', required: true, description: 'Comma-separated operation names, underscores for spaces, optional per-op args in parens: "From_Hex,To_Upper_case" or "ROT13(Amount=23)"' },
+      input: { type: 'text', required: true, description: 'The text to run through the recipe' },
     },
     effect: 'change',
     needs: NEEDS,
     examples: [
-      { args: { recipe: 'To_Base64', input: 'hello world' }, says: 'Base64 encode this' },
-      { args: { recipe: 'From_Hex,To_Upper_case', input: '48656c6c6f' }, says: 'Decode the hex and uppercase it' },
+      { args: { recipe: 'To_Base64', input: 'zebra house' }, says: 'Base64 encode this' },
+      { args: { recipe: 'From_Hex,To_Upper_case', input: '7a65627261' }, says: 'Decode the hex and uppercase it' },
+      { args: { recipe: 'ROT13(Amount=23)', input: 'KHOOR' }, says: 'Decode a Caesar shift of 3' },
     ],
     // The main-thread app.bake() is fire-and-forget, so bake through the background chef worker
     // (app.manager.background.bake(input, recipeConfig, options, progress, step, callback)):
@@ -96,26 +267,97 @@ export const tools = [
     // bakeError {error}, both delivered to the callback
     run: async (args, ctx) => call(ctx, async host => {
       const app = await getApi(host, ctx);
-      const names = parseRecipe(args.recipe);
       const known = Object.keys(app.operations);
-      const ops = [];
-      const bad = [];
-      // Hash aliases: SHA256, SHA-256 or SHA_256 (case-insensitive; 224, 384, 512 likewise) are
-      // not operations - they bake the SHA2 operation with its Size arg at that size. MD5 and
-      // SHA1 are their own operations and are never aliased.
-      for (const name of names) {
-        const alias = name.match(/^SHA[\s_-]?(224|256|384|512)$/i);
-        const opName = alias ? 'SHA2' : name;
-        if (!known.includes(opName)) { bad.push(name); continue; }
-        // Fill each arg from the operation's defaults so the op runs as if added via the UI; an
-        // alias overrides only the SHA2 Size arg (UNVERIFIED arg layout: Size first, then two
-        // Rounds args - read from the vendored v11.5.0 definition, the lead bakes "abc" live).
-        ops.push({ op: opName, args: (app.operations[opName].args ?? []).map(arg => alias && arg.name === 'Size' ? alias[1] : defaultArg(arg)) });
-      }
+      const knownNorm = new Map(known.map(name => [normName(name), name]));
+      // Unknown-op suggestions rank by shared distinctive tokens before edit distance: plain
+      // closest put the AMF/Rison/VarInt Encode family first for "base64 encode all" (everything
+      // containing "Encode" scores close), and lfm3 kept retrying those. 'to'/'from' are
+      // direction words, not semantics; no shared token falls back to pure distance.
+      const closeOps = (name, n = 3) => {
+        const queryTokens = normName(name).split(' ').filter(t => t && t !== 'to' && t !== 'from');
+        const counts = new Map();
+        for (const op of known) for (const t of normName(op).split(' ')) if (t !== 'to' && t !== 'from') counts.set(t, (counts.get(t) ?? 0) + 1);
+        const order = new Map(closest(name, known, known.length).map((op, i) => [op, i]));
+        const scored = known.map(op => {
+          let score = 0;
+          for (const t of normName(op).split(' ')) if (queryTokens.includes(t)) score += 1 / counts.get(t);
+          return [score, order.get(op), op];
+        });
+        scored.sort((a, b) => b[0] - a[0] || a[1] - b[1]);
+        const rows = scored.slice(0, n).map(row => row[2]);
+        // B17: a generic hash-ish word ranks the common ops first - the token ranking alone put
+        // the *Hash family (LM Hash, NT Hash, GOST Hash) first for "hash" and the model took the
+        // first suggestion (cyberchef-07); the lure bites "file hash" and friends too.
+        const genericWord = normName(name).split(' ').find(w => GENERIC_PREFERRED[w]);
+        if (!genericWord) return rows;
+        const seen = new Set();
+        const out = [];
+        for (const op of [...GENERIC_PREFERRED[genericWord], ...rows]) {
+          if (!known.includes(op) || seen.has(op)) continue;
+          seen.add(op); out.push(op);
+          if (out.length === n) break;
+        }
+        return out;
+      };
+      const steps = splitSteps(args.recipe);
+      if (steps.length === 0) throw new ToolError('invalid_argument', 'recipe is empty; give at least one operation, e.g. "To_Base64"', '');
+      const parsed = steps.map(parseStep);
+      const input = String(args.input ?? '');
+      // Sweep b17 cyberchef-01/02: baking with no input at all returned ok:true with output ""
+      // (the background chef bakes the empty string), and the model looped on empty results
+      // instead of seeing its text processed. The args layer now makes input required; this
+      // guard catches an explicit input='' that slips past the absent check.
+      if (!input.trim()) throw new ToolError('invalid_argument', 'no input to bake: pass input=<text> with the text to process (baking an empty input just returns an empty result)', callLine('cyberchef.bake', { recipe: steps.join(','), input: '<text>' }));
+      const plan = parsed.map((step, i) => {
+        const { name, overrides } = step;
+        const resolved = resolveOp(name, known, knownNorm) ?? userHashResolution(name, known, ctx.userText);
+        if (!resolved) return null;
+        // A per-op arg must name one of the operation's real args (case- and separator-insensitive);
+        // the error's fix line is the exact call with the closest arg name filled in.
+        const defArgs = app.operations[resolved.op]?.args ?? [];
+        for (const argName of Object.keys(overrides)) {
+          if (!defArgs.some(arg => normName(arg.name) === normName(argName))) {
+            const argNames = defArgs.map(arg => arg.name);
+            const close = argNames.length ? closest(argName, argNames, 1)[0] : '';
+            let fix = steps.join(',');
+            if (close) {
+              const corrected = { ...overrides };
+              delete corrected[argName];
+              corrected[close] = overrides[argName];
+              fix = steps.map((s, j) => (j === i ? renderStep(resolved.op, corrected) : s)).join(',');
+            }
+            throw new ToolError('invalid_argument', `${resolved.op} has no argument named "${argName}"${close ? `; closest: ${close}` : ''}`, callLine('cyberchef.bake', { recipe: fix, ...(input ? { input } : {}) }));
+          }
+        }
+        return { ...resolved, overrides };
+      });
+      const bad = plan.flatMap((step, i) => (step ? [] : [{ i, name: parsed[i].name }]));
       if (bad.length) {
-        const close = [...new Set(bad.flatMap(name => closest(name, known, 3)))];
-        throw new ToolError('invalid_argument', `unknown operation(s) ${bad.join(', ')}${close.length ? `; closest: ${close.join(', ')}` : ''}`, '');
+        // A caesar/rot/shift miss: teach the app's only shift op instead of the "Caesar Box
+        // Cipher" suggestion, which is a different grid cipher that bakes a plausible-looking
+        // wrong answer (cyberchef-08: 25 rounds looping on it).
+        if (bad.every(b => isShiftMiss(b.name)) && !known.includes('Caesar Cipher')) {
+          throw new ToolError('invalid_argument',
+            `unknown operation(s) ${bad.map(b => b.name.replace(/_/g, ' ')).join(', ')}; this app has no Caesar shift operation - a Caesar shift is baked with the only shift op, ROT13, using an Amount: ROT13(Amount=N) applies a shift of N, ROT13(Amount=26-N) undoes it`,
+            callLine('cyberchef.bake', { recipe: 'ROT13(Amount=<amount>)', ...(input ? { input } : {}) }));
+        }
+        // The fix line is the exact call with the closest operation names filled in for the unknowns.
+        const close = [...new Set(bad.flatMap(b => closeOps(b.name, 3)))];
+        const fix = steps.map((s, i) => (plan[i] ? s : (closeOps(parsed[i].name, 1)[0] ?? s))).join(',');
+        throw new ToolError('invalid_argument', `unknown operation(s) ${bad.map(b => b.name.replace(/_/g, ' ')).join(', ')}${close.length ? `; closest: ${close.join(', ')}` : ''}`, callLine('cyberchef.bake', { recipe: fix, ...(input ? { input } : {}) }));
       }
+      // Fill each arg from the operation's defaults so the op runs as if added via the UI; a
+      // per-op arg in the recipe overrides its default, and an SHA alias overrides only the SHA2
+      // Size arg (UNVERIFIED arg layout: Size first, then two Rounds args - read from the vendored
+      // v11.5.0 definition, the lead bakes "abc" live).
+      const ops = plan.map(({ op, size, overrides }) => ({
+        op,
+        args: (app.operations[op].args ?? []).map(arg => {
+          if (size && arg.name === 'Size') return size;
+          const given = Object.entries(overrides).find(([key]) => normName(key) === normName(arg.name));
+          return given ? coerceArgValue(given[1], arg) : defaultArg(arg);
+        }),
+      }));
       const worker = app.manager?.background;
       if (!worker?.chefWorker) throw new ToolError('not_available', 'the CyberChef bake worker is not ready; try again shortly', '');
       const out = await new Promise((resolve, reject) => {
@@ -126,10 +368,11 @@ export const tools = [
             const err = data.error;
             const message = typeof err === 'string' ? err : err?.displayStr ?? err?.message ?? 'the recipe failed';
             reject(new ToolError('app_error', String(message), ''));
-          } else resolve({ output: data?.result, type: data?.type, ops: names });
+          } else resolve({ output: data?.result, type: data?.type, ops: parsed.map(p => p.name.replace(/_/g, ' ')) });
         });
       });
-      return out;
+      const note = directionNote(plan[0]?.op, input);
+      return note ? { ...out, note } : out;
     }),
   },
   {
@@ -148,9 +391,11 @@ export const tools = [
     // and key:"_parseConfig"); trimmed to the fields the model can act on, top 10
     run: async (args, ctx) => call(ctx, async host => {
       const app = await getApi(host, ctx);
-      const needle = String(args.query ?? '').toLowerCase();
+      // Case-insensitive substring over the normalized names, so "To_Upper_case" finds "To Upper case"
+      // (the model passes the recipe spelling).
+      const needle = normName(args.query ?? '');
       const rows = Object.keys(app.operations)
-        .filter(name => needle === '' || name.toLowerCase().includes(needle))
+        .filter(name => needle === '' || normName(name).includes(needle))
         .slice(0, 10)
         .map(name => {
           const def = app.operations[name];

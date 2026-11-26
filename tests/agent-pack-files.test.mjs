@@ -29,7 +29,9 @@ const fakeFiles = () => {
   return {
     calls,
     list: rec('list', path => [{ name: 'notes', path: '/notes', kind: 'folder' }, { name: 'todo.txt', path: '/todo.txt', kind: 'file', size: 9, modified: 1 }]),
-    stat: rec('stat', path => ({ name: 'todo.txt', path, kind: 'file', size: 9, modified: 1 })),
+    stat: rec('stat', path => path === '/archive'
+      ? { name: 'archive', path, kind: 'folder', size: null, modified: null }
+      : { name: 'todo.txt', path, kind: 'file', size: 9, modified: 1 }),
     readText: rec('readText', path => ({ path, text: 'Buy milk', truncated: false })),
     writeText: rec('writeText', (path, text, opts) => ({ path, size: text.length, created: true })),
     appendText: rec('appendText', (path, text) => ({ path, size: text.length })),
@@ -48,12 +50,51 @@ test('the pack declares its id and title', () => {
   assert.deepEqual(pack, { id: 'files', title: 'Files' });
 });
 
-test('the pack exposes exactly the 10 files tools', () => {
-  assert.equal(tools.length, 10);
+test('the pack exposes exactly the 11 files tools', () => {
+  assert.equal(tools.length, 11);
   assert.deepEqual(tools.map(tool => tool.name).sort(), [
     'files.append', 'files.delete', 'files.find', 'files.info', 'files.list',
-    'files.mkdir', 'files.overwrite', 'files.read', 'files.rename', 'files.write',
+    'files.mkdir', 'files.move', 'files.overwrite', 'files.read', 'files.rename', 'files.write',
   ]);
+});
+
+// The Linux system-root guard (lfm3, j3-terminal-1 A13 and terminal-08): asked for
+// /home/user/sales-mini.csv in Files and the write silently created /home/user in the
+// browser store. The creating tools refuse such paths and hand back the terminal.run
+// command that does the same job in Linux.
+test('files creating tools refuse Linux system-root paths with the terminal.run fix', async () => {
+  const cases = [
+    ['files.write', { path: '/home/user/sales-mini.csv', text: '100 units' }],
+    ['files.overwrite', { path: '/home/user/sales-mini.csv', text: '100 units' }],
+    ['files.append', { path: '/etc/motd', text: 'hi' }],
+    ['files.mkdir', { path: '/var/lib/notes' }],
+  ];
+  for (const [tool, args] of cases) {
+    const files = fakeFiles();
+    await assert.rejects(runTool(tool, args, { files }), error => {
+      assert.ok(error instanceof ToolError);
+      assert.equal(error.type, 'invalid_argument');
+      assert.match(error.message, /That is a Linux path/);
+      assert.match(error.fix, /^call_tool tool=terminal\.run code=mkdir -p /);
+      assert.deepEqual(files.calls, [], 'the store is never touched for a Linux path');
+      return true;
+    });
+  }
+});
+
+test('files.write names the exact terminal command in its fix', async () => {
+  const files = fakeFiles();
+  await assert.rejects(runTool('files.write', { path: '/home/user/sales-mini.csv', text: '100 units' }, { files }), error => {
+    assert.equal(error.fix, "call_tool tool=terminal.run code=mkdir -p /home/user && printf '%s' '100 units' > /home/user/sales-mini.csv");
+    return true;
+  });
+});
+
+test('files tools still accept Files paths that merely look like Linux names', async () => {
+  const files = fakeFiles();
+  await runTool('files.write', { path: '/homework/notes.txt', text: 'ok' }, { files });
+  await runTool('files.mkdir', { path: '/temporary' }, { files });
+  assert.deepEqual(files.calls.map(c => c[0]), ['writeText', 'mkdir']);
 });
 
 test('every tool has the required text fields, effect, needs and examples', () => {
@@ -132,10 +173,58 @@ test('files.mkdir calls mkdir with the path', async () => {
   assert.deepEqual(files.calls, [['mkdir', '/notes/2026']]);
 });
 
-test('files.rename calls rename with path and to', async () => {
+test('files.rename calls rename with path and to, full-path targets untouched', async () => {
   const files = fakeFiles();
   assert.deepEqual(await runTool('files.rename', { path: '/notes/todo.txt', to: '/notes/todo-2026.txt' }, { files }), { path: '/notes/todo-2026.txt' });
-  assert.deepEqual(files.calls, [['rename', '/notes/todo.txt', '/notes/todo-2026.txt']]);
+  // mvTarget stats the target first (it is a file here, so the full path is kept).
+  assert.deepEqual(files.calls, [['stat', '/notes/todo-2026.txt'], ['rename', '/notes/todo.txt', '/notes/todo-2026.txt']]);
+});
+
+// mv semantics, pinned on the raw call from j3 files-08: lfm3 sent to=/archive, an
+// existing folder, and the store renamed the CSV to a file called /archive.
+test('files.rename into an existing folder keeps the file name (mv semantics)', async () => {
+  const files = fakeFiles();
+  const out = await runTool('files.rename', { path: '/data/sales-q3.csv', to: '/archive' }, { files });
+  assert.deepEqual(out, { path: '/archive/sales-q3.csv' });
+  // Two stats: mvTarget on /archive, then the target-folder check on its parent.
+  assert.deepEqual(files.calls, [
+    ['stat', '/archive'], ['stat', '/archive'], ['rename', '/data/sales-q3.csv', '/archive/sales-q3.csv'],
+  ]);
+});
+
+test('files.rename with a trailing slash treats to as the folder and skips the mvTarget stat', async () => {
+  const files = fakeFiles();
+  const out = await runTool('files.rename', { path: '/data/sales-q3.csv', to: '/archive/' }, { files });
+  assert.deepEqual(out, { path: '/archive/sales-q3.csv' });
+  // Only the target-folder check stats: the trailing slash decides before any stat.
+  assert.deepEqual(files.calls, [['stat', '/archive'], ['rename', '/data/sales-q3.csv', '/archive/sales-q3.csv']]);
+});
+
+test('files.move is a real tool with the same mv semantics as rename', async () => {
+  const files = fakeFiles();
+  const out = await runTool('files.move', { path: '/data/sales-q3.csv', to: '/archive' }, { files });
+  assert.deepEqual(out, { path: '/archive/sales-q3.csv' });
+  const full = fakeFiles();
+  await runTool('files.move', { path: '/inbox/report.txt', to: '/archive/report-2026.txt' }, { files: full });
+  assert.deepEqual(full.calls, [
+    ['stat', '/archive/report-2026.txt'], ['stat', '/archive'], ['rename', '/inbox/report.txt', '/archive/report-2026.txt'],
+  ]);
+});
+
+// Sweep b16 files-08: move to a missing top-level folder (to=/archive) fell back to
+// rename-to-full-path, so the store renamed the CSV to a file called /archive and the
+// check for /archive/sales-q3.csv could never pass. A missing folder-like target
+// (no extension, no trailing slash) now errors and names the mkdir.
+test('files.move to a missing folder-like target errors with the mkdir fix instead of renaming', async () => {
+  const files = rejecting(fakeFiles(), 'stat', 'not_found');
+  let error;
+  try {
+    await runTool('files.move', { path: '/data/sales-q3.csv', to: '/archive' }, { files });
+  } catch (thrown) { error = thrown; }
+  assert.ok(error instanceof ToolError, 'throws a ToolError');
+  assert.equal(error.type, 'not_found');
+  assert.match(error.message, /the target folder \/archive does not exist; create it first/);
+  assert.match(error.fix, /files\.mkdir path=\/archive/);
 });
 
 test('files.delete calls remove with the recursive flag, defaulting to false', async () => {
@@ -170,6 +259,26 @@ test('an exists rejection on files.rename becomes a ToolError whose fix names a 
     assert.equal(error.fix, callLine('files.rename', { path: '/notes/todo.txt', to: '/notes/todo (2).txt' }));
     return true;
   });
+});
+
+test('files.rename into a missing target folder fails with the mkdir fix, and a same-folder rename skips the check', async () => {
+  const missing = fakeFiles();
+  missing.stat = () => Promise.reject(Object.assign(new Error('nope'), { code: 'not_found' }));
+  await assert.rejects(runTool('files.rename', { path: '/notes/a.txt', to: '/archive/a.txt' }, { files: missing }), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'not_found');
+    assert.match(error.message, /target folder \/archive does not exist/);
+    assert.equal(error.fix, 'call_tool tool=files.mkdir path=/archive');
+    assert.deepEqual(missing.calls, [], 'the rename never ran: the check refused it first');
+    return true;
+  });
+  const sameFolder = fakeFiles();
+  await runTool('files.rename', { path: '/notes/a.txt', to: '/notes/b.txt' }, { files: sameFolder });
+  // The mvTarget stat still runs (the folder check is the part that skips).
+  assert.deepEqual(sameFolder.calls, [['stat', '/notes/b.txt'], ['rename', '/notes/a.txt', '/notes/b.txt']]);
+  const across = fakeFiles();
+  await runTool('files.rename', { path: '/notes/a.txt', to: '/archive/b.txt' }, { files: across });
+  assert.deepEqual(across.calls, [['stat', '/archive/b.txt'], ['stat', '/archive'], ['rename', '/notes/a.txt', '/archive/b.txt']]);
 });
 
 test('any other rejection keeps its code and an empty fix', async () => {

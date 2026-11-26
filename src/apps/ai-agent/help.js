@@ -56,6 +56,7 @@ export function modelKindLine(key) {
   if (!key || key.startsWith('cloud:') || key.startsWith('chrome:')) return null;
   if (key.startsWith('lfm')) return 'Best for working in your apps.';
   if (key.startsWith('qwen')) return 'Good for chat and images. For working in apps, pick LFM3.';
+  if (key.startsWith('gemma')) return 'Hears audio and reads images. For working in apps, pick LFM3. About 3.4 GB.';
   return null;
 }
 

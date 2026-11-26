@@ -1,0 +1,185 @@
+app: media
+# Media journeys (J1, OpenCode lane). The tone file is the tone-440hz-2s.wav fixture (16 kHz,
+# 2.0 s) seeded at /music/tone-440hz-2s.wav; media.status is the app's own read tool and the
+# checker calls it after the run, so every end state is pinned from the live player state.
+# Two caveats baked into the design: (1) programmatic play() can be blocked by the browser
+# autoplay policy in a headless run, so the "playing true" state is never the thing a check
+# depends on - the paused/loaded states are (play_file still loads the file, so title and
+# duration are set); (2) the volume slider persists in localStorage, so journeys that only set
+# the volume need no file at all.
+
+journeys:
+  - id: media-01-play-tone
+    split: train
+    title: "Play the test tone from the files"
+    prompt: >-
+      I want to hear the test tone from my files. Play the file at music/tone-440hz-2s.wav in
+      the media player so the tone starts, and confirm in your reply that the player has picked
+      the file up, so I know it is loaded.
+    setup:
+      - close_all: true
+      - open_app: media
+      - seed_fixture: { path: '/music/tone-440hz-2s.wav', fixture: tone-440hz-2s.wav }
+    oracle:
+      - { tool: media.play_file, path: '/music/tone-440hz-2s.wav' }
+    checks:
+      - read_tool: { tool: media.status, path: title, contains: 'tone-440hz-2s.wav' }
+      - read_tool: { tool: media.status, path: duration, at_least: 1.9 }
+    covers: [media.play_file, media.status]
+    notes: >-
+      The title and duration pin that the file is loaded; the playing flag is deliberately not
+      checked because the autoplay policy may block a programmatic play() in a headless run.
+
+  - id: media-02-half-volume
+    split: train
+    title: "Set the volume to exactly half"
+    prompt: >-
+      The player is a bit loud for my workspace. Set the media player volume to exactly half,
+      fifty percent, so I can keep working while something plays quietly in the background.
+    setup:
+      - close_all: true
+      - open_app: media
+    oracle:
+      - { tool: media.volume, percent: 50 }
+    checks:
+      - read_tool: { tool: media.status, path: volume, equals: 0.5 }
+    covers: [media.volume, media.status]
+    notes: >-
+      The volume is read back from the player state as a 0..1 ratio; the exact half is pinned.
+
+  - id: media-03-play-then-pause
+    split: holdout
+    title: "Play the tone, then pause it"
+    prompt: >-
+      I want to make sure the player is actually controllable, not just showing a file. Play
+      music/tone-440hz-2s.wav from my files, then pause it right away, and tell me in your reply
+      that playback has been paused when you are done.
+    setup:
+      - close_all: true
+      - open_app: media
+      - seed_fixture: { path: '/music/tone-440hz-2s.wav', fixture: tone-440hz-2s.wav }
+    oracle:
+      - { tool: media.play_file, path: '/music/tone-440hz-2s.wav' }
+      - { tool: media.pause }
+    checks:
+      - read_tool: { tool: media.status, path: playing, equals: false }
+      - read_tool: { tool: media.status, path: title, contains: 'tone-440hz-2s.wav' }
+    covers: [media.play_file, media.pause, media.status]
+    notes: >-
+      Holdout: the paused state is robust even if autoplay blocked the play (the player is not
+      playing either way), and the title pins that the right file was the one loaded.
+
+  - id: media-04-seek-mid
+    split: train
+    title: "Jump the playhead to one and a half seconds"
+    prompt: >-
+      Load the tone file at music/tone-440hz-2s.wav into the player and start it, then jump the
+      playhead to one and a half seconds into the tone. Tell me where the player says it is
+      positioned when you are done, so I know the seek landed.
+    setup:
+      - close_all: true
+      - open_app: media
+      - seed_fixture: { path: '/music/tone-440hz-2s.wav', fixture: tone-440hz-2s.wav }
+    oracle:
+      - { tool: media.play_file, path: '/music/tone-440hz-2s.wav' }
+      - { tool: media.seek, seconds: 1.5 }
+    checks:
+      - read_tool: { tool: media.status, path: time, at_least: 1.4 }
+      - answer_matches: '\b(1\.[4-9]\d*|2\.0+)\b'
+    covers: [media.play_file, media.seek, media.status]
+    notes: >-
+      The seek sets the position to 1.5 s (seeking needs the media loaded, which the play
+      provides); the position is read back live and relayed in the reply. The tone keeps
+      PLAYING after the seek, so the honest answer is the live position the player shows -
+      the check accepts a decimal position reading from 1.4 through 2.0 (lead's ruling,
+      2026-11-26, after sweep b20 reported 1.90056 against the old answer_contains '1.5').
+      The decimal is required (the player shows one): a bare 2 would match "the 2-second
+      tone", so 2.0 is the only whole-end reading that passes.
+
+  - id: media-05-report-current
+    split: train
+    title: "Report the file name and length of the tone"
+    prompt: >-
+      I want a quick status of the media player. Make sure the tone file music/tone-440hz-2s.wav
+      is loaded and playing, then report back the file name the player shows and the total length
+      of the tone in seconds, so I know what I am listening to.
+    setup:
+      - close_all: true
+      - open_app: media
+      - seed_fixture: { path: '/music/tone-440hz-2s.wav', fixture: tone-440hz-2s.wav }
+    oracle:
+      - { tool: media.play_file, path: '/music/tone-440hz-2s.wav' }
+      - { tool: media.status }
+    checks:
+      - read_tool: { tool: media.status, path: title, contains: 'tone-440hz-2s.wav' }
+      - read_tool: { tool: media.status, path: duration, at_least: 1.9 }
+      - answer_contains: '2'
+    covers: [media.play_file, media.status]
+    notes: >-
+      Read-then-answer: the status tool is the source of the name and the ~2 s length, and the
+      reply must carry both.
+
+  - id: media-06-back-to-start
+    split: holdout
+    title: "Load the tone and put the playhead at zero"
+    prompt: >-
+      Put the tone file music/tone-440hz-2s.wav into the player and load it, then set the
+      playhead to the very beginning, at zero seconds, so the tone is queued to start from the
+      top when I press play myself.
+    setup:
+      - close_all: true
+      - open_app: media
+      - seed_fixture: { path: '/music/tone-440hz-2s.wav', fixture: tone-440hz-2s.wav }
+    oracle:
+      - { tool: media.play_file, path: '/music/tone-440hz-2s.wav' }
+      - { tool: media.seek, seconds: 0 }
+    checks:
+      - read_tool: { tool: media.status, contains: '"time":0' }
+    covers: [media.play_file, media.seek, media.status]
+    notes: >-
+      Holdout: the whole status object is read back and pinned on the zero position - the
+      playhead must really sit at the start.
+
+  - id: media-07-low-volume
+    split: train
+    title: "Turn the volume down to ten percent"
+    prompt: >-
+      Turn the media player volume down to ten percent. I am on a quiet call and anything louder
+      than that will be picked up by the microphone, so exactly ten is what I need and nothing
+      more.
+    setup:
+      - close_all: true
+      - open_app: media
+    oracle:
+      - { tool: media.volume, percent: 10 }
+    checks:
+      - read_tool: { tool: media.status, path: volume, equals: 0.1 }
+    covers: [media.volume, media.status]
+    notes: >-
+      The read-back volume is the exact 0.1 ratio; no file is needed for a volume change.
+
+  - id: media-08-listening-test
+    split: train
+    title: "Set up the listening test: play, volume, seek, pause"
+    prompt: >-
+      Set up the tone file music/tone-440hz-2s.wav for a listening test, in one go: play it, set
+      the volume to twenty-five percent, move the playhead to the one second mark, then pause
+      it. Finish by telling me the file name, the volume and the position the player reports.
+    setup:
+      - close_all: true
+      - open_app: media
+      - seed_fixture: { path: '/music/tone-440hz-2s.wav', fixture: tone-440hz-2s.wav }
+    oracle:
+      - { tool: media.play_file, path: '/music/tone-440hz-2s.wav' }
+      - { tool: media.volume, percent: 25 }
+      - { tool: media.seek, seconds: 1 }
+      - { tool: media.pause }
+    checks:
+      - read_tool: { tool: media.status, path: title, contains: 'tone-440hz-2s.wav' }
+      - read_tool: { tool: media.status, path: volume, equals: 0.25 }
+      - read_tool: { tool: media.status, path: time, at_least: 0.9 }
+      - read_tool: { tool: media.status, path: playing, equals: false }
+    covers: [media.play_file, media.volume, media.seek, media.pause, media.status]
+    notes: >-
+      The long workflow touches every control; the end state is fully pinned from one live
+      status read (name, quarter volume, one second position, paused).

@@ -1,0 +1,181 @@
+app: excalidraw
+# Excalidraw journeys (J1, OpenCode lane). The canvas autosaves to localStorage, so every
+# journey opens the app (the runner resets stateful apps on open_app, which clears the scene
+# from the previous journey). excalidraw.list_elements is the read tool: it returns the live
+# element count and the elements (a labelled shape adds its bound text element too, so a
+# labelled rectangle is 2 elements), and the checker calls it after the run. Multi-shape specs
+# are double-quoted so the \n becomes a real newline (the spec parser splits on newlines);
+# arrow targets are the 1-based shape line numbers of the spec, and a label never counts as a
+# line of its own.
+
+journeys:
+  - id: excalidraw-01-labeled-rectangle
+    split: train
+    title: "Draw a labelled starting box"
+    prompt: >-
+      I need a starting box for a diagram. Draw a rectangle on the canvas at position 100, 100
+      with a width of 200 and a height of 80, and put the label Start on it so it is obvious
+      where the flow begins when someone opens the drawing. Then fit the view so the box is
+      fully visible.
+    setup:
+      - close_all: true
+      - open_app: excalidraw
+    oracle:
+      - { tool: excalidraw.add_shapes, spec: 'rectangle 100 100 200 80 Start' }
+      - { tool: excalidraw.fit_view }
+    checks:
+      - read_tool: { tool: excalidraw.list_elements, path: count, at_least: 2 }
+      - read_tool: { tool: excalidraw.list_elements, contains: 'Start' }
+    covers: [excalidraw.add_shapes, excalidraw.fit_view, excalidraw.list_elements]
+    notes: >-
+      The label is a bound text element, so the canvas holds the rectangle plus its label; the
+      live element list pins both the count and the text.
+
+  - id: excalidraw-02-title-text
+    split: train
+    title: "Add a standalone caption"
+    prompt: >-
+      Add a caption to the drawing canvas: the text Q3 review, placed at position 40, 40. It
+      should sit there on its own, with no shapes around it, just the label where I said.
+    setup:
+      - close_all: true
+      - open_app: excalidraw
+    oracle:
+      - { tool: excalidraw.add_text, text: 'Q3 review', x: 40, y: 40 }
+    checks:
+      - read_tool: { tool: excalidraw.list_elements, path: count, equals: 1 }
+      - read_tool: { tool: excalidraw.list_elements, contains: 'Q3 review' }
+    covers: [excalidraw.add_text, excalidraw.list_elements]
+    notes: >-
+      A single free text element: the exact count of 1 pins that nothing else landed on the
+      canvas.
+
+  - id: excalidraw-03-flowchart
+    split: holdout
+    title: "Draw a Start-to-End flowchart and fit the view"
+    prompt: >-
+      Draw a small flowchart for me on the canvas: a rectangle at 100, 100 sized 200 by 80
+      labelled Start, a second rectangle at 400, 100 sized 200 by 80 labelled End, and an arrow
+      from the Start box to the End box. When the drawing is done, zoom the view so the whole
+      diagram fits on screen.
+    setup:
+      - close_all: true
+      - open_app: excalidraw
+    oracle:
+      - { tool: excalidraw.add_shapes, spec: "rectangle 100 100 200 80 Start\nrectangle 400 100 200 80 End\narrow 1 2" }
+      - { tool: excalidraw.fit_view }
+    checks:
+      - read_tool: { tool: excalidraw.list_elements, path: count, at_least: 5 }
+      - read_tool: { tool: excalidraw.list_elements, contains: 'Start' }
+      - read_tool: { tool: excalidraw.list_elements, contains: 'End' }
+    covers: [excalidraw.add_shapes, excalidraw.fit_view, excalidraw.list_elements]
+    notes: >-
+      Holdout: two labelled rectangles (shape plus label each) and one arrow give at least 5
+      elements; the labels pin both boxes from the live element list.
+
+  - id: excalidraw-04-empty-canvas
+    split: train
+    title: "Report the element count of a clean canvas"
+    prompt: >-
+      Before I start a new drawing I want to make sure the canvas is clean. Look at what is
+      currently on the drawing canvas and tell me the element count in your reply. It should be
+      empty right now, so I expect zero, but I want you to check rather than assume.
+    setup:
+      - close_all: true
+      - open_app: excalidraw
+    oracle:
+      - { tool: excalidraw.list_elements }
+    checks:
+      - read_tool: { tool: excalidraw.list_elements, path: count, equals: 0 }
+      - answer_matches: '(?i)\b0\b'
+    covers: [excalidraw.list_elements]
+    notes: >-
+      Read journey: the canvas is reset by the setup, so the count must be zero and the reply
+      must relay it.
+
+  - id: excalidraw-05-draw-and-clear
+    split: train
+    title: "Draw a scratch shape, then clear the canvas"
+    prompt: >-
+      Add a rectangle at 10, 10 with a width of 120 and a height of 60 to the canvas, with the
+      label Old on it. Then clear the whole canvas so it is completely empty again, because that
+      rectangle was just a scratch test and I want it gone without a trace.
+    setup:
+      - close_all: true
+      - open_app: excalidraw
+    oracle:
+      - { tool: excalidraw.add_shapes, spec: 'rectangle 10 10 120 60 Old' }
+      - { tool: excalidraw.clear }
+    checks:
+      - read_tool: { tool: excalidraw.list_elements, path: count, equals: 0 }
+    covers: [excalidraw.add_shapes, excalidraw.clear, excalidraw.list_elements]
+    notes: >-
+      The deliverable is the empty canvas: the element count must be exactly zero after the
+      destructive clear (the resetScene also wipes the undo history, which is what the prompt
+      asks for).
+
+  - id: excalidraw-06-two-ellipses
+    split: holdout
+    title: "Place two ellipses and count the elements"
+    prompt: >-
+      I want two ellipses side by side on the canvas: one at 20, 20 with a width of 140 and a
+      height of 70, and another one at 200, 20 with exactly the same size. Add both of them and
+      tell me how many elements are on the canvas afterwards, so I know both landed.
+    setup:
+      - close_all: true
+      - open_app: excalidraw
+    oracle:
+      - { tool: excalidraw.add_shapes, spec: "ellipse 20 20 140 70\nellipse 200 20 140 70" }
+      - { tool: excalidraw.list_elements }
+    checks:
+      - read_tool: { tool: excalidraw.list_elements, path: count, equals: 2 }
+      - answer_matches: '(?i)\b2\b'
+    covers: [excalidraw.add_shapes, excalidraw.list_elements]
+    notes: >-
+      Holdout: unlabelled shapes add one element each, so the count of 2 is exact; the oracle
+      ends on the canvas read, so the count the answer check pins is the fact the reply relays.
+
+  - id: excalidraw-07-diamond
+    split: train
+    title: "Add an unlabelled decision diamond"
+    prompt: >-
+      Add a decision diamond to the canvas at position 300, 300, with a width of 150 and a
+      height of 100. No label is needed for now, just the diamond shape itself, placed exactly
+      where I said, so I can drop a question into it later.
+    setup:
+      - close_all: true
+      - open_app: excalidraw
+    oracle:
+      - { tool: excalidraw.add_shapes, spec: 'diamond 300 300 150 100' }
+    checks:
+      - read_tool: { tool: excalidraw.list_elements, path: count, at_least: 1 }
+      - read_tool: { tool: excalidraw.list_elements, contains: '"type":"diamond"' }
+    covers: [excalidraw.add_shapes, excalidraw.list_elements]
+    notes: >-
+      The element list carries the shape types, so the diamond is pinned from its own entry
+      regardless of where the agent placed it.
+
+  - id: excalidraw-08-pipeline
+    split: train
+    title: "Build a three step pipeline diagram with a title"
+    prompt: >-
+      Build me a simple three step pipeline diagram on the canvas. Three rectangles, each 180
+      wide by 70 high, at 100, 100, 350, 100 and 600, 100, labelled A, B and C in that order.
+      Add arrows from A to B and from B to C, put a title reading Pipeline at 100, 20, and
+      finally fit the view so everything is visible.
+    setup:
+      - close_all: true
+      - open_app: excalidraw
+    oracle:
+      - { tool: excalidraw.add_text, text: 'Pipeline', x: 100, y: 20 }
+      - { tool: excalidraw.add_shapes, spec: "rectangle 100 100 180 70 A\nrectangle 350 100 180 70 B\nrectangle 600 100 180 70 C\narrow 1 2\narrow 2 3" }
+      - { tool: excalidraw.fit_view }
+    checks:
+      - read_tool: { tool: excalidraw.list_elements, path: count, at_least: 9 }
+      - read_tool: { tool: excalidraw.list_elements, contains: 'Pipeline' }
+      - read_tool: { tool: excalidraw.list_elements, contains: '"text":"C"' }
+    covers: [excalidraw.add_text, excalidraw.add_shapes, excalidraw.fit_view, excalidraw.list_elements]
+    notes: >-
+      The long workflow: 3 rectangles + 3 bound labels + 2 arrows + the title = 9 elements, so
+      at-least-9 pins the full diagram no matter how the agent batches the calls; the title and
+      the C label are pinned from the live element list.

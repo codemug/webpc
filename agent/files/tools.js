@@ -1,4 +1,4 @@
-// Files pack: the Files area tools (list, read, write, folders, rename, delete, find).
+// Files pack: the Files area tools (list, read, write, folders, rename, move, delete, find).
 // Every tool drives the Files store through ctx.files, which the runtime wires over
 // src/scripts/pc/files/store.mjs behind the access policy. Paths are Files paths starting
 // with "/". No module-level side effects: the build imports this file in Node.
@@ -19,6 +19,64 @@ const call = (ctx, fn, fixFor) => {
     });
 };
 
+// mv semantics (j3 files-08 triage): when `to` is an existing folder or ends in "/",
+// the file moves into that folder keeping its name; otherwise `to` is the new full path.
+// lfm3 sent files.rename to=/archive and the store renamed the CSV to a file called
+// /archive, so the check for /archive/sales-q3.csv could never pass.
+const mvTarget = async (files, path, to) => {
+  const base = path.slice(path.lastIndexOf('/') + 1);
+  if (to.endsWith('/')) return to + base;
+  try {
+    if ((await files.stat(to)).kind === 'folder') return to + '/' + base;
+  } catch { /* not a folder (or no such path): keep to as the new full path */ }
+  return to;
+};
+
+// Shared by files.rename and files.move: resolve the mv target, check the target
+// folder exists (naming the mkdir), then rename. files.move is a real tool, so the
+// window-verb alias no longer sends a "move" call to desktop.move (j3 files-08).
+const moveRun = async (args, ctx) => {
+  if (!ctx.files) throw new ToolError('not_available', NOT_HERE, '');
+  const to = await mvTarget(ctx.files, args.path, args.to);
+  // The store refuses a rename into a missing folder with a bare not_found that names no
+  // fix (lfm3-1.7b, files-08); check the target folder up front and name the mkdir.
+  const targetDir = to.slice(0, to.lastIndexOf('/'));
+  const sourceDir = args.path.slice(0, args.path.lastIndexOf('/'));
+  if (targetDir !== '' && targetDir !== sourceDir) {
+    try {
+      const info = await ctx.files.stat(targetDir);
+      if (info.kind !== 'folder') throw new ToolError('not_a_folder', `${targetDir} is not a folder`, '');
+    } catch (error) {
+      if (error instanceof ToolError) throw error;
+      if (error?.code === 'not_found') throw new ToolError('not_found', `the target folder ${targetDir} does not exist; create it first`, `call_tool tool=files.mkdir path=${targetDir}`);
+      throw new ToolError(error?.code ?? 'app_error', error?.message ?? String(error), '');
+    }
+  }
+  return call(ctx, files => files.rename(args.path, to),
+    error => error.code === 'exists' ? callLine('files.rename', { path: args.path, to: secondName(to) }) : '');
+};
+
+// files.move is folder-oriented: a missing folder-like target (no extension, no trailing
+// slash) would otherwise fall back to rename-to-full-path and the store renames the file
+// to a file called /archive, so the check for /archive/sales-q3.csv can never pass
+// (sweep b16 files-08; moveRun's guard only catches missing NESTED folders, where the
+// dirname is non-empty). A missing folder errors and names the mkdir. files.rename keeps
+// the rename-to-full-path semantics, top level included.
+const moveFolderRun = async (args, ctx) => {
+  if (!ctx.files) throw new ToolError('not_available', NOT_HERE, '');
+  const to = String(args.to);
+  if (!to.endsWith('/') && !to.slice(to.lastIndexOf('/') + 1).includes('.')) {
+    try { await ctx.files.stat(to); } catch (error) {
+      if (error instanceof ToolError) throw error;
+      if (error?.code === 'not_found') {
+        throw new ToolError('not_found', `the target folder ${to} does not exist; create it first`, `call_tool tool=files.mkdir path=${to}`);
+      }
+      throw new ToolError(error?.code ?? 'app_error', error?.message ?? String(error), '');
+    }
+  }
+  return moveRun(args, ctx);
+};
+
 // The free target suggested when a rename target is taken: insert " (2)" before the
 // extension (/a/b.txt -> /a/b (2).txt); a name without an extension just gains " (2)".
 const secondName = path => {
@@ -27,6 +85,19 @@ const secondName = path => {
   const dot = base.lastIndexOf('.');
   if (dot <= 0) return `${path} (2)`;
   return `${path.slice(0, slash + 1 + dot)} (2)${base.slice(dot)}`;
+};
+
+// Files is the browser's own store; a path under a Linux system root is the Terminal's
+// world (lfm3, j3-terminal-1 A13 and terminal-08: asked for /home/user/sales-mini.csv and
+// the write silently created /home/user in Files). Refuse the path before it touches the
+// store and hand back the terminal.run command that does the same job in Linux.
+const LINUX_ROOT = /^\/(home|root|etc|usr|var|tmp|bin|opt)(\/|$)/;
+const LINUX_MSG = 'That is a Linux path; files in the Linux home directory live in the Terminal, not in Files';
+const shq = text => `'${String(text).replace(/'/g, `'\\''`)}'`;
+const parentOf = path => path.slice(0, path.lastIndexOf('/')) || '/';
+// code is a builder, so the shell line is only composed when the path actually matches.
+const linuxRefuse = (path, code) => {
+  if (LINUX_ROOT.test(String(path))) throw new ToolError('invalid_argument', LINUX_MSG, callLine('terminal.run', { code: code() }));
 };
 
 export const pack = { id: 'files', title: 'Files' };
@@ -76,8 +147,11 @@ export const tools = [
     effect: 'change',
     needs: ['files'],
     examples: [{ args: { path: '/notes/todo.txt', text: 'Buy milk\nCall Ana' }, says: 'Save a new todo note' }],
-    run: async (args, ctx) => call(ctx, files => files.writeText(args.path, args.text, { overwrite: false }),
-      error => error.code === 'exists' ? callLine('files.overwrite', { path: args.path, text: args.text }) : ''),
+    run: async (args, ctx) => {
+      linuxRefuse(args.path, () => `mkdir -p ${parentOf(args.path)} && printf '%s' ${shq(args.text)} > ${args.path}`);
+      return call(ctx, files => files.writeText(args.path, args.text, { overwrite: false }),
+        error => error.code === 'exists' ? callLine('files.overwrite', { path: args.path, text: args.text }) : '');
+    },
   },
   {
     name: 'files.overwrite',
@@ -90,7 +164,12 @@ export const tools = [
     effect: 'destructive',
     needs: ['files'],
     examples: [{ args: { path: '/notes/todo.txt', text: 'Updated list' }, says: 'Replace the todo file with this text' }],
-    run: async (args, ctx) => call(ctx, files => files.writeText(args.path, args.text, { overwrite: true })),
+    // Overwrite writes through the same store as write (missing folders are created), so it
+    // carries the Linux-root guard too, though it replaces rather than creates.
+    run: async (args, ctx) => {
+      linuxRefuse(args.path, () => `mkdir -p ${parentOf(args.path)} && printf '%s' ${shq(args.text)} > ${args.path}`);
+      return call(ctx, files => files.writeText(args.path, args.text, { overwrite: true }));
+    },
   },
   {
     name: 'files.append',
@@ -103,7 +182,10 @@ export const tools = [
     effect: 'change',
     needs: ['files'],
     examples: [{ args: { path: '/notes/todo.txt', text: '\nCall Ana' }, says: 'Add a line to my todo' }],
-    run: async (args, ctx) => call(ctx, files => files.appendText(args.path, args.text)),
+    run: async (args, ctx) => {
+      linuxRefuse(args.path, () => `mkdir -p ${parentOf(args.path)} && printf '%s' ${shq(args.text)} >> ${args.path}`);
+      return call(ctx, files => files.appendText(args.path, args.text));
+    },
   },
   {
     name: 'files.mkdir',
@@ -113,7 +195,10 @@ export const tools = [
     effect: 'change',
     needs: ['files'],
     examples: [{ args: { path: '/notes/2026' }, says: 'Make a 2026 folder inside notes' }],
-    run: async (args, ctx) => call(ctx, files => files.mkdir(args.path)),
+    run: async (args, ctx) => {
+      linuxRefuse(args.path, () => `mkdir -p ${args.path}`);
+      return call(ctx, files => files.mkdir(args.path));
+    },
   },
   {
     name: 'files.rename',
@@ -121,13 +206,25 @@ export const tools = [
     when: 'Use when the user asks to rename, move or save a file under a new name or place.',
     params: {
       path: { type: 'path', required: true, description: 'The current path of the file' },
-      to: { type: 'path', required: true, description: 'The new path; a different folder also moves the file' },
+      to: { type: 'path', required: true, description: 'The new path, or the folder to move the file into; when to is a folder (or ends in /) the file keeps its name' },
     },
     effect: 'change',
     needs: ['files'],
-    examples: [{ args: { path: '/notes/todo.txt', to: '/notes/todo-2026.txt' }, says: 'Rename my todo file' }, { args: { path: '/inbox/report.txt', to: '/archive/report.txt' }, says: 'Move the report to the archive folder' }],
-    run: async (args, ctx) => call(ctx, files => files.rename(args.path, args.to),
-      error => error.code === 'exists' ? callLine('files.rename', { path: args.path, to: secondName(args.to) }) : ''),
+    examples: [{ args: { path: '/notes/todo.txt', to: '/notes/todo-2026.txt' }, says: 'Rename my todo file' }, { args: { path: '/inbox/report.txt', to: '/archive' }, says: 'Move the report into the archive folder' }],
+    run: moveRun,
+  },
+  {
+    name: 'files.move',
+    purpose: 'Move a file into another folder, keeping its name.',
+    when: 'Use when the user asks to move a file into or to a folder.',
+    params: {
+      path: { type: 'path', required: true, description: 'The current path of the file' },
+      to: { type: 'path', required: true, description: 'The folder to move the file into; a missing folder is an error (create it first with files.mkdir). Renaming to a new full path is files.rename' },
+    },
+    effect: 'change',
+    needs: ['files'],
+    examples: [{ args: { path: '/inbox/report.txt', to: '/archive' }, says: 'Move the report into the archive folder' }],
+    run: moveFolderRun,
   },
   {
     name: 'files.delete',

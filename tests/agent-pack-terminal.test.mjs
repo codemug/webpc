@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pack, tools } from '../agent/apps/terminal/tools.js';
+import { pack, tools, resetShellReadiness } from '../agent/apps/terminal/tools.js';
 import { tools as desktopTools } from '../agent/desktop/tools.js';
 import { tools as systemTools } from '../agent/system/tools.js';
 import { ToolError, specErrors, checkArgs } from '../src/apps/ai-agent/runtime/args.mjs';
@@ -29,8 +29,17 @@ const choices = name => (name === 'apps' || name === 'windows' ? APP_IDS : []);
 const byName = name => tools.find(tool => tool.name === name) ?? desktopTools.find(tool => tool.name === name) ?? systemTools.find(tool => tool.name === name);
 const NEXT = 'call system.sleep seconds=3, then terminal.status, until state is running';
 
-const fakeTerminal = ({ boots = true } = {}) => {
-  const state = { opened: 0, starts: 0, runs: [], runResult: { exitCode: 0, output: 'ok\n', truncated: false } };
+// The fake guest carries the boot race the real guest had in sweep-terminal-b17
+// (terminal-01): the page reports running before the shell runs commands, so the first
+// command after a boot is swallowed (exit 0, empty output). An echo command answers with
+// its value like the guest's vm.exec (clean output, no echoed code); anything else returns
+// the fixed runResult the test sets.
+const fakeTerminal = ({ boots = true, swallowFirst = 1 } = {}) => {
+  const state = { opened: 0, starts: 0, runs: [], runResult: { exitCode: 0, output: 'ok\n', truncated: false }, customBridge: null };
+  let swallowed = 0;
+  let ready = false;
+  const armShell = () => { swallowed = 0; ready = false; };
+  armShell();
   const statusEl = { textContent: '', dataset: {} };
   const start = {
     disabled: false,
@@ -38,6 +47,7 @@ const fakeTerminal = ({ boots = true } = {}) => {
     // "Booting Alpine Linux…", and once the guest runs controls() enables #linux-restart.
     click: () => {
       state.starts += 1; start.disabled = true; statusEl.textContent = 'Booting Alpine Linux…';
+      armShell(); // a fresh boot is a fresh shell: the next command is swallowed again
       if (boots) setTimeout(() => { restart.disabled = false; statusEl.textContent = 'Linux is running'; }, 5);
     },
   };
@@ -46,7 +56,17 @@ const fakeTerminal = ({ boots = true } = {}) => {
   const document = { getElementById: id => buttons[id] ?? null };
   const win = { document };
   const host = { appWindow: async () => { state.opened += 1; return win; } };
-  const legacy = { run_code: { run: args => { state.runs.push(args); return Promise.resolve(state.runResult); } } };
+  const legacy = { run_code: { run: args => {
+    state.runs.push(args);
+    if (state.customBridge) return state.customBridge(args, state);
+    if (!ready) {
+      if (swallowed < swallowFirst) { swallowed += 1; return Promise.resolve({ exitCode: 0, output: '', truncated: false }); }
+      ready = true;
+    }
+    const echo = /^echo (.+)$/.exec(String(args.code ?? '').trim());
+    if (echo) return Promise.resolve({ exitCode: 0, output: `${echo[1]}\n`, truncated: false });
+    return Promise.resolve(state.runResult);
+  } } };
   const runTool = (name, args, extra = {}) => byName(name).run(args, { host, legacy, ...extra });
   return { state, win, start, restart, statusEl, runTool };
 };
@@ -162,22 +182,30 @@ test('terminal.status reports unavailable when the page controls are missing', a
   assert.deepEqual(got, { state: 'unavailable', status: '', next: NEXT });
 });
 
-test('terminal.run opens the window first, then delegates to the run_code bridge', async () => {
+test('terminal.run proves the shell with a sentinel before the first real command', async () => {
+  // sweep-terminal-b17 terminal-01: the first two commands returned exit 0 with empty output
+  // because the guest reports ready before its shell runs. The sentinel retries until the
+  // shell actually echoes, then the real command runs.
+  resetShellReadiness();
   const term = fakeTerminal();
   const got = await term.runTool('terminal.run', { lang: 'sh', code: 'echo hello' });
-  assert.deepEqual(got, { exitCode: 0, output: 'ok\n', truncated: false });
+  assert.deepEqual(got, { exitCode: 0, output: 'hello\n', truncated: false });
   assert.equal(term.state.opened, 1, 'the window must be open so the user sees the run');
-  assert.equal(term.state.runs.length, 1);
-  assert.equal(term.state.runs[0].lang, 'sh');
-  assert.equal(term.state.runs[0].code, 'echo hello');
-  assert.ok(!('timeout_ms' in term.state.runs[0]) || term.state.runs[0].timeout_ms === undefined, 'no timeout means the bridge default (30000)');
+  const [first, second, real] = term.state.runs;
+  assert.match(first.code, /^echo wcpc-ready-[a-z0-9]+$/);
+  assert.equal(first.lang, 'sh');
+  assert.equal(second.code, first.code, 'the swallowed sentinel is retried with the same token');
+  assert.equal(real.code, 'echo hello', 'the real command runs only after the shell proved ready');
 });
 
 test('terminal.run on a stopped guest starts it once, waits until it runs, then runs the code', async () => {
+  resetShellReadiness();
   const term = fakeTerminal();
   const got = await term.runTool('terminal.run', { lang: 'sh', code: 'uname -a' });
   assert.equal(term.state.starts, 1, 'Start Linux is pressed once');
-  assert.equal(term.state.runs.length, 1, 'the code runs after the guest is up');
+  assert.equal(term.state.runs.length, 3, 'two sentinel runs, then the code');
+  assert.match(term.state.runs[0].code, /^echo wcpc-ready-/);
+  assert.equal(term.state.runs[2].code, 'uname -a', 'the code runs after the guest is up and the shell proved ready');
   assert.deepEqual(got, { exitCode: 0, output: 'ok\n', truncated: false });
 });
 
@@ -187,7 +215,7 @@ test('terminal.run on a running guest does not press Start Linux', async () => {
   term.restart.disabled = false;
   await term.runTool('terminal.run', { lang: 'sh', code: 'echo hi' });
   assert.equal(term.state.starts, 0);
-  assert.equal(term.state.runs.length, 1);
+  assert.ok(term.state.runs.some(run => run.code === 'echo hi'), 'the code ran');
 });
 
 test('terminal.run rejects with not_running when the Terminal controls are missing', async () => {
@@ -216,7 +244,124 @@ test('terminal.run stops waiting for the boot when the turn is stopped', async (
 test('terminal.run passes timeout_ms through to the bridge', async () => {
   const term = fakeTerminal();
   await term.runTool('terminal.run', { lang: 'python', code: 'print(1)', timeout_ms: 5000 });
-  assert.equal(term.state.runs[0].timeout_ms, 5000);
+  const real = term.state.runs.find(run => run.code === 'print(1)');
+  assert.equal(real.timeout_ms, 5000);
+  const sentinel = term.state.runs[0];
+  assert.ok(sentinel.timeout_ms === 3000, 'the sentinel runs under its own short limit');
+});
+
+test('an echoed sentinel line alone does not prove the shell ready', async () => {
+  // The token must appear as real output: a reply that only carries the echoed command
+  // line (the terminal echoing what it was sent) would false-positive on a raw includes().
+  resetShellReadiness();
+  const term = fakeTerminal();
+  let n = 0;
+  term.state.customBridge = (args, state) => {
+    const code = String(args.code ?? '');
+    if (!code.startsWith('echo wcpc-ready-')) return Promise.resolve(state.runResult);
+    n += 1;
+    const token = code.replace(/^echo /, '');
+    if (n === 1) return Promise.resolve({ exitCode: 0, output: '', truncated: false });
+    if (n === 2) return Promise.resolve({ exitCode: 0, output: `${code}\n`, truncated: false });
+    return Promise.resolve({ exitCode: 0, output: `${token}\n`, truncated: false });
+  };
+  const got = await term.runTool('terminal.run', { lang: 'sh', code: 'ls' });
+  assert.deepEqual(got, { exitCode: 0, output: 'ok\n', truncated: false });
+  assert.equal(n, 3, 'the echoed line alone did not prove the shell; the real output did');
+  assert.equal(term.state.runs.length, 4, 'three sentinel runs, then the real command');
+  assert.equal(term.state.runs[3].code, 'ls');
+});
+
+test('the sentinel runs once per boot, not on every command', async () => {
+  resetShellReadiness();
+  const term = fakeTerminal();
+  await term.runTool('terminal.run', { lang: 'sh', code: 'uname -a' });
+  await term.runTool('terminal.run', { lang: 'sh', code: 'whoami' });
+  assert.equal(term.state.runs.length, 4, 'the second command of the same boot skips the sentinel');
+  assert.match(term.state.runs[0].code, /^echo wcpc-ready-/);
+  assert.equal(term.state.runs[1].code, term.state.runs[0].code);
+  assert.equal(term.state.runs[2].code, 'uname -a');
+  assert.equal(term.state.runs[3].code, 'whoami');
+});
+
+test('a guest reboot re-proves the shell', async () => {
+  resetShellReadiness();
+  const term = fakeTerminal();
+  await term.runTool('terminal.run', { lang: 'sh', code: 'uname -a' });
+  // The guest came back from a stop (the user pressed Restart): the next run boots it again.
+  term.start.disabled = false;
+  term.restart.disabled = true;
+  term.statusEl.textContent = 'Ready to start. The Linux image loads only when you start.';
+  await term.runTool('terminal.run', { lang: 'sh', code: 'whoami' });
+  assert.equal(term.state.starts, 2);
+  const sentinels = term.state.runs.filter(run => /^echo wcpc-ready-/.test(run.code));
+  assert.equal(sentinels.length, 4, 'the fresh boot proves the shell again');
+});
+
+test('terminal.run fails honestly when the shell never proves ready', async () => {
+  resetShellReadiness();
+  const term = fakeTerminal();
+  term.state.customBridge = () => Promise.resolve({ exitCode: 0, output: '', truncated: false });
+  const t0 = Date.now();
+  await assert.rejects(term.runTool('terminal.run', { lang: 'sh', code: 'ls' }), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'not_running');
+    assert.match(error.message, /shell never echoed the readiness check/);
+    assert.match(error.message, /swallows the first commands, or the exec channel went dead/);
+    return true;
+  });
+  assert.ok(Date.now() - t0 < 9000, 'the wait is bounded, not a hang');
+  assert.ok(term.state.runs.length > 1, 'the sentinel was retried');
+  assert.ok(term.state.runs.every(run => /^echo wcpc-ready-/.test(run.code)), 'only the sentinel ran, never the real command');
+});
+
+test('terminal.run re-proves once when a run answers exit 0 with empty output, and fails honestly when the channel is dead', async () => {
+  // sweep-terminal-b19 terminal-01: the oracle phase proved the shell on the page, the sweep
+  // reused it with the guest already running, and the guest's exec session had gone silent -
+  // every terminal.run, the sentinel included, answered {exitCode:0, output:""}. A run that
+  // ends that way must re-prove: a dead sentinel means the shell is not executing, which is
+  // the honest not_running, not another empty success.
+  resetShellReadiness();
+  const term = fakeTerminal();
+  let sentinels = 0;
+  term.state.customBridge = args => {
+    const code = String(args.code ?? '');
+    if (/^echo wcpc-ready-/.test(code)) {
+      sentinels += 1;
+      // the first sentinel is the boot proof (the shell answers); after it the channel is
+      // dead: every run - sentinel or not - answers exit 0 with empty output.
+      return Promise.resolve(sentinels === 1 ? { exitCode: 0, output: `${code.replace(/^echo /, '')}\n`, truncated: false } : { exitCode: 0, output: '', truncated: false });
+    }
+    return Promise.resolve({ exitCode: 0, output: '', truncated: false });
+  };
+  const t0 = Date.now();
+  await assert.rejects(term.runTool('terminal.run', { lang: 'sh', code: 'ls -la ~' }), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'not_running');
+    assert.match(error.message, /shell never echoed the readiness check/);
+    return true;
+  });
+  assert.ok(Date.now() - t0 < 9000, 'the dead channel surfaces in bounded time, not after 27 empty rounds');
+  assert.ok(term.state.runs.some(run => run.code === 'ls -la ~'), 'the real command ran once, then the re-proof took over');
+});
+
+test('a live shell answering an empty command still gets the empty reply, after one re-proof', async () => {
+  // `true` prints nothing: the re-proof must not turn a legitimate empty answer into a
+  // failure - the sentinel answers (the shell is live), so the original reply stands.
+  resetShellReadiness();
+  const term = fakeTerminal();
+  let sentinels = 0;
+  term.state.customBridge = args => {
+    const code = String(args.code ?? '');
+    if (/^echo wcpc-ready-/.test(code)) {
+      sentinels += 1;
+      return Promise.resolve({ exitCode: 0, output: `${code.replace(/^echo /, '')}\n`, truncated: false });
+    }
+    return Promise.resolve({ exitCode: 0, output: '', truncated: false });
+  };
+  const got = await term.runTool('terminal.run', { lang: 'sh', code: 'true' });
+  assert.deepEqual(got, { exitCode: 0, output: '', truncated: false }, 'the empty output is the real answer, passed through');
+  assert.equal(sentinels, 2, 'the boot proof plus exactly one re-proof on the empty reply');
 });
 
 test('terminal.run passes the bridge reply through unchanged', async () => {
@@ -280,6 +425,26 @@ test('skills.md parses with the runtime parser without errors and has 7 skills',
     assert.ok(skill.tools.length >= 1, `skill ${skill.slug} tools`);
     assert.ok(skill.when && skill.steps.length >= 1 && skill.check, `skill ${skill.slug} body sections`);
   }
+});
+
+test('the run-code skill pins the home directory as ~, never the filesystem root', () => {
+  // terminal-07 listed /proj-t7 instead of ~/proj-t7.
+  const run = skills.find(skill => skill.slug === 'run-code-in-the-linux-guest');
+  assert.ok(run.gotchas.includes('/home/user'), 'the home directory is named');
+  assert.ok(run.gotchas.includes('never /file'), 'the root is ruled out');
+});
+
+test('the run-code skill is findable from the user\'s own task words (A/B: prefetch stays off, 2026-11-25)', () => {
+  // "count words" ranked a pdfcraft skill first and "create csv file" / "sed replace" hit no
+  // terminal skill: the user's words must be in the keywords.
+  const run = skills.find(skill => skill.slug === 'run-code-in-the-linux-guest');
+  for (const word of ['word count', 'count words', 'wc', 'grep', 'sed', 'csv', 'directory', 'copy', 'home directory']) assert.ok(run.keywords.includes(word), `keyword ${word}`);
+});
+
+test('the run-code skill separates the guest filesystem from Files (lfm3-1.7b terminal-05/07 used the Files tools)', () => {
+  const run = skills.find(skill => skill.slug === 'run-code-in-the-linux-guest');
+  assert.ok(run.gotchas.includes('not in the guest'), 'the skill says files.write does not reach the guest');
+  assert.ok(run.gotchas.includes('terminal.run'), 'the skill routes file work to terminal.run');
 });
 
 test('the run-code skill is one terminal.run step (terminal.run starts a stopped guest itself)', () => {

@@ -1,0 +1,187 @@
+app: packets
+# Packets journeys (J1, OpenCode lane). The capture is the web-sample.pcap fixture: 4 Ethernet
+# frames on 192.168.1.x - frame 1 ICMP echo request 192.168.1.10 -> 192.168.1.1, frame 2 ICMP
+# echo reply back, frame 3 TCP SYN 192.168.1.10:52344 -> 192.168.1.1:443, frame 4 ARP request
+# who-has 192.168.1.1 (validated with tcpdump on the fixture bytes; the engine is
+# Wireshark 4.6 via wiregasm, so the protocol tree labels and display filters are Wireshark's).
+# The engine takes about 21 MB and loads on first use, so every journey opens the capture
+# first. Checks read the app's own surfaces: open_capture's summary, filter's matched count,
+# list's rows and detail's tree - the checker calls the read tools itself.
+
+journeys:
+  - id: packets-01-open-count
+    split: train
+    title: "Open the capture and count the packets"
+    prompt: >-
+      I just captured a little traffic sample and saved it as web-sample.pcap in the captures
+      folder of my files. Open that capture in the packet viewer and tell me how many packets it
+      contains, so I know I grabbed the whole exchange and not just a piece of it.
+    setup:
+      - close_all: true
+      - open_app: packets
+      - seed_fixture: { path: '/captures/web-sample.pcap', fixture: web-sample.pcap }
+    oracle:
+      - { tool: packets.open_capture, path: '/captures/web-sample.pcap' }
+    checks:
+      - tool_result: { tool: packets.open_capture, path: summary, contains: '4 packets' }
+      - read_tool: { tool: packets.list, args: { limit: 10 }, contains: '"num":4' }
+    covers: [packets.open_capture, packets.list]
+    notes: >-
+      The capture holds exactly 4 packets: the summary pins the count and a live list read-back
+      confirms the fourth frame is present.
+
+  - id: packets-02-filter-icmp
+    split: train
+    title: "Filter the capture to ICMP only"
+    prompt: >-
+      In the web-sample.pcap capture in my captures folder I am only interested in the ping
+      traffic for this check. Open the capture, apply the icmp display filter to the view, and
+      tell me how many packets match the filter.
+    setup:
+      - close_all: true
+      - open_app: packets
+      - seed_fixture: { path: '/captures/web-sample.pcap', fixture: web-sample.pcap }
+    oracle:
+      - { tool: packets.open_capture, path: '/captures/web-sample.pcap' }
+      - { tool: packets.filter, expr: 'icmp' }
+    checks:
+      - tool_result: { tool: packets.filter, path: matched, equals: 2 }
+      - read_tool: { tool: packets.list, args: { limit: 10 }, path: 'rows.0.num', equals: 1 }
+    covers: [packets.open_capture, packets.filter, packets.list]
+    notes: >-
+      Two of the four packets are ICMP (the echo request and reply); the matched count and the
+      first visible frame number pin the filtered view.
+
+  - id: packets-03-filter-443
+    split: holdout
+    title: "Narrow the view to TCP on port 443"
+    prompt: >-
+      The web-sample.pcap capture in my captures folder should contain the TLS handshake from
+      this morning. Open it, narrow the view to TCP traffic on port 443 only, and tell me the
+      packet number that shows up, so I can jump straight to it in the viewer.
+    setup:
+      - close_all: true
+      - open_app: packets
+      - seed_fixture: { path: '/captures/web-sample.pcap', fixture: web-sample.pcap }
+    oracle:
+      - { tool: packets.open_capture, path: '/captures/web-sample.pcap' }
+      - { tool: packets.filter, expr: 'tcp.port == 443' }
+    checks:
+      - tool_result: { tool: packets.filter, path: matched, equals: 1 }
+      - read_tool: { tool: packets.list, args: { limit: 10 }, path: 'rows.0.num', equals: 3 }
+    covers: [packets.open_capture, packets.filter, packets.list]
+    notes: >-
+      Holdout: the SYN to port 443 is frame 3, so the filter must match it and the surviving
+      view must start at frame 3.
+
+  - id: packets-04-detail-icmp
+    split: train
+    title: "Inspect the protocol tree of packet 2"
+    prompt: >-
+      Open web-sample.pcap from my captures folder, then inspect packet number 2 in detail. I
+      want to know which protocol it carries and the two IP addresses it travels between, from
+      its protocol tree, so I can confirm the reply went where I expect.
+    setup:
+      - close_all: true
+      - open_app: packets
+      - seed_fixture: { path: '/captures/web-sample.pcap', fixture: web-sample.pcap }
+    oracle:
+      - { tool: packets.open_capture, path: '/captures/web-sample.pcap' }
+      - { tool: packets.detail, number: 2 }
+    checks:
+      - read_tool: { tool: packets.detail, args: { number: 2 }, path: tree, contains: 'Internet Control Message Protocol' }
+      - read_tool: { tool: packets.detail, args: { number: 2 }, path: tree, contains: '192.168.1.1' }
+    covers: [packets.open_capture, packets.detail]
+    notes: >-
+      Frame 2 is the ICMP echo reply; the dissection tree carries the Wireshark protocol label
+      and the address pair, both read back live by the checker.
+
+  - id: packets-05-detail-tcp
+    split: train
+    title: "Confirm the TCP handshake and its ports"
+    prompt: >-
+      Open web-sample.pcap from my captures folder and look at packet number 3 in detail.
+      Confirm that it is a TCP handshake packet heading to port 443, and tell me the source port
+      number the sender used, so I can match it against the connection log.
+    setup:
+      - close_all: true
+      - open_app: packets
+      - seed_fixture: { path: '/captures/web-sample.pcap', fixture: web-sample.pcap }
+    oracle:
+      - { tool: packets.open_capture, path: '/captures/web-sample.pcap' }
+      - { tool: packets.detail, number: 3 }
+    checks:
+      - read_tool: { tool: packets.detail, args: { number: 3 }, path: tree, contains: 'Transmission Control Protocol' }
+      - read_tool: { tool: packets.detail, args: { number: 3 }, path: tree, contains: '52344' }
+      - read_tool: { tool: packets.detail, args: { number: 3 }, path: tree, contains: '443' }
+    covers: [packets.open_capture, packets.detail]
+    notes: >-
+      Frame 3 is the SYN 52344 -> 443; the tree must show the TCP protocol and both ports.
+
+  - id: packets-06-arp-who
+    split: holdout
+    title: "Find the ARP request and its target address"
+    prompt: >-
+      The web-sample.pcap capture in my captures folder should contain an ARP request
+      somewhere in it. Open the capture, narrow the view to ARP packets, open the matching
+      packet in detail, and tell me which IP address the ARP request is asking for.
+    setup:
+      - close_all: true
+      - open_app: packets
+      - seed_fixture: { path: '/captures/web-sample.pcap', fixture: web-sample.pcap }
+    oracle:
+      - { tool: packets.open_capture, path: '/captures/web-sample.pcap' }
+      - { tool: packets.filter, expr: 'arp' }
+      - { tool: packets.detail, number: 4 }
+    checks:
+      - tool_result: { tool: packets.filter, path: matched, equals: 1 }
+      - read_tool: { tool: packets.detail, args: { number: 4 }, path: tree, contains: 'Address Resolution Protocol' }
+      - read_tool: { tool: packets.detail, args: { number: 4 }, path: tree, contains: '192.168.1.1' }
+    covers: [packets.open_capture, packets.filter, packets.detail]
+    notes: >-
+      Holdout: frame 4 is the ARP who-has request for 192.168.1.1; the journey chains filter
+      then detail, and the target address is pinned from the dissection tree.
+
+  - id: packets-07-list-limit
+    split: train
+    title: "List only the first three packets"
+    prompt: >-
+      Open web-sample.pcap from my captures folder, but I only want the first few rows, not the
+      whole table. List the packets with a limit of three and tell me the frame numbers that are
+      visible, in order, so I know the view is capped as I asked.
+    setup:
+      - close_all: true
+      - open_app: packets
+      - seed_fixture: { path: '/captures/web-sample.pcap', fixture: web-sample.pcap }
+    oracle:
+      - { tool: packets.open_capture, path: '/captures/web-sample.pcap' }
+      - { tool: packets.list, limit: 3 }
+    checks:
+      - read_tool: { tool: packets.list, args: { limit: 3 }, path: 'rows.2.num', equals: 3 }
+      - answer_matches: '(?i)\b1\b.*\b2\b.*\b3\b'
+    covers: [packets.open_capture, packets.list]
+    notes: >-
+      The third visible row must still be frame 3 (no offset in the list), and the reply must
+      relay the three frame numbers in order.
+
+  - id: packets-08-top-sender
+    split: train
+    title: "Name the address that sent the most packets"
+    prompt: >-
+      Open web-sample.pcap from my captures folder and look over the packets in it. Which source
+      address sent the most packets in this capture, and how many did it send? I want the answer
+      with the address and the count, so I know which side of the exchange is the initiator.
+    setup:
+      - close_all: true
+      - open_app: packets
+      - seed_fixture: { path: '/captures/web-sample.pcap', fixture: web-sample.pcap }
+    oracle:
+      - { tool: packets.open_capture, path: '/captures/web-sample.pcap' }
+      - { tool: packets.list, limit: 10 }
+    checks:
+      - answer_contains: '192.168.1.10'
+      - answer_matches: '(?i)\b(3|three)\b'
+    covers: [packets.open_capture, packets.list]
+    notes: >-
+      192.168.1.10 is the source of three of the four packets (the echo request, the SYN and
+      the ARP request); the reply must carry both the address and the count.

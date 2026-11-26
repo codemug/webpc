@@ -131,6 +131,41 @@ test('excalidraw.add_shapes rejects an unknown shape and a bad arrow target', as
   });
 });
 
+test('a k=v spec line is rejected and the error teaches the positional form with a copyable fix', async () => {
+  // lfm3-1.7b (sweep excalidraw-01, build 18) typed "rectangle x=100 y=100 width=200
+  // height=80"; the old error said "needs x, y, width and height" with an empty fix, so the
+  // model retried the same k=v form and then gave up on the shape.
+  const ex = fakeExcalidraw();
+  await assert.rejects(ex.runTool('excalidraw.add_shapes', { spec: 'rectangle x=120 y=30 width=160 height=70 label=In' }), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.match(error.message, /positional/);
+    assert.ok(error.fix.includes('rectangle 120 30 160 70 In'), 'the fix shows a copyable positional call');
+    return true;
+  });
+  assert.equal(ex.scene().length, 0, 'nothing is added on a rejected spec');
+});
+
+test('extra numbers on a shape line are rejected instead of silently becoming a label', async () => {
+  // lfm3-1.7b (sweep excalidraw-07, build 18) sent "ellipse 300 300 300 150 100 100"; the old
+  // parser kept the first four numbers and drew the rest as a "100 100" bound text label.
+  const ex = fakeExcalidraw();
+  await assert.rejects(ex.runTool('excalidraw.add_shapes', { spec: 'ellipse 60 40 130 55 90 90' }), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.match(error.message, /exactly four numbers, got 6/);
+    return true;
+  });
+  assert.equal(ex.scene().length, 0, 'nothing is added on a rejected spec');
+});
+
+test('a diamond line parses to a diamond element', async () => {
+  const ex = fakeExcalidraw();
+  const out = await ex.runTool('excalidraw.add_shapes', { spec: 'diamond 250 55 160 90' });
+  assert.deepEqual(out, { added: 1 });
+  assert.equal(ex.scene()[0].type, 'diamond');
+});
+
 test('excalidraw.add_text appends a single free text element', async () => {
   const ex = fakeExcalidraw();
   const out = await ex.runTool('excalidraw.add_text', { text: 'Title', x: 20, y: 30 });
@@ -237,7 +272,7 @@ test('every skill opens by launching Excalidraw, then uses numbered excalidraw s
 test('the multi-line add_shapes skill step decodes to a real newline spec', () => {
   const draw = skills.find(s => s.slug === 'draw-a-diagram');
   const step = draw.steps[1];
-  assert.deepEqual(step.args.spec, 'rectangle 100 100 200 80 Start\nrectangle 400 100 200 80 End\narrow 1 2');
+  assert.deepEqual(step.args.spec, 'rectangle 120 30 160 70 In\nrectangle 380 30 160 70 Out\ndiamond 250 55 160 90\narrow 1 2');
   assert.ok(checkArgs(byName('excalidraw.add_shapes'), step.args, { choices }).ok, 'spec passes checkArgs');
 });
 

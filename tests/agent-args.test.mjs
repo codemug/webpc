@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { checkArgs, repairArgs, closest, callLine, specErrors, ToolError, templateLine, templateStep } from '../src/apps/ai-agent/runtime/args.mjs';
+import { checkArgs, repairArgs, closest, callLine, specErrors, ToolError, templateLine, templateStep, snapToUserText } from '../src/apps/ai-agent/runtime/args.mjs';
 
 // One tool exercising every flat type, with a first example the fix lines build from.
 const tool = {
@@ -104,6 +104,18 @@ test('missing_argument names the required param, its description and a fixed cal
   for (const empty of [null, '', '   ', '""', '  ""  ']) assert.equal(checkArgs(tool, { name: empty }).error.type, 'missing_argument', `treats ${JSON.stringify(empty)} as absent`);
 });
 
+// B17 (cyberchef-09): the missing-arg fix for a live app/window enum names the context app
+// instead of the example app - desktop.open_app's example (gridcraft) lured 09 into opening
+// the wrong app; with no context app the placeholder shows, which the guard refuses cleanly.
+test('missing_argument fix for a live app enum names the context app, else the placeholder', () => {
+  const openApp = { name: 'desktop.open_app', params: { app: { type: 'enum', values: 'apps', required: true, description: 'App id to open' } }, examples: [{ args: { app: 'gridcraft' } }] };
+  assert.equal(checkArgs(openApp, {}).error.fix, 'call_tool tool=desktop.open_app app=<app>');
+  assert.equal(checkArgs(openApp, {}, { liveApp: 'cyberchef' }).error.fix, 'call_tool tool=desktop.open_app app=cyberchef');
+  // A fixed-value enum is unaffected: its first value still shows.
+  const fixed = { name: 't.theme', params: { theme: { type: 'enum', values: ['light', 'dark'], required: true, description: 'Theme' } }, examples: [] };
+  assert.equal(checkArgs(fixed, {}).error.fix, 'call_tool tool=t.theme theme=light');
+});
+
 test('cloud JSON values are accepted: booleans, numbers, arrays for list and table', () => {
   const out = checkArgs(tool, { name: 'ada', count: 3, rate: 2, flag: false, tags: ['a', 2, ''], grid: [['x', 'y'], ['1', 2]], mode: 'slow' });
   assert.equal(out.ok, true);
@@ -125,6 +137,54 @@ test('table rows split on newlines, cells on tabs or quoted commas', () => {
   const value = 'x\ty\n"p,q",r\na,b';
   assert.deepEqual(checkArgs(tool, { name: 'n', grid: value }).args.grid, [['x', 'y'], ['p,q', 'r'], ['a', 'b']]);
   assert.deepEqual(checkArgs(tool, { name: 'n', grid: ['x,y', 'z,w'] }).args.grid, [['x', 'y'], ['z', 'w']], 'array rows still parse cells');
+  // The flat refusal is opt-in (gridcraft set `flat: false`): without it, a flat list of scalars
+  // still coerces to one-cell rows - vectorcraft.rows and deckcraft.data/series rely on that.
+  assert.deepEqual(checkArgs(tool, { name: 'n', grid: ['a', 'b', 'c'] }).args.grid, [['a'], ['b'], ['c']]);
+});
+
+test('a flat table refusal carries a copyable rows-form fix line built from the given values (A27)', () => {
+  // gridcraft-12 (sweep b17): the refusal showed both JSON forms with a hardcoded "values=" and
+  // no copyable line; lfm3 retried the identical flat list three times.
+  const strict = { ...tool, params: { ...tool.params, grid: { type: 'table', flat: false, description: 'Rows' } } };
+  const out = checkArgs(strict, { name: 'n', grid: ['Date', 'Income', 'Expenses', 'Left'] });
+  assert.ok(!out.ok, 'the flat list is refused');
+  assert.equal(out.error.type, 'invalid_argument');
+  assert.match(out.error.message, /^grid: a flat list of 4 values is ambiguous: grid=\[\["Date","Income","Expenses","Left"\]\] writes a row; grid=\[\["Date"\],\["Income"\],\["Expenses"\],\["Left"\]\] writes a column$/);
+  // The fix line is the tool's own example with the given values in the rows form - one line,
+  // copyable. A29: for a flat:false table that must be the JSON rows form, because the
+  // single-line CSV rendering the model used to copy is now refused as ambiguous.
+  assert.match(out.error.fix, /^call_tool tool=demo\.set name=ada /);
+  assert.match(out.error.fix, /grid=\[\["Date","Income","Expenses","Left"\]\]/);
+  assert.ok(!out.error.fix.includes('\n'), 'the fix line stays on one line');
+  // Round trip: the copyable line parses back as one row, so a retry with it is accepted.
+  assert.deepEqual(checkArgs(strict, { name: 'n', grid: '[["Date","Income","Expenses","Left"]]' }).args.grid, [['Date', 'Income', 'Expenses', 'Left']]);
+});
+
+test('a single-line comma string is refused for a flat:false table with the rows-form fix (A29)', () => {
+  // gridcraft-05 (sweep b19): the refused flat list was re-sent as one CSV string and accepted
+  // as one row of six cells - a silent wrong success. Newlines keep the string form.
+  const strict = { ...tool, params: { ...tool.params, grid: { type: 'table', flat: false, description: 'Rows' } } };
+  const out = checkArgs(strict, { name: 'n', grid: 'Quarter, Revenue, Q1 120, Q2 180, Q3 95, Q4 150' });
+  assert.ok(!out.ok, 'the CSV string is refused');
+  assert.equal(out.error.type, 'invalid_argument');
+  assert.match(out.error.message, /^grid: a single-line comma string is ambiguous: grid=\[\["Quarter","Revenue","Q1 120","Q2 180","Q3 95","Q4 150"\]\] writes a row; /);
+  // The fix line is the JSON rows form - the only single-line copy that parses back.
+  assert.match(out.error.fix, /grid=\[\["Quarter","Revenue","Q1 120","Q2 180","Q3 95","Q4 150"\]\]/);
+  assert.deepEqual(checkArgs(strict, { name: 'n', grid: out.error.fix.match(/grid=(\[[\s\S]*\])/)[1] }).args.grid, [['Quarter', 'Revenue', 'Q1 120', 'Q2 180', 'Q3 95', 'Q4 150']], 'the fix line round-trips as one row');
+  // Newlines keep the string form: one row per line, cells by comma.
+  assert.deepEqual(checkArgs(strict, { name: 'n', grid: 'a,b\nc,d' }).args.grid, [['a', 'b'], ['c', 'd']]);
+  // A single cell is not ambiguous.
+  assert.deepEqual(checkArgs(strict, { name: 'n', grid: 'hello' }).args.grid, [['hello']]);
+  // Without flat:false the CSV string keeps the old behaviour (vectorcraft.rows relies on it).
+  assert.deepEqual(checkArgs(tool, { name: 'n', grid: 'a,b' }).args.grid, [['a', 'b']]);
+  // gridcraft-04 (sweep b20): a 2D array string truncated mid-way (it ends with a literal
+  // "...") fails the JSON parse, so it must not be re-rendered as a comma-split row of
+  // garbage - it is refused as unparseable with a clean 2D example as the fix.
+  const broken = checkArgs(strict, { name: 'n', grid: '[["Widget North 1250", "North", "1250"], ["Gadget South 300", "South", "300"],...]' });
+  assert.ok(!broken.ok, 'the truncated 2D string is refused');
+  assert.match(broken.error.message, /^grid: looks like a 2D JSON array but does not parse/);
+  assert.match(broken.error.fix, /grid=\[\["a","b"\],\["c","d"\]\]/);
+  assert.deepEqual(checkArgs(strict, { name: 'n', grid: '[["a","b"],["c","d"]]' }).args.grid, [['a', 'b'], ['c', 'd']], 'the fix line round-trips as two rows');
 });
 
 test('list and table accept a string that parses as a JSON array', () => {
@@ -277,6 +337,42 @@ test('repairArgs splits an unknown key whose value spells the tool own pairs, ke
 
 test('repairArgs moves one unknown key into the one missing required text parameter', () => {
   assert.deepEqual(checkArgs(RUN, { query: 'uname -a' }), { ok: true, args: { code: 'uname -a', lang: 'sh' } });
+  // terminal-01 (sweep b20b): the command spelled as a JSON array (args='["ls", "-la",
+  // "~"]'); moved raw, the shell executed the JSON text itself ("[ls,: not found", 27
+  // rounds of 127). A flat array of scalars moves as its space-joined command line.
+  assert.deepEqual(checkArgs(RUN, { args: '["ls", "-la", "~"]' }), { ok: true, args: { code: 'ls -la ~', lang: 'sh' } });
+  assert.deepEqual(checkArgs(RUN, { command: '[42]' }), { ok: true, args: { code: '42', lang: 'sh' } });
+  // Nested arrays and non-JSON bracket text have no sane join: they move as-is.
+  assert.deepEqual(checkArgs(RUN, { args: '[[1,2],[3,4]]' }), { ok: true, args: { code: '[[1,2],[3,4]]', lang: 'sh' } });
+  assert.deepEqual(checkArgs(RUN, { query: '[a, b]' }), { ok: true, args: { code: '[a, b]', lang: 'sh' } });
+});
+
+test('repairArgs unwraps the tool own args sent as a JSON object under an unknown key', () => {
+  // lfm3-1.7b on journey cadcraft-01: params="{\"text\": \"line 0,0 10,0\"}" to a tool with no params param.
+  assert.deepEqual(checkArgs(RUN, { params: '{"code": "uname -a", "lang": "sh"}' }), { ok: true, args: { code: 'uname -a', lang: 'sh' } });
+  assert.deepEqual(checkArgs(RUN, { args: { code: 'ls' } }), { ok: true, args: { code: 'ls', lang: 'sh' } });
+  // Wrong inner keys are unwrapped too: one stray key fills the one missing required param,
+  assert.deepEqual(checkArgs(RUN, { params: '{"cmd": "ls"}' }), { ok: true, args: { code: 'ls', lang: 'sh' } });
+  // and otherwise the error names the wrong inner key, not the wrapper.
+  assert.match(checkArgs(RUN, { parameters: '{"code": "ls", "title": "x"}' }).error.message, /no parameter title/);
+});
+
+test('A25: a loose-JSON blob (unquoted keys) under the one unknown arg unwraps into the params', () => {
+  // filmcraft-03/06 (b16): args="{ item: beach-sunset.jpg, track: V1, seconds: 0 }" used to
+  // hand the whole blob to the one required param and loop on "item <blob> not in the project".
+  const place = { name: 'filmcraft.place', params: {
+    item: { type: 'string', required: true, description: 'Item id' },
+    track: { type: 'string', description: 'Track' },
+    seconds: { type: 'integer', description: 'Seconds' },
+  } };
+  const out = checkArgs(place, { args: '{ item: beach-sunset.jpg, track: V1, seconds: 0 }' });
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.deepEqual(out.args, { item: 'beach-sunset.jpg', track: 'V1', seconds: 0 });
+  // Negative: a plain string value is still the content of the one required param.
+  assert.deepEqual(checkArgs(place, { args: 'beach-sunset.jpg' }), { ok: true, args: { item: 'beach-sunset.jpg' } });
+  // Strict JSON and the k=v form took their own rules before; all three now unwrap.
+  assert.deepEqual(checkArgs(place, { args: '{"item": "a.jpg", "track": "V1"}' }).args, { item: 'a.jpg', track: 'V1' });
+  assert.deepEqual(checkArgs(place, { args: 'item=a.jpg track=V1' }).args, { item: 'a.jpg', track: 'V1' });
 });
 
 test('repairArgs leaves calls alone when no rule applies', () => {
@@ -290,7 +386,120 @@ test('repairArgs leaves calls alone when no rule applies', () => {
   assert.equal(checkArgs(numeric, { x: '3' }).error.type, 'unknown_argument', 'only string or text params are filled');
 });
 
+test('repairArgs unwraps a full call the model wrapped under a declared parameter (run_command family)', () => {
+  // lfm3-1.7b on J2 cadcraft 0/2 and effectcraft 0/12: the whole call, command included,
+  // sits inside the params= wrapper because run_command declares a params parameter itself.
+  // The inner object then lands as key=value lines in the params slot (gridcraft-08 rule),
+  // which the packs' parseParams accepts.
+  const RUN_CMD = { name: 'cadcraft.run_command', params: {
+    command: { type: 'string', required: true, description: 'Command id' },
+    params: { type: 'text', description: 'Parameters as key=value lines' },
+  } };
+  assert.deepEqual(checkArgs(RUN_CMD, { params: '{"command": "line", "params": {"from": "0,0", "to": "10,0"}}' }),
+    { ok: true, args: { command: 'line', params: 'from=0,0\nto=10,0' } });
+  // An object value, not just JSON text.
+  assert.deepEqual(checkArgs(RUN_CMD, { params: { command: 'circle', params: { center: '20,0', radius: 5 } } }),
+    { ok: true, args: { command: 'circle', params: 'center=20,0\nradius=5' } });
+  // A present command= is never lost or duplicated by the unwrap.
+  assert.deepEqual(checkArgs(RUN_CMD, { command: 'circle', params: '{"center": "20,0", "radius": 5}' }),
+    { ok: true, args: { command: 'circle', params: 'center=20,0\nradius=5' } });
+  // A wrapper that carries no missing required param stays put (the error then names command).
+  assert.equal(checkArgs(RUN_CMD, { params: '{"center": "20,0"}' }).error.type, 'missing_argument');
+});
+
+test('repairArgs accepts key: value colons in a wrapped string (tool_param colon form)', () => {
+  // lfm3-1.7b sent tool_param="new: true" to effectcraft.project_open (J2 effectcraft-06).
+  const OPEN = { name: 'effectcraft.project_open', params: { demo: { type: 'boolean', description: 'Demo' }, new: { type: 'boolean', description: 'New' } } };
+  assert.deepEqual(checkArgs(OPEN, { tool_param: 'new: true' }), { ok: true, args: { new: true } });
+  assert.deepEqual(checkArgs(RUN, { tool_param: 'lang: python code: print(6 * 7)' }), { ok: true, args: { lang: 'python', code: 'print(6 * 7)' } });
+  // The equals form still wins when both appear.
+  assert.deepEqual(checkArgs(OPEN, { tool_param: 'new=true' }), { ok: true, args: { new: true } });
+});
+
+test('repairArgs splits comma- and semicolon-separated pairs in a wrapped string (tool_param comma form)', () => {
+  // lfm3-1.7b sweep b17 cyberchef-01/02 sent tool_param "recipe=SHA256,input=4865": the comma
+  // form used to swallow the second pair into the first value ("unknown operation(s) input=...").
+  const BAKE = { name: 'cyberchef.bake', params: { recipe: { type: 'text', required: true, description: 'Ops' }, input: { type: 'text', description: 'Text' } } };
+  assert.deepEqual(checkArgs(BAKE, { tool_param: 'recipe=SHA256,input=48656c6c6f20576f726c64' }), { ok: true, args: { recipe: 'SHA256', input: '48656c6c6f20576f726c64' } });
+  assert.deepEqual(checkArgs(RUN, { tool_param: 'lang=python;code=print(6 * 7)' }), { ok: true, args: { lang: 'python', code: 'print(6 * 7)' } });
+  // A multi-op recipe keeps its own commas: only a declared param name splits.
+  assert.deepEqual(checkArgs(BAKE, { tool_param: 'recipe=From_Hex,To_Upper_case,To_Base64, input=4865' }), { ok: true, args: { recipe: 'From_Hex,To_Upper_case,To_Base64', input: '4865' } });
+});
+
 test('a copied placeholder on a parameter with a default takes the default; without one it is an error', () => {
   assert.deepEqual(checkArgs(RUN, { lang: '<lang>', code: 'ls' }), { ok: true, args: { code: 'ls', lang: 'sh' } });
   assert.equal(checkArgs(RUN, { code: '<code>' }).error.type, 'placeholder');
+});
+
+/** lfm3-1.7b copied a generic slot word into a value (cyberchef-01: input=<text>). */
+test('a generic slot word like <text> is a placeholder error, real angle-bracket input is not', () => {
+  const BAKE = { name: 'cyberchef.bake', params: { recipe: { type: 'text', required: true, description: 'Ops' }, input: { type: 'text', required: true, description: 'Text' } } };
+  assert.equal(checkArgs(BAKE, { recipe: 'To Base64', input: '<text>' }).error.type, 'placeholder');
+  assert.equal(checkArgs(BAKE, { recipe: 'To Base64', input: '<b>' }).ok, true);
+  assert.equal(checkArgs(BAKE, { recipe: 'To Base64', input: '<div>' }).ok, true);
+});
+
+/** lfm3-1.7b carried find_tool's own app parameter over into the tool call (files-01:
+ *  files.list app=files, eight rounds lost to unknown_argument loops). */
+test('repairArgs drops a redundant app argument that spells the tool own app prefix', () => {
+  const LIST = { name: 'files.list', params: { path: { type: 'path', description: 'The folder to look in' } } };
+  assert.deepEqual(repairArgs(LIST, { app: 'files', path: '/notes/trip' }), { path: '/notes/trip' });
+  assert.deepEqual(checkArgs(LIST, { app: 'files', path: '/notes/trip' }), { ok: true, args: { path: '/notes/trip' } });
+  // A different app value is a real mistake: it stays for the unknown_argument error.
+  assert.deepEqual(repairArgs(LIST, { app: 'gridcraft', path: '/notes/trip' }), { app: 'gridcraft', path: '/notes/trip' });
+  // A tool with a real app parameter is untouched.
+  const MIN = { name: 'desktop.minimize', params: { app: { type: 'enum', values: ['gridcraft', 'docs'], description: 'The app id' } } };
+  assert.deepEqual(repairArgs(MIN, { app: 'gridcraft' }), { app: 'gridcraft' });
+});
+
+/** lfm3-1.7b sent the run_command tools' params as a JSON object and spelled the command id
+ *  inside the params text (gridcraft-08/09 on the lfm3 baseline). */
+test('repairArgs flattens a params object into key=value lines and lifts a command id spelled in the text', () => {
+  const RC = { name: 'gridcraft.run_command', params: {
+    command: { type: 'string', required: true, description: 'Command id' },
+    params: { type: 'text', description: 'Parameters as key=value lines' },
+  } };
+  assert.deepEqual(repairArgs(RC, { command: 'cell.set', params: { cell: 'B2', input: 'Hello' } }), { command: 'cell.set', params: 'cell=B2\ninput=Hello' });
+  assert.deepEqual(repairArgs(RC, { args: '{"command": "cell.set", "params": {"path": "a.xlsx"}}' }), { command: 'cell.set', params: 'path=a.xlsx' });
+  assert.deepEqual(repairArgs(RC, { params: 'command=cell.set cell=A2 input=100' }), { command: 'cell.set', params: 'cell=A2 input=100' });
+  assert.deepEqual(checkArgs(RC, { params: 'command=cell.set' }), { ok: true, args: { command: 'cell.set' } });
+  // A single-key object on a non-params text parameter is content, not a map: it stays put so
+  // the normal "must be text" error teaches instead of a mis-repair writing wrong content.
+  const APPEND = { name: 'files.append', params: { text: { type: 'text', required: true, description: 'Text' } } };
+  assert.deepEqual(repairArgs(APPEND, { text: { line: 'Call Ana' } }), { text: { line: 'Call Ana' } });
+  // Rule 4 only lifts a pair that starts the text: a required param spelled mid-text stays put.
+  assert.deepEqual(repairArgs(RC, { params: 'cell=A2 command=cell.set' }), { params: 'cell=A2 command=cell.set' });
+});
+
+/** A16: a near-miss text argument snaps to the user's own span; deliberate transformations never do. */
+test('snapToUserText: the Guvf/Gvf case snaps to the user span', () => {
+  const user = 'One of the lines in my log is rot13 encoded and it reads Guvf jnf. Decode it for me.';
+  assert.equal(snapToUserText(user, 'input', 'Gvf jnf'), 'Guvf jnf');
+});
+
+test('snapToUserText: a three-word paraphrase, an uppercased form and short values do not snap', () => {
+  const user = 'Encode the text meeting at noon in base64 for me.';
+  assert.equal(snapToUserText(user, 'input', 'Meet at noon'), null, 'meeting -> Meet is three edits, over the budget');
+  assert.equal(snapToUserText(user, 'input', 'MEETING AT NOON'), null, 'case changes are edits: an uppercasing is far, not near');
+  assert.equal(snapToUserText('it reads Guvf jnf here', 'input', 'GUVF JNF'), null);
+  assert.equal(snapToUserText(user, 'input', 'noon'), null, 'under the minimum length');
+});
+
+test('snapToUserText: only input/text params snap, and verbatim text never does', () => {
+  const user = 'Decode the line Guvf jnf and verify it.';
+  assert.equal(snapToUserText(user, 'code', 'Gvf jnf'), null, 'code carries commands, not user content');
+  assert.equal(snapToUserText(user, 'path', '/notess/jn'), null, 'paths are ruled out by name');
+  assert.equal(snapToUserText(user, 'input', 'Guvf jnf'), null, 'verbatim is already the user text');
+  assert.equal(snapToUserText('a note that says hello there', 'text', 'hello thre'), 'hello there', 'a text param snaps like input');
+});
+
+/** j3 b14 (vectorcraft-06): the model wraps every call in an args= blob; a zero-parameter
+    tool has nothing to validate, so the blob must be ignored, not refused (the old
+    "has no parameter args; it takes: " was a dead end). */
+test('checkArgs: zero-parameter tools ignore whatever arguments arrive', () => {
+  const UNDO = { name: 'vectorcraft.undo', params: {} };
+  assert.deepEqual(checkArgs(UNDO, { args: '{}' }), { ok: true, args: {} });
+  assert.deepEqual(checkArgs(UNDO, { args: '{' }), { ok: true, args: {} });
+  assert.deepEqual(checkArgs(UNDO, {}), { ok: true, args: {} });
+  assert.deepEqual(checkArgs(UNDO, null), { ok: true, args: {} });
 });

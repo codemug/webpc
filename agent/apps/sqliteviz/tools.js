@@ -29,7 +29,14 @@
 // .result-empty preview ("No rows retrieved according to your query") is a different
 // element and is never read as the footer; a SQL error renders inside the panel as a
 // span.msg-text whose text starts with "Error:" (the global .error div, the same element
-// as #error, stays empty for query errors; live-confirmed).
+// as #error, stays empty for query errors; live-confirmed). The app resets the run state
+// asynchronously after the run click, so the previous run's terminal state - including a
+// write's empty preview - is still visible right after the click; the panel fingerprint is
+// therefore captured before the click, and a terminal state is accepted only once the new
+// run is known to have happened (the .result-in-progress marker was seen, or the
+// fingerprint left the pre-run state; the footer's elapsed time differs per run, so a
+// repeated query changes the text). An identical terminal state whose run was never
+// observed is never read stale: the tool times out instead, and the retry returns data.
 import { ToolError } from '../../../src/apps/ai-agent/runtime/args.mjs';
 import { innerApi } from '../../shared/inner-app.js';
 
@@ -177,7 +184,14 @@ export const tools = [
     // button#create-btn with the text "Create"; live-confirmed): the tool creates the
     // inquiry the app's own way, waits for the SQL editor to mount (10 s cap) and then
     // proceeds; a second run_query reuses the open tab.
-    run: async (args, ctx) => call(ctx, async host => {
+    run: async (args, ctx) => {
+      // Small models bring parameterised placeholders (lfm3-1.7b sent VALUES (7,?, 13.50) on
+      // sqliteviz-04): a ? outside string literals has no bind value here and corrupts the
+      // row, so refuse it with the inline fix before touching the app.
+      if (String(args.sql).replace(/'(?:[^']|'')*'/g, '').includes('?')) {
+        throw new ToolError('invalid_argument', 'no ? placeholders here: write the values inline in the SQL, e.g. VALUES (7, 2, 9.99)', '');
+      }
+      return call(ctx, async host => {
       const win = await app(host, ctx);
       const sleep = sleepOf(ctx);
       const taOf = c => (c?.querySelector('.CodeMirror textarea') ?? null);
@@ -218,39 +232,68 @@ export const tools = [
         await sleep(100);
       }
       if (runBtn.disabled) throw new ToolError('app_error', 'the run button stayed disabled (no database is open, or the editor did not accept the query)', '');
-      runBtn.click();
-      const panel = container.querySelector('.run-result-panel');
-      if (!panel) throw new ToolError('app_error', 'the result panel was not found in the app', '');
       // The live result panel (confirmed after real runs): the column headers (div.fixed-header)
       // and the "N rows retrieved in <s>s" footer live in .result-set-container, the rows are
-      // in the table.sqliteviz-table cells, and a SQL error renders as a span.msg-text inside
-      // the panel whose text starts with "Error:" (the global .error div, the same element as
-      // #error, stays empty for query errors). The container text and the error texts are
-      // captured before the run: the footer's elapsed time differs per run, so completion is
-      // only accepted once the container text has changed (a repeated query is not read
-      // stale), and only a new or changed error message is treated as a failure of this run.
+      // in the table.sqliteviz-table cells, a DML run leaves the .table-preview.result-empty
+      // preview visible, and a SQL error renders as a span.msg-text inside the panel whose
+      // text starts with "Error:" (the global .error div, the same element as #error, stays
+      // empty for query errors). The fingerprint (result text, empty preview, error texts) is
+      // captured before the click: the app resets the run state asynchronously after the
+      // click, so the previous run's terminal state - a write's empty preview included - is
+      // still visible right after it (the oracle-run race that read a write's empty preview
+      // as the next SELECT's result). A terminal state is accepted only once the new run is
+      // known to have happened: the .result-in-progress marker was seen, or the fingerprint
+      // left the pre-run state (the footer's elapsed time differs per run, so a repeated
+      // query changes the text). An identical terminal state whose run was never observed
+      // times out instead of being read stale; only a new or changed error message is a
+      // failure of this run (a repeated identical error is one too, once the run was seen).
+      const panel = container.querySelector('.run-result-panel');
+      if (!panel) throw new ToolError('app_error', 'the result panel was not found in the app', '');
       const errorEl = win.document.querySelector('.error');
+      const emptyVisible = () => {
+        const empty = panel.querySelector('.table-preview.result-empty');
+        return Boolean(empty && empty.style?.display !== 'none');
+      };
       const before = {
         result: panel.querySelector('.result-set-container')?.textContent ?? '',
         error: (errorEl?.textContent ?? '').trim(),
         message: (panel.querySelector('span.msg-text')?.textContent ?? '').trim(),
+        empty: emptyVisible(),
       };
-      for (let i = 0; i < 120; i++) { // 60 s: the query may be long-running
+      runBtn.click();
+      let started = false;
+      let sawInProgress = false;
+      for (let i = 0; i < 600; i++) { // 60 s: the query may be long-running
         const errText = (errorEl?.textContent ?? '').trim();
         if (errText && errText !== before.error) throw new ToolError('app_error', `the query failed: ${errText}`, '');
+        if (panel.querySelector('.result-in-progress')) {
+          // The run is in flight: its terminal state, whatever it is, belongs to this run.
+          started = true;
+          sawInProgress = true;
+          await sleep(100);
+          continue;
+        }
+        const resultEl = panel.querySelector('.result-set-container');
+        const resultText = resultEl?.textContent ?? '';
+        const emptyNow = emptyVisible();
+        if (resultText !== before.result || emptyNow !== before.empty) started = true;
         const msgText = (panel.querySelector('span.msg-text')?.textContent ?? '').trim();
-        if (msgText.startsWith('Error:') && msgText !== before.message) {
+        if (msgText.startsWith('Error:') && started && (msgText !== before.message || sawInProgress)) {
           // The app's own error text minus the "Error:" prefix (live: "Error: no such table: nope.")
           throw new ToolError('app_error', `the query failed: ${msgText.replace(/^Error:\s*/, '')}`, '');
         }
-        if (panel.querySelector('.result-in-progress')) { await sleep(500); continue; }
-        const resultEl = panel.querySelector('.result-set-container');
-        if (footerCount(resultEl) !== null && (resultEl?.textContent ?? '') !== before.result) return readResult(panel);
-        const empty = panel.querySelector('.table-preview.result-empty');
-        if (empty && empty.style?.display !== 'none') return { columns: [], rows: [], rowCount: 0, truncated: false };
-        await sleep(500);
+        if (footerCount(resultEl) !== null && resultText !== before.result) {
+          const result = readResult(panel);
+          // b17 sqliteviz-04: lfm3 read the whole (capped) orders table and counted by
+          // hand, one customer at a time, for twenty rounds: point at SQL aggregation.
+          if (result.truncated) result.note = 'rowCount is the total but only 200 rows are shown: do not count rows by hand - aggregate in SQL (COUNT(*), GROUP BY customer, ORDER BY n DESC LIMIT 1)';
+          return result;
+        }
+        if (emptyNow && started) return { columns: [], rows: [], rowCount: 0, truncated: false };
+        await sleep(100);
       }
       throw new ToolError('app_error', 'the query did not finish within 60 s; it may still be running, so wait and run a lighter query', '');
-    }),
+      });
+    },
   },
 ];

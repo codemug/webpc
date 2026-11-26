@@ -1,0 +1,288 @@
+# PdfCraft journeys (12). train 9, holdout 3 (pdfcraft-03, pdfcraft-07, pdfcraft-11).
+# Updated after the J3 read_text probe ran green (2026-11-25), then re-read for the b17
+# sweep: the app's export is the raw PDF source (each fixture line as "(text) Tj", T*
+# between the lines), and read_text cuts it at the page content streams, prefixing each
+# page's lines with "=== page N of M ===" (raw source fallback when it cannot parse, e.g.
+# a compressed stream). The three question journeys (01, 02, 03) are oracles whose answer check
+# pins the fact as a person hears it (02: the date is in the export and in a plain
+# reply), and each oracle ends with a read whose result holds the fact (the files-02
+# house pattern), because the export carries the content, not page numbers or counts:
+# 01 ends on pdfcraft.ui_inspect, whose a11y tree carries the page indicator widget
+# 'Page 1 of 2', and 03 ends on system.calculate of the per-line word counts of page 1
+# (4+6+7 = 17). The two edit journeys (04, 12) are needs: the app's edit commands
+# answer {ran} without changing the document (probe r2: doc_inspect dirty stays false
+# before and after each edit, the export is the untouched fixture and the saved copy
+# its 1035 bytes), so the pack tools re-read the export after each edit and fail
+# honestly with a teaching error, and no check can pin the edited text. Page counts
+# are checkable through the craft method docInspect, which returns documents[] with
+# name, pages and dirty; the catalog tool pdfcraft.doc_inspect returns the viewer
+# state instead, so the page-count checks use craft_request. The remaining needs are
+# the page metadata the text export does not carry: read_rotation (06), read_link (10)
+# and read_page_order (11). Every setup is close_all, open_app, reset_app and the
+# report-q3.pdf fixture seeded at /PDFCraft/report-q3.pdf. save_copy creates a missing
+# folder (tool fix from the harness lane), so no mkdir steps.
+# Fixture facts: page 1 "Quarterly report Q3 2026", "Revenue grew 14 percent over Q2.",
+# "The North region led with 41 orders." (17 words); page 2 "Appendix",
+# "Returns fell to 2.1 percent.", "Next review: 15 January 2027." (11 words).
+app: pdfcraft
+journeys:
+  - id: pdfcraft-01-revenue-page
+    split: train
+    title: "Find which page the revenue sentence is on"
+    prompt: >-
+      My Q3 report is in my files at /PDFCraft/report-q3.pdf. Somewhere in it is the
+      sentence about how revenue grew over Q2. Open the report and tell me which page
+      that sentence is on, so I can go straight to it.
+    setup:
+      - close_all: true
+      - open_app: pdfcraft
+      - reset_app: pdfcraft
+      - seed_fixture: { path: /PDFCraft/report-q3.pdf, fixture: report-q3.pdf }
+    oracle:
+      - tool: pdfcraft.open_file
+        path: /PDFCraft/report-q3.pdf
+      - tool: pdfcraft.read_text
+      - tool: pdfcraft.ui_inspect
+    checks:
+      - answer_matches: "(?i)\\b(page\\s*(1|one)|first page)\\b"
+    covers: [pdfcraft.open_file, pdfcraft.read_text, pdfcraft.ui_inspect]
+    notes: "The reply must name the page (page 1, page one, the first page) - a skipped task answers no page. The oracle ends on ui_inspect, whose a11y tree carries the page indicator widget 'Page 1 of 2' (live-captured in the r1 probe), so the same pattern holds the fact in oracle mode; doc_inspect (the viewer state) has no captured page field, so ui_inspect is the page read. The raw export carries no page numbers; read_text labels the pages it can parse (=== page N of M ===) and the model reads the number from that label (b17: lfm3 answered page 4, counting object numbers)."
+
+  - id: pdfcraft-02-next-review
+    split: train
+    title: "Find the next review date in the report"
+    prompt: >-
+      Open my Q3 report at /PDFCraft/report-q3.pdf and find the line about the next
+      review. I want the exact date it gives, word for word, so I can put it in the
+      calendar.
+    setup:
+      - close_all: true
+      - open_app: pdfcraft
+      - reset_app: pdfcraft
+      - seed_fixture: { path: /PDFCraft/report-q3.pdf, fixture: report-q3.pdf }
+    oracle:
+      - tool: pdfcraft.open_file
+        path: /PDFCraft/report-q3.pdf
+      - tool: pdfcraft.read_text
+    checks:
+      - answer_matches: "(?i)\\b15 January 2027\\b"
+    covers: [pdfcraft.open_file, pdfcraft.read_text]
+    notes: "The fixture's page 2 carries Next review: 15 January 2027. The pattern is the fact as a person hears it: it matches both the export text the oracle reads and a plain reply, so the check holds in both modes."
+
+  - id: pdfcraft-03-page-one-words
+    split: holdout
+    title: "Count the words on the first page"
+    prompt: >-
+      Open my Q3 report at /PDFCraft/report-q3.pdf and count the words on the first
+      page. I want the number as a plain count, so I can check how tight the cover
+      page is.
+    setup:
+      - close_all: true
+      - open_app: pdfcraft
+      - reset_app: pdfcraft
+      - seed_fixture: { path: /PDFCraft/report-q3.pdf, fixture: report-q3.pdf }
+    oracle:
+      - tool: pdfcraft.open_file
+        path: /PDFCraft/report-q3.pdf
+      - tool: pdfcraft.read_text
+      - tool: system.calculate
+        expression: "4+6+7"
+    checks:
+      - answer_matches: "(?<!\\d)17(?!\\d)"
+    covers: [pdfcraft.open_file, pdfcraft.read_text, system.calculate]
+    notes: "The reply must carry the count 17 (the user asked for the number as a plain count) - a skipped task answers no count. The oracle ends on system.calculate of the page-1 line word counts (4+6+7, the whitespace split of the three fixture lines), so the calculate result 17 is in the tool text the oracle-mode answer check reads, like files-02; the digit boundaries keep the pin from matching inside a longer number such as 2017."
+    check_gap: "the reply may say seventeen instead of 17; the lead confirms the phrasing in the agent run."
+
+  - id: pdfcraft-04-replace-year
+    split: train
+    title: "Bump the report year and stamp it confidential"
+    prompt: >-
+      I am turning my Q3 report at /PDFCraft/report-q3.pdf into the draft for the next
+      cycle. Replace every 2026 in the document with 2027, add the word CONFIDENTIAL
+      near the top of the first page in large bold letters, and save a copy of the
+      result to /PDFCraft/report-q3-stamped.pdf so the original stays untouched.
+    setup:
+      - close_all: true
+      - open_app: pdfcraft
+      - reset_app: pdfcraft
+      - seed_fixture: { path: /PDFCraft/report-q3.pdf, fixture: report-q3.pdf }
+    needs: "pdfcraft.text_replace and pdfcraft.page_add_text: the app's edit commands answer {ran} without changing the document (probe r2: doc_inspect dirty stays false before and after each edit and the export is the untouched fixture), so no check can pin the edited text; the pack tools re-read the export after each edit and fail honestly with a teaching error instead. The saved copy is the only pin and is the untouched fixture."
+    checks:
+      - file_exists: /PDFCraft/report-q3-stamped.pdf
+    covers: [pdfcraft.open_file, pdfcraft.text_replace, pdfcraft.page_add_text, pdfcraft.save_copy]
+    notes: "Four-action edit workflow; the edit itself is pinned by the tools' read-after-write teaching error in the run, the saved copy by Files."
+
+  - id: pdfcraft-05-signature-page
+    split: train
+    title: "Add a signature page with a line on it"
+    prompt: >-
+      The client wants to sign my Q3 report, which is in my files at
+      /PDFCraft/report-q3.pdf. Add a blank page at the end of the report for the
+      signature, and on that new page put a line that says Signed for and by the
+      client, so the page is not just empty.
+    setup:
+      - close_all: true
+      - open_app: pdfcraft
+      - reset_app: pdfcraft
+      - seed_fixture: { path: /PDFCraft/report-q3.pdf, fixture: report-q3.pdf }
+    oracle:
+      - tool: pdfcraft.open_file
+        path: /PDFCraft/report-q3.pdf
+      - tool: pdfcraft.page_insert_blank
+        at: 3
+    checks:
+      - craft_request: { app: pdfcraft, method: docInspect, expect: { path: "documents[0].pages", equals: 3 } }
+    covers: [pdfcraft.open_file, pdfcraft.page_insert_blank]
+    notes: "The page count is pinned through the document's own state (2 to 3 pages), which the insert alone produces; the former page_add_text oracle step is gone because the build does not apply added page text (it fails honestly) and the check does not need it."
+    check_gap: "the signature line itself is not readable (no pdfcraft.read_text yet) and this build does not apply added page text; the insert is the pinned work."
+
+  - id: pdfcraft-06-rotate-pages
+    split: train
+    title: "Rotate the report pages a quarter turn"
+    prompt: >-
+      My Q3 report at /PDFCraft/report-q3.pdf will be printed landscape, so rotate
+      every page 90 degrees clockwise and tell me the rotation the pages now have, so I
+      know the print will come out the way I want.
+    setup:
+      - close_all: true
+      - open_app: pdfcraft
+      - reset_app: pdfcraft
+      - seed_fixture: { path: /PDFCraft/report-q3.pdf, fixture: report-q3.pdf }
+    needs: "pdfcraft.read_rotation: the rotate command runs, but doc_inspect exposes only name, pages and dirty, so no check can read the rotation back; the answer is the check."
+    checks:
+      - answer_contains: "90"
+    covers: [pdfcraft.open_file, pdfcraft.page_rotate]
+    notes: "State-change journey over the real fixture; the rotation is user-facing in the app view."
+    check_gap: "the answer may say a quarter turn; the lead confirms the phrasing in the agent run."
+
+  - id: pdfcraft-07-delete-appendix
+    split: holdout
+    title: "Delete the appendix page"
+    prompt: >-
+      The appendix of my Q3 report at /PDFCraft/report-q3.pdf is no longer needed for
+      this version. Open the report, delete the appendix page, and tell me how many
+      pages the report has now.
+    setup:
+      - close_all: true
+      - open_app: pdfcraft
+      - reset_app: pdfcraft
+      - seed_fixture: { path: /PDFCraft/report-q3.pdf, fixture: report-q3.pdf }
+    oracle:
+      - tool: pdfcraft.open_file
+        path: /PDFCraft/report-q3.pdf
+      - tool: pdfcraft.page_delete
+        pages: "2"
+    checks:
+      - craft_request: { app: pdfcraft, method: docInspect, expect: { path: "documents[0].pages", equals: 1 } }
+    covers: [pdfcraft.open_file, pdfcraft.page_delete]
+    notes: "The delete is pinned by the page count the document reports itself (2 to 1), which only the delete produces."
+
+  - id: pdfcraft-08-duplicate-cover
+    split: train
+    title: "Duplicate the cover page and save a working copy"
+    prompt: >-
+      I want to reuse the cover of my Q3 report at /PDFCraft/report-q3.pdf as a
+      divider. Duplicate the first page of the report so it appears twice at the
+      front, then save a copy of the result to /PDFCraft/report-2-cover.pdf so I have
+      the working version in my files.
+    setup:
+      - close_all: true
+      - open_app: pdfcraft
+      - reset_app: pdfcraft
+      - seed_fixture: { path: /PDFCraft/report-q3.pdf, fixture: report-q3.pdf }
+    oracle:
+      - tool: pdfcraft.open_file
+        path: /PDFCraft/report-q3.pdf
+      - tool: pdfcraft.page_duplicate
+        pages: "1"
+      - tool: pdfcraft.save_copy
+        path: /PDFCraft/report-2-cover.pdf
+    checks:
+      - craft_request: { app: pdfcraft, method: docInspect, expect: { path: "documents[0].pages", equals: 3 } }
+      - file_exists: /PDFCraft/report-2-cover.pdf
+    covers: [pdfcraft.open_file, pdfcraft.page_duplicate, pdfcraft.save_copy]
+    notes: "Three-action workflow; the page count (2 to 3) and the saved copy are both pinned in their own states."
+
+  - id: pdfcraft-09-blank-middle
+    split: train
+    title: "Insert a blank page between the report and the appendix"
+    prompt: >-
+      I want a blank page between the main body of my Q3 report at
+      /PDFCraft/report-q3.pdf and the appendix at the back, so the appendix starts on
+      a fresh page. Insert the blank page at the position where the appendix starts,
+      and save a copy of the result to /PDFCraft/report-3-pages.pdf.
+    setup:
+      - close_all: true
+      - open_app: pdfcraft
+      - reset_app: pdfcraft
+      - seed_fixture: { path: /PDFCraft/report-q3.pdf, fixture: report-q3.pdf }
+    oracle:
+      - tool: pdfcraft.open_file
+        path: /PDFCraft/report-q3.pdf
+      - tool: pdfcraft.page_insert_blank
+        at: 2
+      - tool: pdfcraft.save_copy
+        path: /PDFCraft/report-3-pages.pdf
+    checks:
+      - craft_request: { app: pdfcraft, method: docInspect, expect: { path: "documents[0].pages", equals: 3 } }
+      - file_exists: /PDFCraft/report-3-pages.pdf
+    covers: [pdfcraft.open_file, pdfcraft.page_insert_blank, pdfcraft.save_copy]
+    notes: "Three-action workflow; the inserted page takes position 2, pushing the appendix to page 3, and the count plus the copy are pinned."
+
+  - id: pdfcraft-10-title-link
+    split: train
+    title: "Link the report title to the reports page"
+    prompt: >-
+      Open my Q3 report at /PDFCraft/report-q3.pdf and add a link over the title area
+      of the first page that opens https://example.com/reports in the browser, so
+      anyone who clicks the title lands on the reports page. When it is in, save a
+      copy to /PDFCraft/report-linked.pdf.
+    setup:
+      - close_all: true
+      - open_app: pdfcraft
+      - reset_app: pdfcraft
+      - seed_fixture: { path: /PDFCraft/report-q3.pdf, fixture: report-q3.pdf }
+    needs: "pdfcraft.read_link: the link command runs, but the annotation is not part of the doc_inspect state (name, pages, dirty), so no check can read it back; the saved copy is the pin and would pass without the link."
+    checks:
+      - file_exists: /PDFCraft/report-linked.pdf
+    covers: [pdfcraft.open_file, pdfcraft.text_find, pdfcraft.link_add, pdfcraft.save_copy]
+    notes: "The agent finds the title line to place the link; the annotation itself stays unpinned until a read exists."
+
+  - id: pdfcraft-11-appendix-first
+    split: holdout
+    title: "Reverse the page order so the appendix leads"
+    prompt: >-
+      For the client pack I want the appendix of my Q3 report at
+      /PDFCraft/report-q3.pdf to come first. Reverse the order of the pages so the
+      appendix page leads and the cover sits last, and then tell me the order the
+      pages are in now.
+    setup:
+      - close_all: true
+      - open_app: pdfcraft
+      - reset_app: pdfcraft
+      - seed_fixture: { path: /PDFCraft/report-q3.pdf, fixture: report-q3.pdf }
+    needs: "pdfcraft.read_page_order: the reverse command runs, but the page count is unchanged and no pack tool reads back the page order, so a page-count check would pass without the work; the answer is the check."
+    checks:
+      - answer_contains: "Appendix"
+    covers: [pdfcraft.open_file, pdfcraft.page_reverse]
+    notes: "The agent confirms the new order from the app view; the answer must name the appendix as the leading page."
+    check_gap: "the answer may describe the order without the word Appendix (for example appendix first); the lead confirms the phrasing in the agent run."
+
+  - id: pdfcraft-12-archive-corrected
+    split: train
+    title: "Correct the review date and save the archive copy"
+    prompt: >-
+      The review date in my Q3 report at /PDFCraft/report-q3.pdf slipped: the line
+      says 15 January 2027, but it should say 15 January 2028. Make that change and
+      save the corrected document as /PDFCraft/report-q3-2028.pdf, which is the copy
+      that goes to the archive.
+    setup:
+      - close_all: true
+      - open_app: pdfcraft
+      - reset_app: pdfcraft
+      - seed_fixture: { path: /PDFCraft/report-q3.pdf, fixture: report-q3.pdf }
+    needs: "pdfcraft.text_replace: the app's edit command answers {ran} without changing the document (probe r2: doc_inspect dirty stays false and the export still carries 15 January 2027, no 2028), so the corrected date cannot be pinned; the pack tool re-reads the export after the edit and fails honestly with a teaching error instead. The saved copy is the untouched fixture under the new name."
+    checks:
+      - file_exists: /PDFCraft/report-q3-2028.pdf
+    covers: [pdfcraft.open_file, pdfcraft.text_replace, pdfcraft.save_copy]
+    notes: "The archive workflow; the edit is pinned by the tool's read-after-write teaching error in the run, and the copy name (the corrected year) in Files."

@@ -36,15 +36,26 @@ const TREE_AFTER = {
   properties: { children: [{ path: 'transform', children: [] }, { path: 'effects', children: [{ path: 'effects/#1', name: 'Gaussian Blur', type: 'group', children: [{ path: 'effects/#1/blurriness', type: 'number', value: 12 }] }] }] },
 };
 // A fake app API at the ctx.craft level, recording the unified calls the tools make.
+// It keeps a tiny comp list so comp.new models the engine's duplicate-name rename
+// ("Night" -> "Night 2") and comp.info reads back the active comp.
 const fakeCraft = () => {
   const calls = [];
+  const comps = [{ id: 1, name: 'Main' }];
+  let activeName = 'Main';
   const rec = (name, make = () => ({})) => (...args) => { calls.push([name, ...args]); return Promise.resolve(make(...args)); };
   return {
     calls,
     request: rec('request', (method, params) => ({ method, params })),
     execute: rec('execute', (command, params) => {
-      if (command === 'project.summary') return { name: 'Project', path: null, dirty: true, comps: [{ id: 1, name: 'Main' }], undo: ['Apply Gaussian Blur', 'Set opacity'] };
-      if (command === 'comp.info') return { id: 1, name: 'Main', width: 1920, height: 1080, layers: [{ id: 7, name: 'BG' }] };
+      if (command === 'project.summary') return { name: 'Project', path: null, dirty: true, comps, undo: ['Apply Gaussian Blur', 'Set opacity'] };
+      if (command === 'comp.new') {
+        const id = (comps.at(-1)?.id ?? 0) + 1;
+        const name = comps.some(comp => comp.name === params.name) ? `${params.name} 2` : params.name;
+        comps.push({ id, name });
+        activeName = name;
+        return { comp: id };
+      }
+      if (command === 'comp.info') return { id: 1, name: activeName, width: 1920, height: 1080, layers: [{ id: 7, name: 'BG' }] };
       if (command === 'layer.tree') return calls.filter(call => call[1] === 'layer.tree').length === 1 ? TREE_BEFORE : TREE_AFTER;
       return { command, params };
     }),
@@ -58,20 +69,23 @@ const runTool = (name, args, craft) => byName(name).run(args, { host: {}, craft:
 test('the pack declares its id, title and live-check exports', () => {
   assert.deepEqual(pack, { id: 'effectcraft', title: 'EffectCraft' });
   assert.deepEqual(usesCommands.sort(), [
-    'app.capabilities', 'comp.info', 'edit.history.goto', 'edit.history.list', 'edit.redo', 'edit.undo',
+    'app.capabilities', 'comp.info', 'comp.new', 'comp.open', 'edit.history.goto', 'edit.history.list', 'edit.redo', 'edit.undo',
     'effect.apply', 'effect.list', 'engine.batch', 'editor.state', 'file.newProject', 'file.openDemoProject',
-    'file.save', 'layer.tree', 'prop.addKey', 'prop.get', 'prop.set', 'prop.setExpression',
+    'file.save', 'layer.addItem', 'layer.newSolid', 'layer.newText', 'layer.tree', 'prop.addKey', 'prop.get', 'prop.set',
+    'prop.setExpression',
     'project.summary', 'script.run', 'text.fonts',
   ].sort());
   assert.deepEqual(usesMethods, []);
 });
 
-test('the pack exposes exactly the 22 effectcraft tools', () => {
-  assert.equal(tools.length, 22);
+test('the pack exposes exactly the 28 effectcraft tools', () => {
+  assert.equal(tools.length, 28);
   assert.deepEqual(tools.map(tool => tool.name).sort(), [
-    'effectcraft.batch', 'effectcraft.comp', 'effectcraft.effect_add', 'effectcraft.effects_list',
+    'effectcraft.add_item', 'effectcraft.add_solid', 'effectcraft.add_text_layer', 'effectcraft.batch',
+    'effectcraft.comp', 'effectcraft.comp_switch', 'effectcraft.effect_add', 'effectcraft.effects_list',
     'effectcraft.fonts_list', 'effectcraft.history', 'effectcraft.inspect', 'effectcraft.keyframe_add',
-    'effectcraft.layer', 'effectcraft.list_commands', 'effectcraft.open_file', 'effectcraft.project',
+    'effectcraft.layer', 'effectcraft.list_commands', 'effectcraft.new_comp', 'effectcraft.new_project',
+    'effectcraft.open_file', 'effectcraft.project',
     'effectcraft.project_open', 'effectcraft.project_save', 'effectcraft.property_get', 'effectcraft.property_set', 'effectcraft.redo',
     'effectcraft.run_command', 'effectcraft.save_copy', 'effectcraft.script_run', 'effectcraft.state', 'effectcraft.undo',
   ]);
@@ -115,7 +129,106 @@ test('the effects are read for reads, destructive for project replacement, chang
   }
   assert.equal(byName('effectcraft.project_open').effect, 'destructive');
   assert.equal(byName('effectcraft.open_file').effect, 'destructive');
+  // new_project replaces the open project the way project_open new=true does.
+  assert.equal(byName('effectcraft.new_project').effect, 'destructive');
   for (const tool of tools) if (tool.effect !== 'read' && tool.effect !== 'destructive') assert.equal(tool.effect, 'change', tool.name);
+});
+
+// The flat create verbs (b14: the pack had no flat create tools, so the model edited the
+// demo project instead of starting fresh). Each wraps the exact engine command the
+// journeys' oracles drive, so the wire params are the oracle's own params.
+test('the flat create tools send the engine commands with the oracle wire params', async () => {
+  const craft = fakeCraft();
+  const project = await runTool('effectcraft.new_project', {}, craft);
+  assert.deepEqual(project.path, null, 'new_project returns the fresh project summary');
+  assert.match(project.note, /new_comp/, 'new_project names the next step when no comp is open');
+  await runTool('effectcraft.new_comp', { name: 'Titles', width: 1920, height: 1080, duration: 5 }, craft);
+  await runTool('effectcraft.add_text_layer', { text: 'Shipped on time' }, craft);
+  await runTool('effectcraft.add_text_layer', { text: 'Hold', name: 'Hold Layer' }, craft);
+  await runTool('effectcraft.add_solid', { name: 'Background', width: 1920, height: 1080 }, craft);
+  await runTool('effectcraft.add_solid', { name: 'Card', width: 800, height: 600, color: '#ff0000' }, craft);
+  await runTool('effectcraft.add_item', { item: 'city-night.png' }, craft);
+  assert.deepEqual(craft.calls, [
+    ['execute', 'file.newProject', {}],
+    ['execute', 'project.summary', {}],
+    ['execute', 'comp.new', { name: 'Titles', width: 1920, height: 1080, duration: 5 }],
+    ['execute', 'comp.info', {}],
+    ['execute', 'layer.newText', { text: 'Shipped on time' }],
+    ['execute', 'layer.newText', { text: 'Hold', name: 'Hold Layer' }],
+    ['execute', 'layer.newSolid', { name: 'Background', width: 1920, height: 1080 }],
+    ['execute', 'layer.newSolid', { name: 'Card', width: 800, height: 600, color: '#ff0000' }],
+    ['execute', 'layer.addItem', { item: 'city-night.png' }],
+  ]);
+});
+
+// Sweep b16 (lfm3-1.7b): effectcraft-04 looped new_project / project_open because the bare
+// "no composition is open" app_error named no next step; -05/-06 ran new_comp twice with
+// the same name and the engine's silent rename ("Night 2") orphaned the layers; -05/-06
+// also burned 10+ rounds guessing the opacity property path. The guards turn each dead end
+// into a named next step.
+test('new_comp surfaces the engine rename and names the comp_switch back to the original', async () => {
+  const craft = fakeCraft();
+  await runTool('effectcraft.new_comp', { name: 'Night' }, craft);
+  let error;
+  try {
+    await runTool('effectcraft.new_comp', { name: 'Night' }, craft);
+  } catch (thrown) { error = thrown; }
+  assert.ok(error instanceof ToolError, 'the duplicate new_comp throws a ToolError');
+  assert.match(error.message, /renamed to "Night 2"/);
+  assert.match(error.fix, /effectcraft\.comp_switch comp=Night/);
+  const switched = await runTool('effectcraft.comp_switch', { comp: 'Night' }, craft);
+  assert.deepEqual(switched, { command: 'comp.open', params: { comp: 'Night' } }, 'comp_switch wraps comp.open');
+});
+
+test('layer create tools teach the missing comp instead of the bare engine error', async () => {
+  const craft = fakeCraft();
+  craft.execute = () => {
+    const error = new Error('command `layer.newSolid` is not available right now: no composition is open');
+    error.code = 'app_error';
+    return Promise.reject(error);
+  };
+  for (const [name, args] of [
+    ['effectcraft.add_text_layer', { text: 'Live' }],
+    ['effectcraft.add_solid', { name: 'Card', width: 800, height: 600 }],
+    ['effectcraft.add_item', { item: 'city-night.png' }],
+  ]) {
+    let error;
+    try { await runTool(name, args, craft); } catch (thrown) { error = thrown; }
+    assert.ok(error instanceof ToolError, `${name} throws a ToolError`);
+    assert.match(error.message, /create a comp before adding layers/);
+    assert.match(error.fix, /effectcraft\.new_comp/);
+  }
+});
+
+test('property tools teach the transform path instead of the bare no-property error', async () => {
+  const craft = fakeCraft();
+  craft.execute = (command, params) => {
+    const error = new Error(`invalid parameters for \`${command}\`: no property \`${params.path}\``);
+    error.code = 'app_error';
+    return Promise.reject(error);
+  };
+  for (const [name, args] of [
+    ['effectcraft.property_get', { layer: '2', path: 'opacity' }],
+    ['effectcraft.property_set', { layer: '2', path: 'opacity', value: '50' }],
+    ['effectcraft.keyframe_add', { layer: '2', path: 'opacity', keys: '[{"time":0,"value":50}]' }],
+  ]) {
+    let error;
+    try { await runTool(name, args, craft); } catch (thrown) { error = thrown; }
+    assert.ok(error instanceof ToolError, `${name} throws a ToolError`);
+    assert.match(error.message, /transform\/opacity/, `${name} names the transform path`);
+    assert.match(error.fix, /effectcraft\.layer/, `${name} points at the layer tree`);
+  }
+});
+
+test('new_comp and add_item make their required params required', () => {
+  const noName = checkArgs(byName('effectcraft.new_comp'), { duration: 5 }, { choices });
+  assert.equal(noName.ok, false);
+  assert.equal(noName.error.type, 'missing_argument');
+  const noItem = checkArgs(byName('effectcraft.add_item'), {}, { choices });
+  assert.equal(noItem.ok, false);
+  assert.equal(noItem.error.type, 'missing_argument');
+  const text = checkArgs(byName('effectcraft.add_text_layer'), { text: 'Live' }, { choices });
+  assert.ok(text.ok, text.error?.message);
 });
 
 test('effectcraft.inspect runs project.summary then comp.info, null when the comp read fails', async () => {
@@ -197,6 +310,34 @@ test('effect_add runs one engine.batch of effect.apply plus prop.set per value, 
     assert.match(error.message, /values must be a JSON object/);
     return true;
   });
+});
+
+// b20 effectcraft-04: a bare "12" for values is a valid JSON number, so the old code parsed
+// it and Object.entries dropped it; the effect landed with every parameter at zero.
+test('effect_add refuses a values argument that parses but is not a JSON object', async () => {
+  const craft = fakeCraft();
+  await assert.rejects(runTool('effectcraft.effect_add', { layer: '1', effect: 'Gaussian Blur', values: '12' }, craft), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.match(error.message, /values must be a JSON object/);
+    return true;
+  });
+  assert.equal(craft.calls.length, 1, 'only the before layer.tree ran; no batch with empty values');
+});
+
+// b20 effectcraft-06: expression text in value reached prop.set, the app answered
+// "bad value", and the model retried the same dead end to the round cap.
+test('property_set refuses non-# string values and points at the expression parameter', async () => {
+  const craft = fakeCraft();
+  await assert.rejects(runTool('effectcraft.property_set', { layer: '1', path: 'transform/opacity', value: 'time + 1' }, craft), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.match(error.message, /expression/);
+    return true;
+  });
+  assert.deepEqual(craft.calls, []);
+  await runTool('effectcraft.property_set', { layer: '1', path: 'transform/opacity', value: '#FF0000' }, craft);
+  assert.deepEqual(craft.calls[0], ['execute', 'prop.set', { layer: '1', path: 'transform/opacity', value: '#FF0000' }], 'a #color raw string still goes to prop.set');
 });
 
 test('effects_list, fonts_list, state and script_run send their engine commands', async () => {
@@ -378,7 +519,7 @@ test('effectcraft.open_file reads the file, drives the wrapper input, and waits 
   assert.deepEqual(ctx.calls.read, ['/EffectCraft/ad.ecproj']);
   assert.equal(wrapper.opened.length, 1);
   assert.equal(wrapper.opened[0].name, 'ad.ecproj');
-  assert.deepEqual(out, { name: 'ad.ecproj', bytes: 3, opened: 'the app state changed' });
+  assert.deepEqual(out, { name: 'ad.ecproj', bytes: 3, opened: 'the app state changed', next: 'ad.ecproj is open. To check it, call effectcraft.inspect. Opening it again shows a dialog and blocks the app.' });
   assert.equal(byName('effectcraft.open_file').effect, 'destructive'); // a project open replaces the open one
 });
 
@@ -420,9 +561,9 @@ test('effectcraft.save_copy passes overwrite through and refuses a foreign targe
 
 const { skills, errors: skillErrors } = parseSkills(SKILLS_MD, 'effectcraft');
 
-test('skills.md parses with the runtime parser without errors and has 10 skills', () => {
+test('skills.md parses with the runtime parser without errors and has 11 skills', () => {
   assert.deepEqual(skillErrors, []);
-  assert.equal(skills.length, 10);
+  assert.equal(skills.length, 11);
   for (const skill of skills) {
     assert.ok(skill.slug && skill.summary, `skill ${skill.slug} slug/summary`);
     assert.ok(skill.summary.length <= 160, `skill ${skill.slug} summary is ${skill.summary.length} chars`);

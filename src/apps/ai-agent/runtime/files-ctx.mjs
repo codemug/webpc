@@ -26,6 +26,16 @@ export function createFilesCtx(store, { broadcast = () => {}, maxFind = 500 } = 
     }
   };
   const kindOf = async path => { const { dir, name } = splitPath(path); return name ? store.exists(dir, name) : 'folder'; };
+  // mkdir -p: a save into a folder that is not there yet makes it (one call, not two, for a small model).
+  const makeFolders = async path => {
+    const parts = String(path ?? '').split('/').filter(Boolean);
+    for (let i = 0; i < parts.length; i++) {
+      const dir = parts.slice(0, i).join('/'); const kind = await store.exists(dir, parts[i]);
+      if (kind === 'file') throw fail('not_a_folder', `/${parts.slice(0, i + 1).join('/')} is a file.`);
+      if (!kind) await store.createFolder(dir, parts[i]);
+    }
+    return `/${parts.join('/')}`;
+  };
   const api = {
     list: path => wrap(async () => {
       const { dir, name } = splitPath(path); const full = [dir, name].filter(Boolean).join('/');
@@ -52,7 +62,7 @@ export function createFilesCtx(store, { broadcast = () => {}, maxFind = 500 } = 
     writeText: (path, text, { overwrite = false } = {}) => wrap(async () => {
       const { dir, name } = splitPath(path);
       if (!name) throw fail('invalid_name', 'Give a file name.');
-      if (dir && (await kindOf(`/${dir}`)) !== 'folder') throw fail('not_found', `The folder /${dir} does not exist; make it first.`);
+      if (dir) await makeFolders(dir);
       const kind = await store.exists(dir, name);
       if (kind === 'folder') throw fail('not_a_file', `${toPath(dir, name)} is a folder.`);
       if (kind === 'file' && !overwrite) throw fail('exists', `${toPath(dir, name)} already exists.`);
@@ -72,7 +82,7 @@ export function createFilesCtx(store, { broadcast = () => {}, maxFind = 500 } = 
     writeBytes: (path, bytes, { overwrite = false, type = 'application/octet-stream' } = {}) => wrap(async () => {
       const { dir, name } = splitPath(path);
       if (!name) throw fail('invalid_name', 'Give a file name.');
-      if (dir && (await kindOf(`/${dir}`)) !== 'folder') throw fail('not_found', `The folder /${dir} does not exist; make it first.`);
+      if (dir) await makeFolders(dir);
       const kind = await store.exists(dir, name);
       if (kind === 'folder') throw fail('not_a_file', `${toPath(dir, name)} is a folder.`);
       if (kind === 'file' && !overwrite) throw fail('exists', `${toPath(dir, name)} already exists.`);
@@ -82,20 +92,17 @@ export function createFilesCtx(store, { broadcast = () => {}, maxFind = 500 } = 
     }),
     appendText: (path, text) => wrap(async () => {
       const { dir, name } = splitPath(path);
+      if (dir) await makeFolders(dir);
       const before = (await store.exists(dir, name)) === 'file' ? await (await store.read(dir, name)).data.text() : '';
       const data = new Blob([before + String(text)], { type: 'text/plain' });
       await store.write(dir, name, data); broadcast(toPath(dir, name));
       return { path: toPath(dir, name), size: data.size };
     }),
     mkdir: path => wrap(async () => {
-      const parts = String(path ?? '').split('/').filter(Boolean); splitPath(path);
-      for (let i = 0; i < parts.length; i++) {
-        const dir = parts.slice(0, i).join('/'); const kind = await store.exists(dir, parts[i]);
-        if (kind === 'file') throw fail('not_a_folder', `/${parts.slice(0, i + 1).join('/')} is a file.`);
-        if (!kind) await store.createFolder(dir, parts[i]);
-      }
-      broadcast(`/${parts.join('/')}`);
-      return { path: `/${parts.join('/')}` };
+      splitPath(path);
+      const made = await makeFolders(path);
+      broadcast(made);
+      return { path: made };
     }),
     rename: (path, to) => wrap(async () => {
       const a = splitPath(path); const b = splitPath(to);

@@ -85,13 +85,47 @@ const parseCommandParams = text => {
 };
 
 // commands.rs pick(): copy the listed keys (when present) into a params object.
+// checkArgs keeps list items as text ("3", "7"); the engine wants photo ids as whole numbers.
 const pick = (args, keys) => {
   const out = {};
-  for (const key of keys) if (args[key] !== undefined) out[key] = args[key];
+  for (const key of keys) if (args[key] !== undefined) out[key] = key === 'ids' ? args[key].map(Number) : args[key];
   return out;
 };
 
+// T10 post-mortem (oracles r12/r13): the import hand-off is a single wrapper -> editor
+// postMessage (openFromBytes drives the #file input; the wrapper posts lightcraft:open),
+// and the commit lands a few catalog calls later. The eval harness already gates
+// open_app: lightcraft on the page being fully ready (eval.mjs resetApp polls
+// catalog.stats until the demo library count is stable for four reads), so a readiness
+// gate here is redundant - and a hard count wait turned a silent never-commit into a
+// 120 s setup hang (r12: 1/8 with a 60 s wait, r13: 0/8 with a 120 s wait), while the
+// minimal hand-off (oracle r8: post the open, return at once) was 9/9 green - the
+// journey's own checks read the catalog a few calls later and arbitrate the count.
+
 export const pack = { id: APP, title: 'LightCraft' };
+
+// The delete post-condition (T10 finding): after photo.delete the store's own deleted
+// counter (catalog.stats.deleted) must rise past the pre-delete baseline within the settle
+// window. It never rises on the current build (oracle r16: the photo still reads as not
+// deleted at 5 s / 9 s / 13 s after the delete), so this throws - the honest failure a
+// silent never-reflect would be. No baseline (stats unreadable) means nothing to verify.
+export async function verifyDeletedCount(host, changed, timeoutMs = 5000, pollMs = 200) {
+  let before;
+  try { before = (await command(host, 'catalog.stats'))?.deleted; } catch { before = null; }
+  if (typeof before !== 'number') return;
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    let after;
+    try { after = (await command(host, 'catalog.stats'))?.deleted; } catch { after = null; }
+    if (typeof after === 'number' && after > before) return;
+    if (Date.now() >= deadline) {
+      throw new ToolError('app_error',
+        `photo.delete reported changed:${changed} but the library's deleted count did not rise within ${Math.round(timeoutMs / 1000)} s - the deletion surface does not reflect in reads on this build`,
+        '');
+    }
+    await sleep(pollMs);
+  }
+}
 
 export const tools = [
   {
@@ -120,10 +154,13 @@ export const tools = [
     name: 'lightcraft.filter',
     purpose: 'Filter the library view by rating, flag, label, keyword and more.',
     when: 'Use when the user wants to narrow the library view.',
-    params: { filter: { type: 'text', description: 'JSON object of filter keys: {"rating":4,"flag":"pick","keyword":"trip"}; partial, keys from the app filter bar' } },
+    params: { filter: { type: 'text', description: 'JSON object of filter keys: {"rating":4,"ratingOp":"atLeast","flag":"pick","keyword":"trip"}; rating is one star value, ratingOp "atLeast" or "atMost" makes it a range; partial, keys from the app filter bar' } },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { filter: '{"rating":4}' }, says: 'Show only the 4-star photos' }],
+    examples: [
+      { args: { filter: '{"rating":3}' }, says: 'Show only the 3-star photos' },
+      { args: { filter: '{"rating":3,"ratingOp":"atLeast"}' }, says: 'Show the photos rated 3 stars or better' },
+    ],
     // cmd/library/specs.rs:86 library.filter: a partial Filter {text?, rating?, ratingOp?, flag?,
     // flags?, label?, kind?, merged?, edited?, date?, libraryFolder?, keyword?, person?, camera?}
     run: async (args, ctx) => {
@@ -162,7 +199,7 @@ export const tools = [
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { rating: 4 }, says: 'Rate the selection 4 stars' }],
+    examples: [{ args: { rating: 3 }, says: 'Rate the selection 3 stars' }],
     // cmd/library/specs.rs:455 photo.rate {rating: 0..5, ids?, advance?}
     run: async (args, ctx) => command(ctx.host, 'photo.rate', pick(args, ['rating', 'ids', 'advance'])),
   },
@@ -189,7 +226,16 @@ export const tools = [
     needs: NEEDS,
     examples: [{ args: { ids: [3] }, says: 'Delete this photo' }],
     // cmd/library/specs.rs:657 photo.delete {ids?} - moves to Recently Deleted (not permanent)
-    run: async (args, ctx) => command(ctx.host, 'photo.delete', pick(args, ['ids'])),
+    run: async (args, ctx) => {
+      const result = await command(ctx.host, 'photo.delete', pick(args, ['ids']));
+      // T10 finding (oracle r16 settle ladder): the deletion surface does not reflect in
+      // reads on the current build (the deleted photo still reads as not deleted at 5 s,
+      // 9 s and 13 s after the delete; build 13 had it settled by ~4 s). Verify the
+      // post-condition against the store's own deleted counter and fail honestly instead
+      // of reporting a change the app never reflects.
+      if (typeof result?.changed === 'number' && result.changed > 0) await verifyDeletedCount(ctx.host, result.changed);
+      return result;
+    },
   },
   {
     name: 'lightcraft.restore',
@@ -259,7 +305,7 @@ export const tools = [
     params: { path: { type: 'path', required: false, description: 'A Files path to a photo (an image or camera RAW)' } },
     effect: 'change',
     needs: ['host', 'app:lightcraft', 'files'],
-    examples: [{ args: { path: '/Photos/trip/IMG_0001.cr2' }, says: 'Add this photo to the library' }],
+    examples: [{ args: { path: '/Photos/holiday/IMG_0042.cr2' }, says: 'Add this photo to the library' }],
     // LightCraft only imports (it has a library, not documents), so it gets import_file and no
     // save_copy. Drives the wrapper's own #file input (app.mjs:38); the wrapper posts
     // lightcraft:open, which the page's host bridge adds to the library as one dropped on the
@@ -269,6 +315,10 @@ export const tools = [
     run: async (args, ctx) => {
       const file = await readOpenFile(ctx, args.path, { id: APP, title: 'LightCraft' });
       const wrapper = await ctx.host.appWindow(APP);
+      // The single hand-off: drive the wrapper's #file input. The eval harness already
+      // waited for the ready page (resetApp's stable demo count), and the commit is
+      // arbitrated by the journey's own catalog checks a few calls later - no waits here
+      // (T10 r12/r13: a readiness gate plus a hard count wait regressed 9/9 to 0/8).
       return openFromBytes(wrapper, APP, file.name, file.bytes);
     },
   },

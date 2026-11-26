@@ -1,0 +1,181 @@
+app: vectorcraft
+# VectorCraft journeys (J1, Craft Integrator lane), written to the post-gate rules.
+# State checks read through craft_request on document.inspect, whose shape is pinned by the
+# upstream engine (storytold/vectorcraft v0.24.1, crates/engine/src/inspect.rs):
+# {title, artboards, selection, layers: [node summaries, newest first], objects: total node count,
+# history}; a kind-scoped inspect returns {nodes: [...]} of the matching nodes; a text node
+# summary carries its colour as a lowercase #rrggbb string. tool_result is used only for the
+# SVG export, whose output is the deliverable itself.
+
+journeys:
+  - id: vectorcraft-01-poster-base-layout
+    split: train
+    title: "Build the poster base layout with two shapes and save it"
+    prompt: >-
+      I am kicking off the poster project in VectorCraft and I want the base layout on the page
+      before anything else. Start a new document called Poster with a 595 by 842 artboard, draw
+      a 300 by 180 rectangle at 40, 40 filled #3B5BDB, then draw a 90 by 90 ellipse at 340, 120,
+      and save the document to /VectorCraft/poster.vectorcraft.
+    setup:
+      - close_all: true
+      - open_app: vectorcraft
+    oracle:
+      - { tool: vectorcraft.new_document, name: Poster, width: 595, height: 842 }
+      - { tool: vectorcraft.draw_shape, shape: rectangle, x: 40, y: 40, width: 300, height: 180, fill: '#3B5BDB' }
+      - { tool: vectorcraft.draw_shape, shape: ellipse, x: 340, y: 120, width: 90, height: 90 }
+      - { tool: vectorcraft.save_copy, path: /VectorCraft/poster.vectorcraft }
+    checks:
+      - craft_request: { app: vectorcraft, method: document.inspect, expect: { path: title, equals: Poster } }
+      - craft_request: { app: vectorcraft, method: document.inspect, params: { kind: rectangle, limit: 1 }, expect: { path: total, equals: 1 } }
+      - craft_request: { app: vectorcraft, method: document.inspect, params: { kind: ellipse, limit: 1 }, expect: { path: total, equals: 1 } }
+      - file_exists: /VectorCraft/poster.vectorcraft
+    covers: [vectorcraft.new_document, vectorcraft.draw_shape, vectorcraft.save_copy]
+    notes: The kind-scoped inspects prove a rectangle and an ellipse exist in the document; the artboard size, title and saved file pin the rest.
+
+  - id: vectorcraft-02-headline-text-and-svg
+    split: train
+    title: "Add a coloured headline and export the document as SVG"
+    prompt: >-
+      The release notes page needs a headline and I want to check that text survives an SVG
+      export before I build the rest of the page. Start a fresh document, add a text layer at
+      40, 80 in 24 point that says Quarterly report in colour #E8590C, and export the document
+      as SVG so I can check the markup.
+    setup:
+      - close_all: true
+      - open_app: vectorcraft
+    oracle:
+      - { tool: vectorcraft.new_document, name: Headline }
+      - { tool: vectorcraft.add_text, text: Quarterly report, x: 40, y: 80, size: 24, color: '#E8590C' }
+      - { tool: vectorcraft.export, format: svg }
+    checks:
+      - craft_request: { app: vectorcraft, method: document.inspect, params: { kind: Type, limit: 1 }, expect: { path: 'nodes[0].fill', equals: '#E8590C' } }
+      - tool_result: { tool: vectorcraft.export, path: dataBase64, contains: PD94bWwg }
+    covers: [vectorcraft.new_document, vectorcraft.add_text, vectorcraft.export]
+    notes: A text node is a Type object whose characters paint reads back as its fill (lowercase hex); the export payload is base64 that starts with the base64 of the xml declaration, so the deliverable is pinned on its prefix.
+
+  - id: vectorcraft-03-open-seeded-chart
+    split: train
+    title: "Import the bar chart SVG from Files"
+    prompt: >-
+      I have a little bar chart at /VectorCraft/chart.svg that I exported from the spreadsheet
+      tool and I want it in VectorCraft so I can clean it up. Open that file for me and make
+      sure all three bars actually came across in the import, because I have been burned by
+      half-baked imports before.
+    setup:
+      - close_all: true
+      - open_app: vectorcraft
+      - seed_file: { path: /VectorCraft/chart.svg, text: '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="120"><rect x="10" y="60" width="40" height="50" fill="#0E9F6E"/><rect x="80" y="20" width="40" height="90" fill="#3B5BDB"/><rect x="150" y="80" width="40" height="30" fill="#E8590C"/></svg>' }
+    oracle:
+      - { tool: vectorcraft.open_file, path: /VectorCraft/chart.svg }
+    checks:
+      - window_open: vectorcraft
+      - craft_request: { app: vectorcraft, method: document.inspect, expect: { path: objects, at_least: 3 } }
+    covers: [vectorcraft.open_file]
+    notes: The seed has three bars; the document node count proves the artwork landed, not just an empty document.
+
+  - id: vectorcraft-04-which-bar-is-tallest
+    split: holdout
+    title: "Open the chart and report which bar is the tallest"
+    prompt: >-
+      The chart from /VectorCraft/chart.svg is going into the quarterly report and I need the
+      facts straight. Open it, look at the three bars, and tell me how tall the tallest bar is
+      in pixels, because I want to highlight it in the write-up and I do not trust my memory on
+      it.
+    setup:
+      - close_all: true
+      - open_app: vectorcraft
+      - seed_file: { path: /VectorCraft/chart.svg, text: '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="120"><rect x="10" y="60" width="40" height="50" fill="#0E9F6E"/><rect x="80" y="20" width="40" height="90" fill="#3B5BDB"/><rect x="150" y="80" width="40" height="30" fill="#E8590C"/></svg>' }
+    oracle:
+      - { tool: vectorcraft.open_file, path: /VectorCraft/chart.svg }
+      - { tool: vectorcraft.inspect, depth: 2 }
+    checks:
+      - answer_contains: '90'
+      - craft_request: { app: vectorcraft, method: document.inspect, expect: { path: objects, at_least: 3 } }
+    covers: [vectorcraft.open_file, vectorcraft.inspect]
+    notes: Read then answer; the seed's middle bar is the tallest (height 90 against 50 and 30), so the answer holds the number the read shows.
+
+  - id: vectorcraft-05-icon-oval-svg
+    split: train
+    title: "Draw an oval and save the drawing as a real SVG file"
+    prompt: >-
+      I need an oval for the app icon work and I want the real SVG file, not a screenshot. Start
+      a new document called Oval, draw a 220 by 220 ellipse at 50, 50, and save a
+      copy of the drawing as /VectorCraft/oval.svg so I can hand the actual file to the icon
+      team.
+    setup:
+      - close_all: true
+      - open_app: vectorcraft
+    oracle:
+      - { tool: vectorcraft.new_document, name: Oval }
+      - { tool: vectorcraft.draw_shape, shape: ellipse, x: 50, y: 50, width: 220, height: 220 }
+      - { tool: vectorcraft.save_copy, path: /VectorCraft/oval.svg }
+    checks:
+      - craft_request: { app: vectorcraft, method: document.inspect, expect: { path: title, equals: Oval } }
+      - file_exists: /VectorCraft/oval.svg
+      - file_contains: { path: /VectorCraft/oval.svg, text: '<svg' }
+    covers: [vectorcraft.new_document, vectorcraft.draw_shape, vectorcraft.save_copy]
+    notes: The .svg extension makes save_copy serialize as SVG, so the file on disk is real SVG markup; the file check pins that.
+
+  - id: vectorcraft-06-star-undo-redo
+    split: train
+    title: "Draw a star, undo the draw, redo it"
+    prompt: >-
+      I drew a star on a fresh page and I want to make sure the undo history behaves before the
+      client call. Start a new VectorCraft document, draw a five point star, undo that draw so
+      the page is empty again, and then redo it so the star is back on the page.
+    setup:
+      - close_all: true
+      - open_app: vectorcraft
+    oracle:
+      - { tool: vectorcraft.new_document, name: Star }
+      - { tool: vectorcraft.draw_shape, shape: star, radius1: 60, radius2: 25, cx: 200, cy: 200 }
+      - { tool: vectorcraft.undo }
+      - { tool: vectorcraft.redo }
+    checks:
+      - craft_request: { app: vectorcraft, method: document.inspect, params: { kind: path, limit: 1 }, expect: { path: total, equals: 1 } }
+    covers: [vectorcraft.new_document, vectorcraft.draw_shape, vectorcraft.undo, vectorcraft.redo]
+    notes: A star draws as a plain Path node (the live shapes are only rectangle, ellipse, polygon and line), so the kind pin is path; without the redo the star is gone and the inspect finds nothing.
+
+  - id: vectorcraft-07-batch-dashboard-objects
+    split: holdout
+    title: "Create a batch of dashboard objects and save the document"
+    prompt: >-
+      The dashboard mock needs a quick set of objects in one go. Start a new document called
+      Batch and, without leaving it, create a rectangle at 10, 10 sized 80 by 80, an ellipse
+      with centre 150, 50 and radius 40, and a text layer that says Batch at 140, 70 in 16
+      point, then save the document to /VectorCraft/batch.vectorcraft.
+    setup:
+      - close_all: true
+      - open_app: vectorcraft
+    oracle:
+      - { tool: vectorcraft.new_document, name: Batch }
+      - { tool: vectorcraft.batch, commands: ['shape.rectangle x=10 y=10 width=80 height=80', 'shape.ellipse x=110 y=10 width=80 height=80', 'text.create text=Batch size=16 x=140 y=70'] }
+      - { tool: vectorcraft.save_copy, path: /VectorCraft/batch.vectorcraft }
+    checks:
+      - craft_request: { app: vectorcraft, method: document.inspect, expect: { path: title, equals: Batch } }
+      - craft_request: { app: vectorcraft, method: document.inspect, expect: { path: objects, equals: 4 } }
+      - file_exists: /VectorCraft/batch.vectorcraft
+    covers: [vectorcraft.new_document, vectorcraft.batch, vectorcraft.save_copy]
+    notes: One batch call carries the three creates (the ellipse takes x, y, width, height like a rectangle, so the centred 40 radius lands at 110, 10 at 80 by 80); the document holds the layer plus the three objects, so the node count of 4 only passes if every create ran.
+
+  - id: vectorcraft-08-chart-round-trip
+    split: train
+    title: "Import the chart, save the native copy, and open it back"
+    prompt: >-
+      The bar chart is still an SVG and I want the native document so the next session opens it
+      fast. Open /VectorCraft/chart.svg in VectorCraft, save a copy of the drawing as
+      /VectorCraft/chart.vectorcraft, and then open that saved document back so I can confirm
+      the native copy round-trips with all its bars.
+    setup:
+      - close_all: true
+      - open_app: vectorcraft
+      - seed_file: { path: /VectorCraft/chart.svg, text: '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="120"><rect x="10" y="60" width="40" height="50" fill="#0E9F6E"/><rect x="80" y="20" width="40" height="90" fill="#3B5BDB"/><rect x="150" y="80" width="40" height="30" fill="#E8590C"/></svg>' }
+    oracle:
+      - { tool: vectorcraft.open_file, path: /VectorCraft/chart.svg }
+      - { tool: vectorcraft.save_copy, path: /VectorCraft/chart.vectorcraft }
+      - { tool: vectorcraft.open_file, path: /VectorCraft/chart.vectorcraft }
+    checks:
+      - file_exists: /VectorCraft/chart.vectorcraft
+      - craft_request: { app: vectorcraft, method: document.inspect, expect: { path: objects, at_least: 3 } }
+    covers: [vectorcraft.open_file, vectorcraft.save_copy]
+    notes: Multi-step round trip; after reopening the native file the document still holds the three bars.

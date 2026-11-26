@@ -1,0 +1,194 @@
+app: beepbox
+# BeepBox journeys (J1, OpenCode lane). Setup always resets the editor to a fresh blank song
+# through the run kind (the song is mirrored to localStorage, so a plain open_app would carry
+# the previous journey's song over). beepbox.get_song is the read tool: it returns the live
+# song hash, tempo and playing state, which is how every end state is pinned. The blank song's
+# hash (measured live from the editor's get_song in the r3 oracle run - the hash computed from
+# the vendored synth in node was missing the default note segment and did not round-trip) is
+# 9n31s0k0l00e03t2ma7g0fj07r1i0o432T0v0u00f0qw02d04w2h0E0T0v0u00f0qw02d04w2h0E0T2v0u02f0qw02d04w1E0T2v1u15f10w4qw02d03w0E0b4h400000000h4g000000014h000000004h400000000p16000000
+# and a blank song sits at the default 150 BPM. Playback caveats: the synth's audio context can
+# stay suspended under the headless autoplay policy, so beepbox.play may report playing: false
+# with a note (not an error) - the stop result is still playing: false either way, which is the
+# state the checks pin.
+
+journeys:
+  - id: beepbox-01-tempo-up
+    split: train
+    title: "Bring the tempo up to 140 BPM"
+    prompt: >-
+      The chiptune song in my music editor feels a little sluggish and I want more drive out of
+      it. Bring the tempo up to exactly 140 BPM so it pushes harder, and confirm the new tempo
+      value in your reply, so I know the change landed.
+    setup:
+      - close_all: true
+      - open_app: beepbox
+      - { run: { tool: beepbox.new_song } }
+    oracle:
+      - { tool: beepbox.set_tempo, bpm: 140 }
+    checks:
+      - read_tool: { tool: beepbox.get_song, path: tempo, equals: 140 }
+    covers: [beepbox.set_tempo, beepbox.get_song]
+    notes: >-
+      The tempo is read back from the live song model by the checker, not from the reply.
+
+  - id: beepbox-02-tempo-down
+    split: train
+    title: "Slow the song down to 90 BPM"
+    prompt: >-
+      Slow the song in my BeepBox editor down to ninety BPM. I want it to feel calm and
+      spacious, like a lullable backing track, and I would like to see the tempo value you
+      ended up with in your reply.
+    setup:
+      - close_all: true
+      - open_app: beepbox
+      - { run: { tool: beepbox.new_song } }
+    oracle:
+      - { tool: beepbox.set_tempo, bpm: 90 }
+    checks:
+      - read_tool: { tool: beepbox.get_song, path: tempo, equals: 90 }
+    covers: [beepbox.set_tempo, beepbox.get_song]
+    notes: >-
+      Phrased without a number spelled out as the app would receive it; the checker re-reads
+      the tempo from the song model.
+
+  - id: beepbox-03-play-stop
+    split: train
+    title: "Play the song, then stop it again"
+    prompt: >-
+      I want to hear that the loaded song actually plays. Start playback of it, and as soon as
+      it is going, stop it again. Confirm in your reply that the song is stopped when you are
+      done, so I know the player is idle.
+    setup:
+      - close_all: true
+      - open_app: beepbox
+      - { run: { tool: beepbox.new_song } }
+    oracle:
+      - { tool: beepbox.play }
+      - { tool: beepbox.stop }
+    checks:
+      - read_tool: { tool: beepbox.get_song, path: playing, equals: false }
+      - read_tool: { tool: beepbox.get_song, path: tempo, equals: 150 }
+    covers: [beepbox.play, beepbox.stop, beepbox.get_song]
+    notes: >-
+      The playing state is read back through get_song, not the stop tool's own reply (which
+      only exists if the agent called stop): it is false whether playback was really stopped
+      or the audio context is suspended under the headless autoplay policy; the 150 BPM tempo
+      pins that the fresh setup song is still the one loaded. Unnamed on purpose: the build-3
+      lfm3 baseline missed the open app and routed to Media (the lead's ruling: never edit a
+      user prompt to make a model pass - the agent's context gets the open windows instead).
+
+  - id: beepbox-04-load-blank
+    split: holdout
+    title: "Load a song from its share link"
+    prompt: >-
+      I want to start from a completely clean song and I have the share link handy, so use it:
+      https://beepbox.com/#9n31s0k0l00e03t2ma7g0fj07r1i0o432T0v0u00f0qw02d04w2h0E0T0v0u00f0qw02d04w2h0E0T2v0u02f0qw02d04w1E0T2v1u15f10w4qw02d03w0E0b4h400000000h4g000000014h000000004h400000000p16000000
+      Load that song into the editor and tell me the tempo the loaded song is set to, so I know
+      the link is intact and did not load something else.
+    setup:
+      - close_all: true
+      - open_app: beepbox
+      - { run: { tool: beepbox.new_song } }
+    oracle:
+      - { tool: beepbox.load_song, hash: 'https://beepbox.com/#9n31s0k0l00e03t2ma7g0fj07r1i0o432T0v0u00f0qw02d04w2h0E0T0v0u00f0qw02d04w2h0E0T2v0u02f0qw02d04w1E0T2v1u15f10w4qw02d03w0E0b4h400000000h4g000000014h000000004h400000000p16000000' }
+    checks:
+      - read_tool: { tool: beepbox.get_song, path: hash, equals: 9n31s0k0l00e03t2ma7g0fj07r1i0o432T0v0u00f0qw02d04w2h0E0T0v0u00f0qw02d04w2h0E0T2v0u02f0qw02d04w1E0T2v1u15f10w4qw02d03w0E0b4h400000000h4g000000014h000000004h400000000p16000000 }
+      - read_tool: { tool: beepbox.get_song, path: tempo, equals: 150 }
+    covers: [beepbox.load_song, beepbox.get_song]
+    notes: >-
+      Holdout: the share link is the editor's own blank-song hash (measured live from the
+      editor's get_song - the hash computed from the vendored synth in node was missing the
+      default note segment and did not round-trip), so loading it must leave exactly that
+      hash; the checker re-reads hash and tempo from the live model.
+
+  - id: beepbox-05-load-and-tempo
+    split: train
+    title: "Open a share link and change the tempo"
+    prompt: >-
+      Open this song from its share link and then change how fast it goes:
+      https://beepbox.com/#9n31s0k0l00e03t2ma7g0fj07r1i0o432T0v0u00f0qw02d04w2h0E0T0v0u00f0qw02d04w2h0E0T2v0u02f0qw02d04w1E0T2v1u15f10w4qw02d03w0E0b4h400000000h4g000000014h000000004h400000000p16000000
+      After loading it, set its tempo to two hundred BPM so it ends up a fast clip, and tell me
+      the tempo it finished at.
+    setup:
+      - close_all: true
+      - open_app: beepbox
+      - { run: { tool: beepbox.new_song } }
+    oracle:
+      - { tool: beepbox.load_song, hash: 'https://beepbox.com/#9n31s0k0l00e03t2ma7g0fj07r1i0o432T0v0u00f0qw02d04w2h0E0T0v0u00f0qw02d04w2h0E0T2v0u02f0qw02d04w1E0T2v1u15f10w4qw02d03w0E0b4h400000000h4g000000014h000000004h400000000p16000000' }
+      - { tool: beepbox.set_tempo, bpm: 200 }
+      - { tool: beepbox.get_song }
+    checks:
+      - read_tool: { tool: beepbox.get_song, path: tempo, equals: 200 }
+    covers: [beepbox.load_song, beepbox.set_tempo, beepbox.get_song]
+    notes: >-
+      Load-then-change: the tempo is read back live after the change (the oracle ends on the
+      get_song read); the hash is not pinned here because the tempo is part of the song
+      encoding, so a tempo change re-encodes the song - the hash round trip is pinned in 04.
+
+  - id: beepbox-06-tempo-floor
+    split: holdout
+    title: "Push the tempo to the slowest the app allows"
+    prompt: >-
+      Slow whatever song is loaded in the tracker down to the slowest tempo the app allows,
+      which should be thirty BPM at the floor. Set it and report the tempo value afterwards, so
+      I know you hit the floor and not an error message.
+    setup:
+      - close_all: true
+      - open_app: beepbox
+      - { run: { tool: beepbox.new_song } }
+    oracle:
+      - { tool: beepbox.set_tempo, bpm: 30 }
+    checks:
+      - read_tool: { tool: beepbox.get_song, path: tempo, equals: 30 }
+    covers: [beepbox.set_tempo, beepbox.get_song]
+    notes: >-
+      Holdout: 30 is the minimum BPM the tempo stepper accepts; the checker re-reads the value
+      from the song model.
+
+  - id: beepbox-07-new-song
+    split: train
+    title: "Start a fresh blank song and share its hash"
+    prompt: >-
+      Start a brand new blank song in BeepBox for me. I am happy to lose whatever is currently
+      loaded, because this one is a throwaway and I will build something different on top of
+      it. After creating it, give me the song's hash in your reply so I can share the new blank
+      song with the team.
+    setup:
+      - close_all: true
+      - open_app: beepbox
+      - { run: { tool: beepbox.new_song } }
+    oracle:
+      - { tool: beepbox.new_song }
+      - { tool: beepbox.get_song }
+    checks:
+      - read_tool: { tool: beepbox.get_song, path: tempo, equals: 150 }
+      - answer_matches: '[A-Za-z0-9]{40,}'
+    covers: [beepbox.new_song, beepbox.get_song]
+    notes: >-
+      A fresh blank song returns to the default 150 BPM, and the reply must carry the long hash
+      token the new song carries (at least 40 base64 characters).
+
+  - id: beepbox-08-fresh-session
+    split: train
+    title: "New song, tempo, play, stop - a full session"
+    prompt: >-
+      Get me a fresh BeepBox session, end to end: start a new blank song, set its tempo to 120
+      BPM, play it, and stop it again. When you are done, tell me the tempo the song is at and
+      confirm that playback is stopped, so I can start layering tracks on a known baseline.
+    setup:
+      - close_all: true
+      - open_app: beepbox
+      - { run: { tool: beepbox.new_song } }
+    oracle:
+      - { tool: beepbox.new_song }
+      - { tool: beepbox.set_tempo, bpm: 120 }
+      - { tool: beepbox.play }
+      - { tool: beepbox.stop }
+    checks:
+      - read_tool: { tool: beepbox.get_song, path: tempo, equals: 120 }
+      - read_tool: { tool: beepbox.get_song, path: playing, equals: false }
+    covers: [beepbox.new_song, beepbox.set_tempo, beepbox.play, beepbox.stop, beepbox.get_song]
+    notes: >-
+      The long workflow exercises every pack tool; the tempo and the idle playback state (read
+      back through get_song, not the stop tool's reply) pin the end state, and the state is
+      false even under a suspended audio context.

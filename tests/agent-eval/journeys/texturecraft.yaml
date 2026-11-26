@@ -1,0 +1,121 @@
+app: texturecraft
+# TextureCraft journeys (J1, Craft Integrator lane), written to the post-gate rules.
+# TextureCraft is a standalone wrapper app with no page API (no request/execute/commands
+# surface), so there is no craft_request read: the app's own observable state is the
+# wrapper's status line, which the texturecraft.status tool reads. The wrapper sets it to
+# "Save in the editor to download and keep a browser copy" when the editor reports ready,
+# and to "Opened: <file name>" whenever a file is handed to the editor (scripts/pc/craft/
+# app.mjs openFile); with several opens in a row the line always reports the last one.
+# Meshes import through open_file (releases.mjs accept: .tcraft and mesh formats; images
+# come from the editor's own File menu, which no catalog tool reaches), so the journeys
+# seed minimal text OBJ meshes. save_copy is deliberately not exercised in any journey:
+# it waits for the editor's own Save download, which no catalog tool can trigger, so a
+# save journey would time out by design.
+
+journeys:
+  - id: texturecraft-01-import-triangle-mesh
+    split: train
+    title: Import the small triangle mesh
+    prompt: >-
+      I need a quick test mesh to bake a first texture onto, and I have a tiny one in Files
+      at /TextureCraft/triangle.obj. Import that mesh into TextureCraft for me so it is on
+      the canvas and I can set up the first bake over its single face.
+    setup:
+      - close_all: true
+      - open_app: texturecraft
+      - seed_file: { path: /TextureCraft/triangle.obj, text: '# a single triangle\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n' }
+    oracle:
+      - { tool: texturecraft.open_file, path: /TextureCraft/triangle.obj }
+    checks:
+      - window_open: texturecraft
+      - read_tool: { tool: texturecraft.status, path: status, contains: 'Opened: triangle.obj' }
+    covers: [texturecraft.open_file]
+    notes: The wrapper's status line is the app's observable state (there is no page API), and it reports Opened plus the file name once the mesh is handed to the editor.
+
+  - id: texturecraft-02-report-the-imported-mesh
+    split: train
+    title: Import the triangle and report the file name
+    prompt: >-
+      I imported a mesh into TextureCraft for the bake test but I have two small meshes
+      floating around in Files and I am not sure which one is open. Import
+      /TextureCraft/triangle.obj into TextureCraft, then look at what the app is reporting
+      and tell me the exact file name the status line says was opened, so I know the mesh I
+      am baking over is the triangle and not the other test mesh.
+    setup:
+      - close_all: true
+      - open_app: texturecraft
+      - seed_file: { path: /TextureCraft/triangle.obj, text: '# a single triangle\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n' }
+    oracle:
+      - { tool: texturecraft.open_file, path: /TextureCraft/triangle.obj }
+      - { tool: texturecraft.status }
+    checks:
+      - answer_contains: triangle.obj
+      - read_tool: { tool: texturecraft.status, path: status, contains: 'Opened:' }
+    covers: [texturecraft.open_file, texturecraft.status]
+    notes: Read then answer; the answer carries the file name and the status line independently confirms the import, so the two checks pin the same fact from both sides.
+
+  - id: texturecraft-03-quad-mesh-reimport
+    split: holdout
+    title: Reimport the quad mesh and confirm it is the open one
+    prompt: >-
+      The quad mesh import into TextureCraft seems to have failed earlier and the canvas
+      looks blank to me, so I want the mesh back before the bake review. Import
+      /TextureCraft/quad.obj for me and confirm from the app status that the quad is the
+      mesh that is open now, so I can stop worrying about the missing file and get back to
+      the bake setup.
+    setup:
+      - close_all: true
+      - open_app: texturecraft
+      - seed_file: { path: /TextureCraft/quad.obj, text: '# a flat quad\nv 0 0 0\nv 2 0 0\nv 2 2 0\nv 0 2 0\nf 1 2 3 4\n' }
+    oracle:
+      - { tool: texturecraft.open_file, path: /TextureCraft/quad.obj }
+      - { tool: texturecraft.status }
+    checks:
+      - read_tool: { tool: texturecraft.status, path: status, equals: 'Opened: quad.obj' }
+      - answer_contains: quad.obj
+    covers: [texturecraft.open_file, texturecraft.status]
+    notes: The user believes the earlier import failed; the oracle imports the quad and the exact status line pins that the load landed on that file, while the answer confirms the agent reported it.
+
+  - id: texturecraft-04-what-the-status-says
+    split: train
+    title: Report what a fresh TextureCraft wrapper status says
+    prompt: >-
+      I just opened TextureCraft and before I import any mesh I want to understand how the
+      wrapper keeps my bake work safe, because I have lost project files before when a window
+      closed. Read the app status and tell me what the wrapper is telling me right now, so I
+      know how I should save the project before I close the tab and how a saved copy is kept.
+    setup:
+      - close_all: true
+      - open_app: texturecraft
+    oracle:
+      - { tool: texturecraft.status }
+    checks:
+      - answer_contains: 'browser copy'
+      - read_tool: { tool: texturecraft.status, path: status, equals: 'Save in the editor to download and keep a browser copy' }
+    covers: [texturecraft.status]
+    notes: A fresh editor reports ready and the wrapper sets its ready status line; the answer check wants the browser copy fact and the status check pins the exact line the wrapper shows.
+
+  - id: texturecraft-05-two-meshes-last-wins
+    split: train
+    title: Import two meshes and report which one the status shows
+    prompt: >-
+      I am prepping both test meshes for the bake batch and I want them both through the
+      import in TextureCraft. Import /TextureCraft/triangle.obj first, and then import
+      /TextureCraft/quad.obj right after, because the order matters to me. When you are
+      done, tell me which file the status line is reporting as the open one now, so I know
+      which mesh the editor is sitting on.
+    setup:
+      - close_all: true
+      - open_app: texturecraft
+      - seed_file: { path: /TextureCraft/triangle.obj, text: '# a single triangle\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n' }
+      - seed_file: { path: /TextureCraft/quad.obj, text: '# a flat quad\nv 0 0 0\nv 2 0 0\nv 2 2 0\nv 0 2 0\nf 1 2 3 4\n' }
+    oracle:
+      - { tool: texturecraft.open_file, path: /TextureCraft/triangle.obj }
+      - { tool: texturecraft.open_file, path: /TextureCraft/quad.obj }
+      - { tool: texturecraft.status }
+    checks:
+      - window_open: texturecraft
+      - read_tool: { tool: texturecraft.status, path: status, equals: 'Opened: quad.obj' }
+      - answer_contains: quad.obj
+    covers: [texturecraft.open_file, texturecraft.status]
+    notes: The status line always reports the last file handed to the editor, so after the two imports it names the quad; the exact status check plus the answer pin the final state.

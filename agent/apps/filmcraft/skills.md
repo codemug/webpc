@@ -47,24 +47,40 @@ tools: desktop.open_app, filmcraft.playhead, filmcraft.razor
 When: the user wants a cut at the playhead or at a given time.
 Steps:
 1. call_tool tool=desktop.open_app app=filmcraft
-2. call_tool tool=filmcraft.playhead seconds=4
+2. call_tool tool=filmcraft.playhead seconds=2.5
 3. call_tool tool=filmcraft.razor track=V1
 Check: the reply says how many cuts were made; filmcraft.sequence_inspect lists the new clips.
 Gotchas: clip= cuts one clip instead of whole tracks; the cut time is the playhead when seconds=, frame= and timecode= are all omitted.
 
+## Set the in and out marks
+slug: set-in-and-out-marks
+summary: Set the sequence in and out marks at two times without cutting.
+keywords: in mark, out mark, mark in, mark out, in point, out point, in/out, marks, region
+tools: desktop.open_app, filmcraft.playhead, filmcraft.run_command, filmcraft.sequence_inspect
+
+When: the user wants an in mark and an out mark on the sequence, with nothing cut.
+Steps:
+1. call_tool tool=desktop.open_app app=filmcraft
+2. call_tool tool=filmcraft.playhead seconds=6
+3. call_tool tool=filmcraft.run_command command=markers.markIn
+4. call_tool tool=filmcraft.playhead seconds=7
+5. call_tool tool=filmcraft.run_command command=markers.markOut
+Check: filmcraft.sequence_inspect shows in and out at the requested times and the clip keeps its full duration - nothing is cut.
+Gotchas: marks are not cuts - filmcraft.razor and filmcraft.add_edit cut the timeline (the reply says cuts=N); the in and out marks are the sequence's in and out fields, separate from the sequence markers (markers.add). Check filmcraft.list_commands query=mark when the marks command takes a time param; a mark on an empty sequence lands nowhere, so place the media first.
+
 ## Put media on the timeline
 slug: put-media-on-the-timeline
 summary: Place a project item onto a video or audio track at a time.
-keywords: place, insert, add clip, media, bin, timeline, drop
-tools: desktop.open_app, filmcraft.project_inspect, filmcraft.place
+keywords: place, insert, add clip, media, bin, timeline, drop, sequence
+tools: desktop.open_app, filmcraft.project_inspect, filmcraft.new_sequence, filmcraft.place
 
 When: the user wants a clip from the bins onto the timeline.
 Steps:
 1. call_tool tool=desktop.open_app app=filmcraft
 2. call_tool tool=filmcraft.project_inspect
-3. call_tool tool=filmcraft.place item=3 track=V1 seconds=5
+3. call_tool tool=filmcraft.place item=3 track=V1 seconds=8
 Check: filmcraft.sequence_inspect lists the new clip on the track at the right start.
-Gotchas: track=new or audioTrack=new adds a track; source_in= and duration= skip and limit media; video=false or audio=false places only one stream.
+Gotchas: a fresh new_project has no open sequence, so place returns "no sequence is open" - call filmcraft.new_sequence first, then place. item= takes the project item id from project_inspect, or the item name or its Files path - never the whole call as one argument. track= and audioTrack= use the names V1, V2, A1, A2 - not the display names "Video 1"/"Audio 1" that sequence_inspect shows, and not the track ids. track=new or audioTrack=new adds a track; source_in= and duration= skip and limit media; video=false or audio=false places only one stream.
 
 ## Rearrange clips on the timeline
 slug: rearrange-clips
@@ -103,13 +119,13 @@ When: the user wants an action that has no dedicated tool.
 Steps:
 1. call_tool tool=desktop.open_app app=filmcraft
 2. call_tool tool=filmcraft.list_commands query=marker
-3. call_tool tool=filmcraft.run_command command=playhead.set params=seconds=2
+3. call_tool tool=filmcraft.run_command command=playhead.set params=seconds=6
 Check: filmcraft.sequence_inspect shows the action took effect.
 Gotchas: run_command takes key=value lines in params= (a [ ... ] or { ... } value is JSON); file.newProject, project.delete, sequence.lift and the markers.clear ids are destructive (they replace or delete project data).
 ## Open a project or media from Files
 slug: open-a-project-from-files
-summary: Open a .fcproj project or import media that is stored in Files.
-keywords: open, load, from files, fcproj, project, import, media
+summary: Open a .fcproj project or import media (video, audio, still image) that is stored in Files.
+keywords: open, load, from files, fcproj, project, import, media, still, still image, photo, image, file
 tools: desktop.open_app, filmcraft.open_file
 
 When: the user wants to open a project or import media that is stored in Files.
@@ -117,7 +133,7 @@ Steps:
 1. call_tool tool=desktop.open_app app=filmcraft
 2. call_tool tool=filmcraft.open_file path=/FilmCraft/talk.fcproj
 Check: the result has an opened field confirming the load; filmcraft.inspect shows the open project.
-Gotchas: change path= to a .fcproj project or media (video, audio, image); opening a project replaces the open one (unsaved work is lost).
+Gotchas: change path= to a .fcproj project or media (video, audio, image); opening a project replaces the open one (unsaved work is lost). lightcraft.import_file puts a photo into the LightCraft library, not the FilmCraft project - getting a file into a FilmCraft project (its bins) is always filmcraft.open_file.
 
 ## Save a copy of the project to Files
 slug: save-a-project-copy-to-files
@@ -131,3 +147,17 @@ Steps:
 2. call_tool tool=filmcraft.save_copy path=/FilmCraft/talk.fcproj
 Check: the result has the saved Files path and size; files.info on that path shows the same size.
 Gotchas: change path=; FilmCraft saves .fcproj files, so a target with another extension is refused with the .fcproj path as the fix; if the path exists the tool errors, so choose another name or pass overwrite=true (which is destructive); a fresh project with no saved path yet makes the app refuse the save.
+
+## Start a new project and import media
+slug: start-a-new-project
+summary: Start a fresh FilmCraft project by name and import media from Files into it.
+keywords: new, project, start, create, fresh, import, media
+tools: desktop.open_app, filmcraft.new_project, filmcraft.new_sequence, filmcraft.open_file, filmcraft.project_inspect
+
+When: the user wants to start a fresh project or put media stored in Files into a new project.
+Steps:
+1. call_tool tool=desktop.open_app app=filmcraft
+2. call_tool tool=filmcraft.new_project name=Showreel
+3. call_tool tool=filmcraft.open_file path=/FilmCraft/title-card.jpg
+Check: filmcraft.project_inspect shows the project name and the imported media as an item with an id.
+Gotchas: new_project needs name= (the name the user asks for) and replaces the open project, so unsaved work is lost; a new project starts with no open sequence, so filmcraft.place fails with "no sequence is open" until filmcraft.new_sequence runs; step 3 is only when importing media - open_file with a video, audio or still path imports it into the current project like a dropped file, with the exact Files path; opening a .fcproj instead replaces the project.

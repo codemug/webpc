@@ -46,7 +46,7 @@ try {
       await writeFile(join(stage, 'vendor/readability.mjs'), `// ${src.package} ${src.version} (Apache-2.0), CommonJS footer replaced with an ESM export.\n` + text.replace(footer, 'export { Readability };'));
     } else await writeFile(join(stage, 'vendor', name), name === 'idb-keyval.js' ? Buffer.concat([Buffer.from(`// ${src.package} ${src.version} (Apache-2.0) ${src.file}\n`), bytes]) : bytes);
   }
-  for (const name of ['app.js','agent.js','chrome-ai.js','cloud.js','cloud-client.js','embed-worker.js','exec-client.js','file-tools.js','files-host.js','hf-pin.js','help.js','models.js','model-client.js','search-host.js','search-index.js','storage.js','session.js','threads.js','shared-model.js','vision-tools.js','vision-worker.js','web.js','worker.js','sandbox.js','styles.css']) await copyFile(join(source, name), join(stage, name));
+  for (const name of ['app.js','agent.js','chrome-ai.js','cloud.js','cloud-client.js','embed-worker.js','exec-client.js','file-tools.js','files-host.js','gemma-calls.js','hf-pin.js','help.js','models.js','model-client.js','search-host.js','search-index.js','storage.js','session.js','threads.js','shared-model.js','vision-tools.js','vision-worker.js','web.js','worker.js','sandbox.js','styles.css']) await copyFile(join(source, name), join(stage, name));
   // markdown.js imports bare mdast package names, so it is bundled (same pinned esbuild) instead
   // of copied: app.js keeps importing the served ./markdown.js.
   await build({ entryPoints: [join(source, 'markdown.js')], bundle: true, format: 'esm', minify: true, platform: 'browser', target: 'es2022', outfile: join(stage, 'markdown.js'), logLevel: 'silent', legalComments: 'inline' });
@@ -54,7 +54,7 @@ try {
   for (const name of ['store.mjs','picker.mjs']) await copyFile(join(root, 'src/scripts/pc/files', name), join(stage, name));
   // Agent runtime: meta tools, catalog, skills, search indexes and every enabled pack, bundled to the
   // same relative path session.js and app.js import (runtime/index.mjs), so source and served layouts match.
-  for (const entry of ['index.mjs', 'files-ctx.mjs', 'scheduler.mjs']) await build({ entryPoints: [join(source, 'runtime', entry)], bundle: true, format: 'esm', platform: 'browser', target: 'es2022', outfile: join(stage, 'runtime', entry), logLevel: 'silent', legalComments: 'inline' });
+  for (const entry of ['index.mjs', 'args.mjs', 'files-ctx.mjs', 'scheduler.mjs']) await build({ entryPoints: [join(source, 'runtime', entry)], bundle: true, format: 'esm', platform: 'browser', target: 'es2022', outfile: join(stage, 'runtime', entry), logLevel: 'silent', legalComments: 'inline' });
   let sdkBundleSha256;
   { // Anthropic SDK browser bundle from the pinned npm package (deterministic: pinned esbuild + pinned package).
     const sdk = JSON.parse(await readFile(join(root, 'node_modules/@anthropic-ai/sdk/package.json'), 'utf8'));

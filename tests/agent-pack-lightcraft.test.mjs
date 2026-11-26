@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pack, tools, usesCommands, usesMethods } from '../agent/apps/lightcraft/tools.js';
+import { pack, tools, usesCommands, usesMethods, verifyDeletedCount } from '../agent/apps/lightcraft/tools.js';
 import { tools as desktopTools } from '../agent/desktop/tools.js';
 import { ToolError, specErrors, checkArgs } from '../src/apps/ai-agent/runtime/args.mjs';
 import { parseSkills, checkSkills } from '../src/apps/ai-agent/runtime/skills.mjs';
@@ -47,8 +47,8 @@ const runTool = (name, args, page) => byName(name).run(args, { host: fakeHost(pa
 test('the pack declares its id, title and live-check exports', () => {
   assert.deepEqual(pack, { id: 'lightcraft', title: 'LightCraft' });
   assert.deepEqual(usesCommands.sort(), [
-    'develop.reset', 'edit.redo', 'edit.undo', 'library.filter', 'library.info', 'library.select',
-    'library.sort', 'photo.delete', 'photo.rate', 'photo.restore', 'photo.rotateLeft', 'photo.rotateRight',
+    'develop.reset', 'edit.redo', 'edit.undo', 'library.filter', 'library.info',
+    'library.select', 'library.sort', 'photo.delete', 'photo.rate', 'photo.restore', 'photo.rotateLeft', 'photo.rotateRight',
   ].sort());
   assert.deepEqual(usesMethods, []);
 });
@@ -103,7 +103,7 @@ test('the effects are read for the info read, destructive for delete and reset, 
 test('library_info, select, sort, rate, rotate, delete, restore, develop_reset, undo and redo send their commands', async () => {
   const page = makePage();
   await runTool('lightcraft.library_info', {}, page);
-  await runTool('lightcraft.select', { ids: [3, 7] }, page);
+  await runTool('lightcraft.select', { ids: ['3', '7'] }, page); // checkArgs hands list items over as text
   await runTool('lightcraft.select', {}, page);
   await runTool('lightcraft.sort', { key: 'rating', ascending: false }, page);
   await runTool('lightcraft.rate', { rating: 4, ids: [3], advance: true }, page);
@@ -129,11 +129,11 @@ test('library_info, select, sort, rate, rotate, delete, restore, develop_reset, 
 });
 
 // A fake wrapper window for the file tool: the #file input records the change dispatch
-// (openFromBytes drives it, app.mjs:38). The host bridge (not the page API) opens the file,
-// so no page command is involved.
-const fakeWrapper = () => {
+// (openFromBytes drives it, app.mjs:38). The wrapper also carries the editor frame, because
+// the T10 count wait reads catalog.stats through the page API around the open.
+const fakeWrapper = (page, commitOnOpen = () => {}) => {
   const opened = [];
-  const fileInput = { files: null, dispatchEvent: event => { if (event?.type === 'change') opened.push(fileInput.files?.[0] ?? null); } };
+  const fileInput = { files: null, dispatchEvent: event => { if (event?.type === 'change') { opened.push(fileInput.files?.[0] ?? null); commitOnOpen(); } } };
   class DataTransfer {
     constructor() { this._files = []; this.items = { add: file => this._files.push(file) }; }
     get files() { return this._files; }
@@ -147,7 +147,7 @@ const fakeWrapper = () => {
   return {
     opened,
     DataTransfer, File, Event,
-    document: { getElementById: id => (id === 'file' ? fileInput : null) },
+    document: { getElementById: id => (id === 'file' ? fileInput : id === 'editor' ? { contentWindow: { lightcraft: page } } : null) },
     location: { origin: 'https://pc.example' },
   };
 };
@@ -162,8 +162,16 @@ const fileHost = (bytes, wrapper) => {
   };
 };
 
-test('lightcraft.import_file reads the photo and drives the wrapper file input', async () => {
-  const wrapper = fakeWrapper();
+// A page that records the catalog commands the tool issues (the minimal hand-off
+// issues none: it only drives the wrapper's #file input).
+const silentPage = () => {
+  const events = [];
+  return { events, command: id => { events.push(id); return Promise.resolve(JSON.stringify({ id })); } };
+};
+
+test('lightcraft.import_file hands the photo to the wrapper file input once, and issues no catalog command', async () => {
+  const page = silentPage();
+  const wrapper = fakeWrapper(page);
   const ctx = fileHost(new Uint8Array([1, 2, 3]), wrapper);
   const out = await byName('lightcraft.import_file').run({ path: '/Photos/trip/IMG_0001.cr2' }, ctx);
   assert.deepEqual(ctx.calls.read, ['/Photos/trip/IMG_0001.cr2']);
@@ -171,6 +179,50 @@ test('lightcraft.import_file reads the photo and drives the wrapper file input',
   assert.equal(wrapper.opened[0].name, 'IMG_0001.cr2');
   assert.deepEqual([...wrapper.opened[0].parts[0]], [1, 2, 3]);
   assert.deepEqual(out, { name: 'IMG_0001.cr2', bytes: 3 }); // no opened field: the page has no inspect
+  // T10 r12/r13: a pre-open readiness read and a hard count wait regressed the oracles
+  // (9/9 -> 0/8) - the harness already waits for the ready page (resetApp's stable demo
+  // count), and the journey's own catalog checks arbitrate the commit a few calls later.
+  assert.deepEqual(page.events, []);
+});
+
+// T10 finding (oracle r16 settle ladder): the delete's tombstone does not surface in any
+// read on the current build (catalog.query and photo.inspect still show the photo as not
+// deleted at 5 s / 9 s / 13 s after the delete). lightcraft.delete verifies the
+// post-condition against the store's own deleted counter and fails honestly.
+const deletePage = deletedSteps => {
+  let statsReads = 0;
+  return {
+    command: (id) => {
+      if (id === 'photo.delete') return Promise.resolve(JSON.stringify({ changed: 1 }));
+      if (id === 'catalog.stats') {
+        const v = deletedSteps[Math.min(statsReads, deletedSteps.length - 1)];
+        statsReads += 1;
+        return Promise.resolve(JSON.stringify({ deleted: v }));
+      }
+      return Promise.resolve(JSON.stringify({ id }));
+    },
+  };
+};
+
+test('lightcraft.delete returns the store result once the deleted counter has risen', async () => {
+  const out = await runTool('lightcraft.delete', { ids: [26, 27] }, deletePage([2, 3]));
+  assert.deepEqual(out, { changed: 1 });
+});
+
+test('verifyDeletedCount settles from the risen counter, not the timeout cap', async () => {
+  const t0 = Date.now();
+  await verifyDeletedCount(fakeHost(deletePage([2, 2, 3])), 1, 5000, 50);
+  assert.ok(Date.now() - t0 < 2000);
+});
+
+test('verifyDeletedCount fails honestly when the deletion surface never reflects', async () => {
+  await assert.rejects(verifyDeletedCount(fakeHost(deletePage([2])), 2, 1500, 50), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'app_error');
+    assert.match(error.message, /changed:2 but the library.s deleted count did not rise within 2 s/);
+    assert.match(error.message, /the deletion surface does not reflect in reads on this build/);
+    return true;
+  });
 });
 
 test('lightcraft.import_file turns a store not_found into a teaching ToolError', async () => {
@@ -180,8 +232,8 @@ test('lightcraft.import_file turns a store not_found into a teaching ToolError',
   await assert.rejects(byName('lightcraft.import_file').run({ path: '/missing.cr2' }, ctx), error => {
     assert.ok(error instanceof ToolError);
     assert.equal(error.type, 'not_found');
-    assert.equal(error.message, '/missing.cr2 is not in Files. To open LightCraft itself, use desktop.open_app; to open a file, find it first with files.find.');
-    assert.equal(error.fix, 'call_tool tool=desktop.open_app app=lightcraft');
+    assert.equal(error.message, '/missing.cr2 is not in Files. The path may be wrong - find the file with files.find, then open that path.');
+    assert.equal(error.fix, 'call_tool tool=files.find query=missing.cr2');
     return true;
   });
   assert.equal(wrapper.opened.length, 0);
@@ -247,9 +299,9 @@ test('effectFor marks destructive command ids for run_command', () => {
 
 const { skills, errors: skillErrors } = parseSkills(SKILLS_MD, 'lightcraft');
 
-test('skills.md parses with the runtime parser without errors and has 8 skills', () => {
+test('skills.md parses with the runtime parser without errors and has 11 skills', () => {
   assert.deepEqual(skillErrors, []);
-  assert.equal(skills.length, 9);
+  assert.equal(skills.length, 11);
   for (const skill of skills) {
     assert.ok(skill.slug && skill.summary, `skill ${skill.slug} slug/summary`);
     assert.ok(skill.summary.length <= 160, `skill ${skill.slug} summary is ${skill.summary.length} chars`);
@@ -272,4 +324,28 @@ test('every skill opens by launching LightCraft, then uses numbered lightcraft s
 test('skill steps and tools lines validate against the runtime checkArgs', () => {
   const errors = checkSkills(skills, byName, { checkArgs: (tool, args) => checkArgs(tool, args, { choices }) });
   assert.deepEqual(errors, []);
+});
+
+test('count-photos-that-match teaches the scoped catalog.query shape (sweep b19 06)', () => {
+  const skill = skills.find(s => s.slug === 'count-photos-that-match');
+  assert.ok(skill, 'the count skill exists');
+  assert.match(skill.steps[1].line, /command=catalog\.query/, 'the scoped count goes through catalog.query');
+  assert.match(skill.steps[1].line, /"only":\[<ids>\]/, 'only= scopes the query to photo ids');
+  assert.match(skill.steps[1].line, /"ratingOp":"atLeast"/, 'ratingOp expresses the range');
+  assert.match(skill.gotchas, /without it the count covers the whole library/i, 'the gotcha warns against the unscoped count');
+});
+
+test('nudge-a-develop-setting teaches develop.adjust on the selection (sweep b19 07)', () => {
+  const skill = skills.find(s => s.slug === 'nudge-a-develop-setting');
+  assert.ok(skill, 'the nudge skill exists');
+  assert.ok(skill.steps.some(step => step.tool === 'lightcraft.select'), 'the target photo is selected first');
+  const adjust = skill.steps.find(step => step.line.includes('develop.adjust'));
+  assert.match(adjust.line, /"control":"light\.exposure","delta":0\.1/, 'the measured control id, a delta that appears in no journey');
+  assert.match(skill.gotchas, /develop\.adjust acts on the selection/, 'the selection scoping is the gotcha');
+});
+
+test('lightcraft.filter documents ratingOp and carries the or-better example (sweep b19 06)', () => {
+  const filter = byName('lightcraft.filter');
+  assert.match(filter.params.filter.description, /ratingOp "atLeast" or "atMost" makes it a range/);
+  assert.ok(filter.examples.some(e => /"ratingOp":"atLeast"/.test(e.args.filter)), 'the or-better example');
 });

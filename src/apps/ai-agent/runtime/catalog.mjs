@@ -6,6 +6,9 @@ import { checkArgs, specErrors, templateLine } from './args.mjs';
 
 const EFFECTS = ['read', 'change', 'destructive', 'external'];
 const DESCRIBE_MAX = 1200;
+// A keyword is a single inner-vocabulary term (operation name, function, program); longer
+// strings are prose and belong in purpose/when.
+export const KEYWORD_MAX = 60;
 
 function escapeRegExp(source) {
   return source.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -69,6 +72,15 @@ export function buildCatalog(packs, { choices = () => [], aliases = {} } = {}) {
       if (tool?.needs !== undefined && (!Array.isArray(tool.needs) || tool.needs.some(item => typeof item !== 'string'))) {
         problems.push(`tool ${label}: needs must be an array of strings`);
       }
+      // Optional inner vocabulary (operation names, functions, programs) indexed by find_tool;
+      // validated like purpose/when (strings) with a per-keyword length cap.
+      if (tool?.keywords !== undefined) {
+        if (!Array.isArray(tool.keywords)) problems.push(`tool ${label}: keywords must be an array of strings`);
+        else for (const keyword of tool.keywords) {
+          if (typeof keyword !== 'string' || !keyword.trim()) problems.push(`tool ${label}: keywords must be non-empty strings (got ${JSON.stringify(keyword)})`);
+          else if (keyword.length > KEYWORD_MAX) problems.push(`tool ${label}: keyword ${JSON.stringify(keyword)} is longer than ${KEYWORD_MAX} characters`);
+        }
+      }
       for (const problem of specErrors(tool?.params)) problems.push(`tool ${label}: ${problem}`);
       const examples = tool?.examples;
       if (examples !== undefined) {
@@ -92,11 +104,17 @@ function searchDoc(pack, tool) {
     ...Object.entries(tool.params ?? {}).map(([key, spec]) => `${key}: ${spec.description ?? ''}`),
     ...(tool.examples ?? []).map(example => `Example: ${example?.says ?? ''}`)
   ].join('\n');
+  // The tool's inner vocabulary (operation names, functions, programs) first, then the words of
+  // the tool name; case-insensitive de-duplication so a keyword never indexes twice (a double
+  // index would double its boost).
   const seen = new Set();
   const keywords = [];
-  for (const word of tool.name.split(/[._]+/).filter(Boolean)) {
-    if (!seen.has(word)) { seen.add(word); keywords.push(word); }
-  }
+  const add = (word) => {
+    const key = word.toLowerCase();
+    if (!seen.has(key)) { seen.add(key); keywords.push(word); }
+  };
+  for (const keyword of tool.keywords ?? []) add(keyword);
+  for (const word of tool.name.split(/[._]+/).filter(Boolean)) add(word);
   return {
     id: tool.name,
     name: tool.name,

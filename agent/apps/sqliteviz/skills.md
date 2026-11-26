@@ -66,3 +66,18 @@ Steps:
 3. call_tool tool=sqliteviz.run_query sql=PRAGMA table_info(users)
 Check: the result has one row per column (name, type, notnull, default, pk).
 Gotchas: change the table name to one from sqliteviz.list_tables; for the raw CREATE statements query sqlite_master instead, e.g. SELECT sql FROM sqlite_master WHERE type='table'.
+
+## Find the top customer and add an order for them
+slug: top-customer-new-order
+summary: Count orders per customer with GROUP BY, take the top customer, INSERT a new order for them and recount.
+keywords: most orders, top customer, best customer, new order, count per customer, group by
+tools: desktop.open_app, sqliteviz.run_query
+
+When: the user wants the customer with the most orders, and a new order added for that customer.
+Steps:
+1. call_tool tool=desktop.open_app app=sqliteviz
+2. call_tool tool=sqliteviz.run_query sql=SELECT customer_id, COUNT(*) AS n FROM orders GROUP BY customer_id ORDER BY n DESC LIMIT 1
+3. call_tool tool=sqliteviz.run_query sql=INSERT INTO orders (customer_id, product_id, amount) VALUES (7, 1, 9.99)
+4. call_tool tool=sqliteviz.run_query sql=SELECT COUNT(*) FROM orders WHERE customer_id = 7
+Check: step 2 names the top customer id; step 4's count is one more than step 2's n; join customers on id to give the customer's name in the answer.
+Gotchas: run the GROUP BY once - repeating the same query changes nothing and only burns rounds; LIMIT 1 stops at the top row instead of reading the whole list; in step 3 use the customer id from step 2, not a guessed one; the answer needs the new total count, not the old one.
