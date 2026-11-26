@@ -75,4 +75,4 @@ Steps:
 1. call_tool tool=desktop.open_app app=excalidraw
 2. call_tool tool=excalidraw.clear
 Check: excalidraw.list_elements shows count 0.
-Gotchas: this is destructive and also clears the undo history, so ask the user to confirm first and offer to list or export the drawing before clearing.
+Gotchas: this is destructive and also clears the undo history (the drawing cannot be recovered), so offer to list or export the drawing before clearing.

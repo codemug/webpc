@@ -12,7 +12,7 @@ const pop = page => frame(page).getByRole('tooltip');
 async function openBuddy(page) {
   await page.goto('/pc/');
   await button(page).click();
-  await expect(frame(page).locator('h1')).toHaveText('Buddy');
+  await expect(frame(page).locator('h1')).toHaveText('WebPC Agent');
   // The heading is static HTML; data-theme arrives only after app.js has run (pc:ready
   // -> pc:theme), so the help pop-ups are wired by the time the first interaction happens.
   await expect(frame(page).locator('html')).toHaveAttribute('data-theme', /light|dark/);
@@ -214,7 +214,7 @@ async function scriptedModel(page) {
 }
 const loadModel = async page => {
   await frame(page).locator('#load-model').click();
-  await expect(frame(page).locator('#send')).toBeEnabled();
+  await expect(frame(page).locator('#model-state')).toContainText('Ready');
 };
 
 test('Shift + Enter adds a newline and sends nothing; Enter with a model sends', async ({ page }) => {
@@ -253,4 +253,60 @@ test('a truncated answer gets the Cut short chip, a full one does not', async ({
   await expect(full).toContainText('A plain answer.');
   await expect(full.locator('.chip.cut')).toHaveCount(0);
   await expect(cut.locator('.chip.cut')).toHaveCount(1);
+});
+
+// ---- M3: the box clears at once, and a send with no model loaded starts the load ----
+// A scripted model whose load takes 800 ms (a stable "Loading" window) and whose HOLD
+// answer streams in two parts (700 ms / 1500 ms), so the box can be checked while the
+// answer is still streaming.
+async function holdModel(page) {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'gpu', { configurable: true, value: { requestAdapter: async () => ({ features: new Set(['shader-f16']) }) } });
+  });
+  await page.route('**/worker.js', route => route.fulfill({ contentType: 'text/javascript', body: `
+    onmessage = ({ data }) => {
+      if (data.type === 'load') return setTimeout(() => postMessage({ type: 'ready', key: data.key }), 800);
+      if (data.type === 'count') return postMessage({ type: 'counted', id: data.id, tokens: 100 });
+      if (data.type !== 'generate') return;
+      const user = data.messages.findLast(m => m.role === 'user').content;
+      if (user.includes('HOLD')) {
+        setTimeout(() => postMessage({ type: 'token', id: data.id, text: 'Holding' }), 700);
+        return setTimeout(() => { postMessage({ type: 'token', id: data.id, text: 'Holding reply done.' }); postMessage({ type: 'done', id: data.id, text: 'Holding reply done.' }); }, 1500);
+      }
+      postMessage({ type: 'done', id: data.id, text: 'A plain answer.' });
+    };` }));
+}
+
+test('after Enter the box is empty while the answer is still streaming', async ({ page }) => {
+  skipUnlessEnabled(test, 'ai-agent');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await holdModel(page);
+  await openBuddy(page);
+  await loadModel(page);
+  const buddy = frame(page);
+  await buddy.locator('#message').fill('HOLD streaming please');
+  await buddy.locator('#message').press('Enter');
+  await expect(buddy.locator('#message')).toHaveValue('');
+  await expect(buddy.locator('.message.assistant').last()).toContainText('Holding');
+  await expect(buddy.locator('#message')).toHaveValue('');
+  await expect(buddy.locator('.message.assistant').last()).toContainText('Holding reply done.', { timeout: 15000 });
+});
+
+test('with no model loaded, Enter starts the load and the answer arrives', async ({ page }) => {
+  skipUnlessEnabled(test, 'ai-agent');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await holdModel(page);
+  await openBuddy(page); // no model loaded
+  const buddy = frame(page);
+  const msg = buddy.locator('#message');
+  await msg.click();
+  await msg.type('hello buddy');
+  await expect(buddy.locator('#send')).toBeEnabled(); // text and idle: enabled even without a model
+  await msg.press('Enter');
+  await expect(msg).toHaveValue('');
+  await expect(buddy.locator('#model-state')).toContainText('Loading');
+  await expect(msg).toHaveAttribute('placeholder', /sends when the model is ready/); // the empty box says the message waits
+  await expect(buddy.locator('.message.assistant')).toContainText('A plain answer.', { timeout: 15000 });
+  await expect(buddy.locator('#model-state')).toContainText('Ready');
+  await expect(msg).toHaveAttribute('placeholder', 'Ask WebPC Agent anything…');
 });

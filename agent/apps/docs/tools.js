@@ -7,8 +7,8 @@ import { ToolError } from '../../../src/apps/ai-agent/runtime/args.mjs';
 
 const APP = 'docs';
 const NEEDS = ['host', 'app:docs'];
-const AUTHOR = 'Buddy';
-const NOT_HERE = 'Docs is not available here (Buddy is not running inside WebPC).';
+const AUTHOR = 'WebPC Agent';
+const NOT_HERE = 'Docs is not available here (WebPC Agent is not running inside WebPC).';
 
 // Gate on ctx.host (needs: ['host', 'app:docs']), then turn host rejections, which carry a code
 // (unknown_app, not_open, not_iframe, timeout, invalid_argument), into a ToolError.

@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "kernelVersion": "0.2.0-261123-8f039c5",
+  "distro": "alpine",
+  "packages": [
+    {
+      "name": "python3",
+      "version": "3.14.10-r1"
+    },
+    {
+      "name": "nodejs",
+      "version": "24.22.3-r0"
+    }
+  ],
+  "templateSha256": "058a918d3772ddb5976692aa093e8ef1c6368a75a376e800ea39f0877ce413bd"
+}

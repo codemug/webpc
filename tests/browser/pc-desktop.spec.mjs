@@ -103,19 +103,38 @@ test('PC iframe failure offers a working retry', async ({ page }) => {
   await expect(win(page, 'gridcraft')).toHaveAttribute('data-load', 'ready');
 });
 
-test('PC keeps a window open if its synchronous save hook fails', async ({ page }) => {
+test('closing a window with unsaved changes warns, and closes only if the user confirms', async ({ page }) => {
   skipUnlessEnabled(test, 'gridcraft');
   await fakeGridcraft(page);
   await page.goto('/pc/');
   await page.locator('[data-shortcut="gridcraft"]').dblclick();
   await expect(win(page, 'gridcraft')).toHaveAttribute('data-load', 'ready');
   await page.locator('iframe').evaluate(frame => { frame.contentWindow.pcBeforeClose = () => false; });
+  const warnings = [];
+  // First answer: keep the window.
+  page.once('dialog', dialog => { warnings.push(dialog.message()); dialog.dismiss(); });
   await page.getByRole('button', { name: 'Close GridCraft', exact: true }).click();
   await expect(win(page, 'gridcraft')).toBeVisible();
-  await expect(page.locator('[data-announcement]')).toContainText('could not save');
-  await page.locator('iframe').evaluate(frame => { frame.contentWindow.pcBeforeClose = () => true; });
+  await expect(page.locator('[data-announcement]')).toContainText('still open');
+  // Second answer: close anyway.
+  page.once('dialog', dialog => { warnings.push(dialog.message()); dialog.accept(); });
   await page.getByRole('button', { name: 'Close GridCraft', exact: true }).click();
   await expect(win(page, 'gridcraft')).toBeHidden();
+  expect(warnings).toEqual(Array(2).fill('GridCraft has changes that are not saved. Close it anyway and lose them?'));
+});
+
+test('a window with nothing unsaved closes without a warning', async ({ page }) => {
+  skipUnlessEnabled(test, 'gridcraft');
+  await fakeGridcraft(page);
+  await page.goto('/pc/');
+  await page.locator('[data-shortcut="gridcraft"]').dblclick();
+  await expect(win(page, 'gridcraft')).toHaveAttribute('data-load', 'ready');
+  await page.locator('iframe').evaluate(frame => { frame.contentWindow.pcBeforeClose = () => true; });
+  let warned = false;
+  page.on('dialog', dialog => { warned = true; dialog.dismiss(); });
+  await page.getByRole('button', { name: 'Close GridCraft', exact: true }).click();
+  await expect(win(page, 'gridcraft')).toBeHidden();
+  expect(warned).toBe(false);
 });
 
 test.describe('PC touch and responsive layout' , () => {

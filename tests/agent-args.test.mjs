@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { checkArgs, closest, callLine, specErrors, ToolError, templateLine, templateStep } from '../src/apps/ai-agent/runtime/args.mjs';
+import { checkArgs, repairArgs, closest, callLine, specErrors, ToolError, templateLine, templateStep } from '../src/apps/ai-agent/runtime/args.mjs';
 
 // One tool exercising every flat type, with a first example the fix lines build from.
 const tool = {
@@ -262,3 +262,35 @@ test('a fix line never echoes an example path (eval M6, B16): path params show <
   assert.ok(!JSON.stringify([missing, bad]).includes('contract.pdf'), 'no example path anywhere in the errors');
 });
 
+
+// repairArgs: the schema-aware fixes for small-model argument mistakes (eval task C16).
+const RUN = { name: 'terminal.run', params: {
+  lang: { type: 'enum', values: ['python', 'node', 'sh'], default: 'sh', description: 'Language' },
+  code: { type: 'text', required: true, description: 'Code' },
+  timeout_ms: { type: 'integer', min: 1, max: 120000, description: 'Limit' },
+} };
+
+test('repairArgs splits an unknown key whose value spells the tool own pairs, keeping spaces in the last value', () => {
+  assert.deepEqual(repairArgs(RUN, { arg: 'lang=sh code=uname -a' }), { lang: 'sh', code: 'uname -a' });
+  assert.deepEqual(checkArgs(RUN, { tool_param: 'lang=python code=print(6 * 7)' }), { ok: true, args: { lang: 'python', code: 'print(6 * 7)' } });
+});
+
+test('repairArgs moves one unknown key into the one missing required text parameter', () => {
+  assert.deepEqual(checkArgs(RUN, { query: 'uname -a' }), { ok: true, args: { code: 'uname -a', lang: 'sh' } });
+});
+
+test('repairArgs leaves calls alone when no rule applies', () => {
+  const ok = { lang: 'sh', code: 'ls' };
+  assert.deepEqual(repairArgs(RUN, ok), ok);
+  assert.equal(checkArgs(RUN, { query: 'a', other: 'b' }).error.type, 'unknown_argument', 'two unknown keys: no guess');
+  assert.equal(checkArgs(RUN, { code: 'ls', query: 'x' }).error.type, 'unknown_argument', 'nothing required is missing: no guess');
+  const twoRequired = { name: 't', params: { a: { type: 'string', required: true, description: 'a' }, b: { type: 'string', required: true, description: 'b' } } };
+  assert.equal(checkArgs(twoRequired, { x: 'v' }).error.type, 'unknown_argument', 'two required params missing: no guess');
+  const numeric = { name: 'n', params: { count: { type: 'integer', required: true, description: 'c' } } };
+  assert.equal(checkArgs(numeric, { x: '3' }).error.type, 'unknown_argument', 'only string or text params are filled');
+});
+
+test('a copied placeholder on a parameter with a default takes the default; without one it is an error', () => {
+  assert.deepEqual(checkArgs(RUN, { lang: '<lang>', code: 'ls' }), { ok: true, args: { code: 'ls', lang: 'sh' } });
+  assert.equal(checkArgs(RUN, { code: '<code>' }).error.type, 'placeholder');
+});

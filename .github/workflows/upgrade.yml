@@ -32,7 +32,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: node_modules/.cache/webpc
-          key: webpc-downloads-${{ hashFiles('catalog.yaml', 'scripts/pc/linux/packages.lock.json') }}
+          key: webpc-downloads-${{ hashFiles('catalog.yaml', 'scripts/pc/terminal/packages.json') }}
           restore-keys: webpc-downloads-
 
       - name: Install dependencies (no postinstall scripts)

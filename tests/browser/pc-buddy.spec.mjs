@@ -5,7 +5,7 @@ const button = page => page.locator('[data-buddy-toggle]');
 const panel = page => page.locator('#pc-buddy');
 const frame = page => page.frameLocator('#pc-buddy iframe');
 
-test('Buddy is a taskbar button, not a desktop app; opening it lazy-loads the panel', async ({ page }) => {
+test('WebPC Agent is a taskbar button, not a desktop app; opening it lazy-loads the panel', async ({ page }) => {
   skipUnlessEnabled(test, 'ai-agent');
   await page.setViewportSize({ width: 1440, height: 900 });
   const offSite = [];
@@ -36,16 +36,16 @@ test('Buddy is a taskbar button, not a desktop app; opening it lazy-loads the pa
   const frameEl = page.locator('#pc-buddy iframe');
   await expect(frameEl).toHaveCount(1);
   await expect(frameEl).toHaveAttribute('src', /\/pc\/apps\/ai-agent\/$/);
-  await expect(frame(page).locator('h1')).toHaveText('Buddy');
+  await expect(frame(page).locator('h1')).toHaveText('WebPC Agent');
   expect(offSite).toEqual([]); // nothing leaves the loopback host before any model loads
 });
 
-test('closing Buddy hides the panel and keeps its frame; focus returns to the button', async ({ page }) => {
+test('closing WebPC Agent hides the panel and keeps its frame; focus returns to the button', async ({ page }) => {
   skipUnlessEnabled(test, 'ai-agent');
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/pc/');
   await button(page).click();
-  await expect(frame(page).locator('h1')).toHaveText('Buddy');
+  await expect(frame(page).locator('h1')).toHaveText('WebPC Agent');
   await page.evaluate(() => { document.querySelector('#pc-buddy iframe').contentWindow.__buddyMark = 1; });
   await frame(page).locator('#panel-close').click(); // the close button lives in Buddy's own header
   await expect(button(page)).toHaveAttribute('aria-expanded', 'false');
@@ -57,12 +57,12 @@ test('closing Buddy hides the panel and keeps its frame; focus returns to the bu
   expect(mark).toBe(1); // the same document survived the close: no reload
 });
 
-test('Escape inside the Buddy frame closes the panel', async ({ page }) => {
+test('Escape inside the WebPC Agent frame closes the panel', async ({ page }) => {
   skipUnlessEnabled(test, 'ai-agent');
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/pc/');
   await button(page).click();
-  await expect(frame(page).locator('h1')).toHaveText('Buddy');
+  await expect(frame(page).locator('h1')).toHaveText('WebPC Agent');
   // The heading is static HTML; data-theme arrives only after app.js has run (pc:ready -> pc:theme),
   // so the Escape handler exists before the key press.
   await expect(frame(page).locator('html')).toHaveAttribute('data-theme', /light|dark/);
@@ -83,11 +83,15 @@ test('at a 390 px viewport the open panel takes the full width', async ({ page }
   expect(box.x).toBeCloseTo(0, 0);
 });
 
-test('the Buddy button shows background chats from pc:buddy-status', async ({ page }) => {
+test('the WebPC Agent button shows background chats from pc:buddy-status', async ({ page }) => {
   skipUnlessEnabled(test, 'ai-agent');
   await page.goto('/pc/');
   await button(page).click();
   await expect(frame(page).locator('html')).toHaveAttribute('data-theme', /light|dark/);
+  // The app posts its own counts (0, 0) in the same step that enables New chat (app.js init:
+  // initialized, controls(), postBadge()); wait for it, or that post can land after the fake
+  // ones below and reset the badge (seen on a slow run).
+  await expect(frame(page).locator('#new-chat')).toBeEnabled();
   const badge = page.locator('[data-buddy-badge]');
   await expect(badge).toBeHidden();
   const post = data => page.evaluate(d => document.querySelector('#pc-buddy iframe').contentWindow.parent.postMessage(d, location.origin), data);
@@ -95,11 +99,11 @@ test('the Buddy button shows background chats from pc:buddy-status', async ({ pa
   const postFromBuddy = data => page.frames().find(f => f.url().includes('/pc/apps/ai-agent/')).evaluate(d => parent.postMessage(d, location.origin), data);
   await postFromBuddy({ type: 'pc:buddy-status', running: 2, needsYou: 0 });
   await expect(badge).toHaveText('2');
-  await expect(button(page)).toHaveAttribute('aria-label', 'Buddy, 2 chats running');
+  await expect(button(page)).toHaveAttribute('aria-label', 'WebPC Agent, 2 chats running');
   await postFromBuddy({ type: 'pc:buddy-status', running: 1, needsYou: 1 });
   await expect(badge).toHaveText('1');
   await expect(badge).toHaveAttribute('data-kind', 'needs-you');
-  await expect(button(page)).toHaveAttribute('aria-label', 'Buddy, 1 chat running, 1 needs you');
+  await expect(button(page)).toHaveAttribute('aria-label', 'WebPC Agent, 1 chat running, 1 needs you');
   await post({ type: 'pc:buddy-status', running: 9, needsYou: 9 }); // from the desktop page itself: ignored
   await expect(badge).toHaveText('1');
   await postFromBuddy({ type: 'pc:buddy-status', running: 0, needsYou: 0 });

@@ -1,5 +1,5 @@
 // Buddy's agent runtime: the generated catalog, skills and search indexes, the six meta tools,
-// the executor that runs a catalog tool (needs, safety policy, approvals) and the prefetch note.
+// the executor that runs a catalog tool (needs, safety policy) and the prefetch note.
 // prepare-ai-agent.mjs bundles this file with esbuild to the same relative path in the served
 // app, so session.js imports it the same way in Node tests and in the browser.
 import catalogJson from '../generated/catalog.json' with { type: 'json' };
@@ -10,28 +10,13 @@ import { packs } from '../generated/packs.mjs';
 import { loadIndex, search } from './search.mjs';
 import { createMetaTools, META_TOOL_NAMES } from './meta-tools.mjs';
 import { repairCall } from './repair.mjs';
-import { ToolError, callLine, templateLine, templateStep } from './args.mjs';
+import { ToolError, templateLine, templateStep } from './args.mjs';
 import { templateKeys } from './catalog.mjs';
 
 export { META_TOOL_NAMES };
 // Re-exported so app.js can reach it: the served runtime/ folder holds only the bundles.
-export { createPolicy } from './policy.mjs';
 export { createScheduler } from './scheduler.mjs';
 export { craftApi } from '../../../../agent/shared/craft.js';
-
-/** The simple default policy; createPolicy (policy.mjs) replaces it when passed in. */
-export function defaultPolicy() {
-  return {
-    newTurn: userText => ({ userText, tainted: false, approvedOnce: new Set() }),
-    decide: (tool, args, turn) => {
-      const line = callLine(tool.name, args);
-      if (turn?.approvedOnce?.has(line)) return { action: 'allow' };
-      const ask = tool.effect === 'destructive' || tool.effect === 'external' || (tool.effect === 'change' && turn?.tainted);
-      return ask ? { action: 'ask', reason: `${tool.purpose} (${tool.effect})`, preview: line } : { action: 'allow' };
-    },
-    noteResult: (tool, args, turn) => { if (tool.untrusted && turn) turn.tainted = true; },
-  };
-}
 
 const NEED_CHECKS = {
   host: ctx => Boolean(ctx.host), files: ctx => Boolean(ctx.files),
@@ -46,8 +31,8 @@ function sharesWord(query, text) {
   return meaningful(query).some(q => words.some(w => w.startsWith(q) || q.startsWith(w)));
 }
 
-/** policy: { newTurn, decide, noteResult } (defaultPolicy when omitted). */
-export function createAgent({ policy = defaultPolicy(), data = { catalogJson, skillsJson, toolIndexJson, skillIndexJson, packs } } = {}) {
+/** Every catalog call runs without a policy gate (the user's ruling, 2026-11-24: no approvals, no grant rule). */
+export function createAgent({ data = { catalogJson, skillsJson, toolIndexJson, skillIndexJson, packs } } = {}) {
   const tools = new Map(data.catalogJson.tools.map(t => [t.name, t]));
   const catalog = { tools, docs: data.catalogJson.docs };
   const apps = data.catalogJson.apps ?? [];
@@ -71,25 +56,13 @@ export function createAgent({ policy = defaultPolicy(), data = { catalogJson, sk
       const ok = kind === 'legacy' ? Boolean(ctx.legacy?.[value]) : kind === 'app' ? appIds.includes(value) && Boolean(ctx.host) : NEED_CHECKS[kind] ? NEED_CHECKS[kind](ctx) : true;
       if (!ok) throw new ToolError('not_available', `${name} is not available here (it needs ${need}).`, '');
     }
-    // A tool may compute its effect from its arguments (a generic run_command that can delete).
-    const effective = typeof impl.effectFor === 'function' ? { ...meta, effect: impl.effectFor(args) } : meta;
-    const decision = policy.decide(effective, args, ctx.turn);
-    if (decision.action === 'deny') throw new ToolError('not_allowed', decision.reason, '');
-    if (decision.action === 'ask') {
-      const yes = await (ctx.approve?.({ tool: name, preview: decision.preview, reason: decision.reason }) ?? false);
-      if (!yes) throw new ToolError('needs_approval_denied', 'The user did not approve this. Ask what they want instead.', '');
-      // The default policy records the approval here; createPolicy records it in noteResult (keyed by callLine).
-      if (!policy.recordsApprovals) ctx.turn?.approvedOnce?.add(callLine(name, args));
-    }
-    const result = await impl.run(args, ctx);
-    policy.noteResult(effective, args, ctx.turn);
-    return result;
+    return await impl.run(args, ctx);
   }
   const skillPathsFor = name => skills.filter(s => s.tools.includes(name)).map(s => s.path);
   const metaTools = createMetaTools({ catalog, skills, toolIndex, skillIndex, toolDocs: catalog.docs, skillDocs, run, repairCall: repair, choices, aliases, skillPathsFor, apps });
 
   return {
-    metaTools, catalog, apps, policy,
+    metaTools, catalog, apps,
     /** A function name the model called directly: the catalog tool it means, or null. */
     resolveDirect(name) {
       if (META_TOOL_NAMES.includes(name)) return null;

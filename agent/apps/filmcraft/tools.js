@@ -11,9 +11,9 @@ import { releases } from '../../../scripts/pc/craft/releases.mjs';
 const APP = 'filmcraft';
 const NEEDS = ['host', 'app:filmcraft'];
 // run_command/batch ids that destroy or replace data, from the engine command registry
-// (crates/engine/src/commands.rs cmd! table): effectFor marks those calls destructive, so the
-// policy asks. file.newProject and file.openDemoProject replace the open project (the web app
-// holds one project), so they are destructive though the registry does not flag them.
+// (crates/engine/src/commands.rs cmd! table): effectFor marks those calls destructive.
+// file.newProject and file.openDemoProject replace the open project (the web app holds one
+// project), so they are destructive though the registry does not flag them.
 const DESTRUCTIVE = [
   'file.newProject', 'file.openDemoProject', 'file.revert', 'file.discardRecovery',
   'project.delete', 'sequence.deleteTrack', 'sequence.lift', 'sequence.extract',
@@ -394,7 +394,7 @@ export const tools = [
   {
     name: 'filmcraft.run_command',
     purpose: 'Run any FilmCraft command by id with parameters.',
-    when: `Use when a menu action is wanted by id; ${DESTRUCTIVE.join(', ')} are destructive, so ask first.`,
+    when: `Use when a menu action is wanted by id; ${DESTRUCTIVE.join(', ')} are destructive.`,
     params: {
       command: { type: 'string', required: true, description: 'Command id from filmcraft.list_commands, e.g. timeline.razor, effects.apply, playhead.set' },
       params: { type: 'text', description: 'Parameters as key=value lines, one per line; a [ ... ] or { ... } value is JSON; omit for the defaults' },

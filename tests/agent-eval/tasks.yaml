@@ -1,4 +1,4 @@
-# M6 real-model eval task suite (60 tasks).
+# M6 real-model eval task suite (62 tasks).
 # Each task: id, set (A desktop/files, B ArtCraft, C other apps, D cross-app),
 # prompt (what a user types), setup (runner-driven: seed_file / open_app / close_all),
 # expect.tools (catalog tool names the model should call, matched as an in-order
@@ -7,7 +7,7 @@
 #   file_contains: {path, text} | cell: {app, cell, input} |
 #   docs_text_contains: <text> | excalidraw_count_at_least: <n> |
 #   cyberchef_output: <text>
-# Spread: A 20, B 20, C 15, D 5.
+# Spread: A 20, B 20, C 17, D 5.
 
 tasks:
   # ---------------- Set A: desktop and files (20) ----------------
@@ -606,6 +606,25 @@ tasks:
       tools: [beepbox.set_tempo]
     check:
       window_open: beepbox
+
+  - id: C16
+    set: C
+    prompt: "Run uname -a in the Linux terminal and tell me the kernel name."
+    setup:
+      - close_all: true
+    expect:
+      tools: [terminal.run]
+    check:
+      terminal_output: Linux
+  - id: C17
+    set: C
+    prompt: "What network inspection commands does the Linux terminal have?"
+    setup:
+      - close_all: true
+    expect:
+      tools: [terminal.run]
+    check:
+      terminal_output: ping
 
   # ---------------- Set D: cross-app (5) ----------------
   - id: D01

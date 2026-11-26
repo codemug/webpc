@@ -22,11 +22,11 @@ test('github-release: an auto source with a newer release becomes an auto entry 
 test('manual sources and disabled apps: manual ones are reported (auto false), disabled apps are not checked', async () => {
   const c = oneApp('terminal');
   const seen = [];
-  const npm = async pkg => { seen.push(pkg); return { time: { '0.5.480': '2026-01-01T00:00:00Z' }, versions: { '0.5.473': { dist: {} }, '0.5.480': { dist: { integrity: 'sha512-x' } } } }; };
+  const npm = async pkg => { seen.push(pkg); return pkg === 'unkernel' ? { time: { '0.2.1': '2026-01-01T00:00:00Z' }, versions: { '0.2.0-261123-8f039c5': { dist: {} }, '0.2.1': { dist: { integrity: 'sha512-x' } } } } : { versions: {} }; };
   const plan = await planUpgrades(c, { now, ...noNetwork, npm });
-  const v86 = plan.find(e => e.name === 'v86');
-  assert.equal(v86.auto, false);
-  assert.equal(v86.to, '0.5.480');
+  const unkernel = plan.find(e => e.name === 'unkernel');
+  assert.equal(unkernel.auto, false);
+  assert.equal(unkernel.to, '0.2.1');
   c.apps[0].enabled = false;
   seen.length = 0;
   assert.deepEqual(await planUpgrades(c, { now, ...noNetwork, npm }), []);

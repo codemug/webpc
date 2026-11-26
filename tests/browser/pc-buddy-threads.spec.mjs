@@ -1,6 +1,8 @@
 // Buddy M3 threads end to end in the real desktop: only the model is scripted, and it holds
 // the reply for 1500 ms for any message containing HOLD. Threads, one session per thread,
-// the Chats list, the status chips, the approval cards and the pc:buddy-status badge are real.
+// the Chats list, the status chips and the pc:buddy-status badge are real. Tools run without
+// an approval prompt; run_code waits on the (absent in the test) terminal app, which gives a
+// deterministic "running tool" window for the Stop test.
 import { test, expect } from '@playwright/test';
 import { skipUnlessEnabled } from './catalog.mjs';
 
@@ -21,6 +23,7 @@ async function scriptedModel(page) {
       const answer = text => { postMessage({ type: 'token', id: data.id, text }); postMessage({ type: 'done', id: data.id, text }); };
       if (user.includes('HOLD')) return setTimeout(() => answer('Held reply done.'), 1500);
       if (last.role === 'tool') return answer('DONE ' + last.content.slice(0, 160));
+      if (user.includes('run the code for me')) return answer(call('call_tool', { tool: 'system.run_code', lang: 'sh', code: 'sleep 5' }));
       if (user.includes('delete the file BuddyTest')) return answer(call('call_tool', { tool: 'files.delete', path: 'BuddyTest' }));
       answer('A plain answer.');
     };` }));
@@ -31,7 +34,7 @@ async function openBuddy(page) {
   const buddy = page.frameLocator('#pc-buddy iframe');
   await expect(buddy.locator('html')).toHaveAttribute('data-theme', /light|dark/);
   await buddy.locator('#load-model').click();
-  await expect(buddy.locator('#send')).toBeEnabled();
+  await expect(buddy.locator('#model-state')).toContainText('Ready');
   return buddy;
 }
 // After a reload the desktop forgets the panel: toggle it back and wait for the app to be
@@ -105,35 +108,37 @@ test('a running chat is interrupted by a reload', async ({ page }) => {
   await expect(chips(again).filter({ hasText: 'interrupted' })).toHaveCount(1);
 });
 
-test('a destructive call shows an in-chat approval card; Deny refuses it', async ({ page }) => {
+test('a destructive call runs without asking', async ({ page }) => {
   skipUnlessEnabled(test, 'ai-agent');
   await scriptedModel(page);
   const buddy = await openBuddy(page);
   await send(buddy, 'delete the file BuddyTest');
-  await expect(buddy.locator('.approval')).toBeVisible();
-  await expect(buddy.locator('.approval p')).toContainText('confirm before running it');
-  await expect(buddy.locator('.approval pre')).toContainText('files.delete');
-  await page.waitForTimeout(100);
-  await buddy.locator('#chats').click();
-  await expect(chips(buddy).filter({ hasText: 'needs you' })).toHaveCount(1);
-  await buddy.locator('#chats').click();
-  await buddy.locator('.approval .approve-deny').click();
+  // No approval card: the tool runs at once. With no Files grant it errors, and the
+  // turn still completes through the tool card.
+  await expect(buddy.locator('.tool summary', { hasText: 'call_tool' })).toBeVisible();
+  await expect(buddy.locator('.message.assistant').last()).toContainText('DONE', { timeout: 15000 });
   await expect(buddy.locator('.approval')).toHaveCount(0);
-  await expect(buddy.locator('.message.assistant').last()).toContainText('did not approve', { timeout: 15000 });
   await page.waitForTimeout(100);
   await buddy.locator('#chats').click();
   await expect(chips(buddy).filter({ hasText: 'done' })).toHaveCount(1);
 });
 
-test('Stop resolves a pending approval card as Deny and interrupts the chat', async ({ page }) => {
+test('Stop interrupts a running tool call', async ({ page }) => {
   skipUnlessEnabled(test, 'ai-agent');
   await scriptedModel(page);
   const buddy = await openBuddy(page);
-  await send(buddy, 'delete the file BuddyTest');
-  await expect(buddy.locator('.approval')).toBeVisible();
+  await send(buddy, 'run the code for me now');
+  // run_code waits for the terminal app, which is not open in the test: the run stays
+  // pending (the card says running) until Stop settles it.
+  await expect(buddy.locator('.tool summary', { hasText: 'call_tool · running' })).toBeVisible();
+  await expect(buddy.locator('.tool pre')).toContainText('system.run_code');
   await buddy.locator('#stop').click();
-  await expect(buddy.locator('.approval')).toHaveCount(0);
+  await expect(buddy.locator('.tool summary', { hasText: 'call_tool · stopped' })).toBeVisible();
   await expect(buddy.locator('#messages')).toContainText('Stopped.');
+  await expect(buddy.locator('.approval')).toHaveCount(0);
+  await buddy.locator('#message').fill('next message');
+  await expect(buddy.locator('#send')).toBeEnabled();
+  await expect(buddy.locator('#model-state')).toContainText('Ready');
   await page.waitForTimeout(100);
   await buddy.locator('#chats').click();
   await expect(chips(buddy).filter({ hasText: 'interrupted' })).toHaveCount(1);
@@ -149,6 +154,7 @@ test('Stop ends only the stopped chat; the other HOLD chat still finishes done',
   await send(buddy, 'HOLD second chat please');
   await page.waitForTimeout(100);
   await buddy.locator('#stop').click();
+  await buddy.locator('#message').fill('next message');
   await expect(buddy.locator('#send')).toBeEnabled();
   await expect(buddy.locator('#model-state')).toContainText('Ready');
   await buddy.locator('#chats').click();

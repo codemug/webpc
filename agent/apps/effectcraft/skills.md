@@ -9,7 +9,7 @@ Steps:
 1. call_tool tool=desktop.open_app app=effectcraft
 2. call_tool tool=effectcraft.project_open demo=true
 Check: effectcraft.inspect lists the project and the active composition.
-Gotchas: opening the demo or a new project replaces the open one, so confirm first when there are unsaved edits; new=true starts an empty project instead.
+Gotchas: opening the demo or a new project replaces the open one (unsaved edits are lost); new=true starts an empty project instead.
 
 ## Look at the project and the comps
 slug: look-at-the-project
@@ -90,7 +90,7 @@ Steps:
 1. call_tool tool=desktop.open_app app=effectcraft
 2. call_tool tool=effectcraft.batch steps=[{"command":"comp.new","params":{"name":"Titles","width":1920,"height":1080}}]
 Check: effectcraft.comp shows the new comp.
-Gotchas: steps= is a JSON array of {command, params?}; label= names the undo step; atomic=false keeps the steps that ran when one fails; commands that delete data (track.delete, effect.remove, file.newProject, ...) make the call destructive, so ask first.
+Gotchas: steps= is a JSON array of {command, params?}; label= names the undo step; atomic=false keeps the steps that ran when one fails; commands that delete data (track.delete, effect.remove, file.newProject, ...) make the call destructive.
 
 ## Find and run any command
 slug: run-any-effectcraft-command
@@ -104,7 +104,7 @@ Steps:
 2. call_tool tool=effectcraft.list_commands query=layer
 3. call_tool tool=effectcraft.run_command command=layer.newText params=name=Title
 Check: effectcraft.comp or effectcraft.inspect shows the action took effect.
-Gotchas: run_command takes key=value lines in params= (a [ ... ] or { ... } value is JSON); command_describe is the registry query command.describe, reachable as run_command command=command.describe; track.delete, edit.purge and file.close are destructive, so ask the user first.
+Gotchas: run_command takes key=value lines in params= (a [ ... ] or { ... } value is JSON); command_describe is the registry query command.describe, reachable as run_command command=command.describe; track.delete, edit.purge and file.close are destructive (they delete data or close the project).
 ## Open a project or media from Files
 slug: open-a-project-from-files
 summary: Open an .ecproj project or import media that is stored in Files.
@@ -116,7 +116,7 @@ Steps:
 1. call_tool tool=desktop.open_app app=effectcraft
 2. call_tool tool=effectcraft.open_file path=/EffectCraft/ad.ecproj
 Check: the result has an opened field confirming the load; effectcraft.project or effectcraft.inspect shows the open project.
-Gotchas: change path= to an .ecproj project or media (video, audio, image); opening a project replaces the open one, so ask the user first if the current project has unsaved work.
+Gotchas: change path= to an .ecproj project or media (video, audio, image); opening a project replaces the open one (unsaved work is lost).
 
 ## Save a copy of the project to Files
 slug: save-a-project-copy-to-files

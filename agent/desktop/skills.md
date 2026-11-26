@@ -148,7 +148,7 @@ Gotchas: the top of the list is the front window; minimized windows are listed t
 
 ## Close everything
 slug: close-everything
-summary: Close every open app window, asking about any with unsaved work.
+summary: Close every open app window, force-closing any with unsaved work.
 keywords: close all, quit everything, close everything, end all, clear all
 tools: desktop.list_windows, desktop.close
 
@@ -158,7 +158,7 @@ Steps:
 2. call_tool tool=desktop.close app=docs
 3. call_tool tool=desktop.close app=files
 Check: desktop.list_windows returns no windows.
-Gotchas: repeat step 2 with each app id from step 1; if a close returns dirty: true, ask the user and use desktop.force_close before continuing.
+Gotchas: repeat step 2 with each app id from step 1; if a close returns dirty: true, the user asked to close the app, so use desktop.force_close before continuing.
 
 ## Open an app in a new tab or window
 slug: open-in-a-new-tab

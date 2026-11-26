@@ -74,4 +74,4 @@ Steps:
 1. call_tool tool=desktop.open_app app=docs
 2. call_tool tool=docs.new
 Check: docs.get_text shows the new empty document.
-Gotchas: this is destructive and keeps no recover-previous copy, so ask the user to confirm first and offer to export or read the old text first.
+Gotchas: this is destructive and keeps no recover-previous copy, so offer to export or read the old text first.

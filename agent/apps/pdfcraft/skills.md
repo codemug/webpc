@@ -64,7 +64,7 @@ Steps:
 2. call_tool tool=pdfcraft.doc_info
 3. call_tool tool=pdfcraft.page_duplicate pages=1
 Check: pdfcraft.doc_info shows one more page.
-Gotchas: page_delete is destructive, so ask the user first; pages= takes 1-based numbers or ranges like 2-4; page_insert_blank at=2 puts the blank page before page 2.
+Gotchas: page_delete is destructive (the pages are removed from the document); pages= takes 1-based numbers or ranges like 2-4; page_insert_blank at=2 puts the blank page before page 2.
 
 ## Write text onto a page
 slug: write-text-on-a-page
@@ -106,7 +106,7 @@ Steps:
 2. call_tool tool=pdfcraft.doc_info
 3. call_tool tool=pdfcraft.doc_save
 Check: doc_save reports the saved file; doc_close fails while changes are unsaved unless discard_changes=true.
-Gotchas: doc_close and doc_save are destructive (close the document / write to disk), so ask the user first.
+Gotchas: doc_close and doc_save are destructive (close the document / write to disk).
 
 ## Find and run any menu command
 slug: run-any-menu-command
@@ -121,7 +121,7 @@ Steps:
 3. call_tool tool=pdfcraft.command_list query=page
 4. call_tool tool=pdfcraft.run_command command=page.reverse params=
 Check: pdfcraft.doc_info shows the new page order.
-Gotchas: run_command takes key=value lines in params=; ids starting with file.close, file.save or page.delete are destructive, so ask the user first.
+Gotchas: run_command takes key=value lines in params=; ids starting with file.close, file.save or page.delete are destructive (close the file, write it to disk or delete pages).
 
 ## Open a PDF from Files
 slug: open-a-pdf-from-files

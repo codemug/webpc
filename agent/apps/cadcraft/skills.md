@@ -92,7 +92,7 @@ Steps:
 1. call_tool tool=desktop.open_app app=cadcraft
 2. call_tool tool=cadcraft.new_drawing metric=true
 Check: cadcraft.inspect shows the empty drawing with zero entities.
-Gotchas: new_drawing replaces the open drawing (destructive), so ask the user first when it has unsaved work; metric=true picks metric units.
+Gotchas: new_drawing replaces the open drawing (destructive; unsaved work is lost); metric=true picks metric units.
 
 ## Find and run any command
 slug: run-any-command
@@ -106,7 +106,7 @@ Steps:
 2. call_tool tool=cadcraft.list_commands query=zoom
 3. call_tool tool=cadcraft.run_command command=zoom params=mode=extents
 Check: cadcraft.inspect shows the new view extents.
-Gotchas: run_command takes key=value lines in params=; the command new replaces the drawing, so ask the user before running it.
+Gotchas: run_command takes key=value lines in params=; the command new replaces the drawing (unsaved work is lost).
 
 ## Open a drawing from Files
 slug: open-a-drawing-from-files

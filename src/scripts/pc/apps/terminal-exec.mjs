@@ -1,15 +1,17 @@
-// Pure helpers for the terminal exec service (BroadcastChannel('webpc-terminal'),
-// wired up in terminal.mjs). No DOM and no worker here, so every rule is unit-tested
-// in tests/pc-terminal-exec.test.mjs.
+// Pure helpers for the terminal exec service (BroadcastChannel('webpc-terminal'), wired up in
+// terminal-unkernel.mjs on top of the unkernel guest's vm.exec()). No DOM and no guest here,
+// so every rule is unit-tested in tests/pc-terminal-exec.test.mjs.
 
 export const MAX_OUTPUT = 64 * 1024;
 export const MAX_CODE = 64 * 1024;
 export const MAX_TIMEOUT_MS = 120000;
 export const DEFAULT_TIMEOUT_MS = 30000;
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/; // shell-safe: it lands in command text and /tmp file names
-const NONCE_RE = /^[0-9a-f]{16}$/;
-const B64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-const CHUNK_CHARS = 2000; // per printf line: short enough to type, long enough to keep the run small
+const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+// kwtty's OPEN frame is one TLV list: every option value is length-prefixed with 2 bytes
+// (kwtty.c OPEN, tag 3 ARG) and the whole frame is at most 65535 bytes, so a code argument
+// must leave headroom for the frame around it.
+export const EXEC_ARG_LIMIT = 65471; // 65535 minus the frame's fixed and per-argument bytes
 
 export function validateExecRequest(data) {
   if (!data || typeof data !== 'object') return { ok: false };
@@ -18,6 +20,7 @@ export function validateExecRequest(data) {
   if (typeof from !== 'string' || from.length === 0 || from.length > 200) return { ok: false };
   if (lang !== 'sh' && lang !== 'python' && lang !== 'node') return { ok: false };
   if (typeof code !== 'string' || code.length > MAX_CODE) return { ok: false };
+  if (code.includes('\u0000')) return { ok: false }; // a NUL would break the guest's exec (kwtty refuses it)
   let timeout = DEFAULT_TIMEOUT_MS;
   if (timeoutMs !== undefined) {
     if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_TIMEOUT_MS) return { ok: false };
@@ -26,160 +29,104 @@ export function validateExecRequest(data) {
   return { ok: true, id, from, lang, code, timeoutMs: timeout };
 }
 
-// Per-run nonce: the Terminal generates it with crypto.getRandomValues. It lands in the
-// output marker and the sentinel, so code that runs cannot fake its own end marker with
-// the request id (which is visible in the /tmp file names). 16 lowercase hex characters.
-export function randomNonce(cryptoObj = globalThis.crypto) {
-  const bytes = cryptoObj.getRandomValues(new Uint8Array(8));
-  let out = '';
-  for (const byte of bytes) out += byte.toString(16).padStart(2, '0');
-  return out;
-}
-
-// Platform-independent base64 (TextEncoder bytes + the standard alphabet): the code's
-// UTF-8 bytes as [A-Za-z0-9+/=] only, so no control, quote or shell metacharacter can
-// reach the tty inside a sent command line.
+// Platform-independent base64 (TextEncoder bytes + the standard alphabet): the code's UTF-8
+// bytes as [A-Za-z0-9+/=] only, so no control, quote or shell metacharacter can reach the
+// guest inside a wrapper line.
 export function base64Encode(text) {
   const bytes = new TextEncoder().encode(text);
   let out = '';
   for (let i = 0; i < bytes.length; i += 3) {
     const a = bytes[i], b = bytes[i + 1] ?? 0, c = bytes[i + 2] ?? 0;
-    out += B64_ALPHABET[a >> 2] + B64_ALPHABET[((a & 3) << 4) | (b >> 4)] + (i + 1 < bytes.length ? B64_ALPHABET[((b & 15) << 2) | (c >> 6)] : '=') + (i + 2 < bytes.length ? B64_ALPHABET[c & 63] : '=');
+    out += B64[a >> 2] + B64[((a & 3) << 4) | (b >> 4)] + (i + 1 < bytes.length ? B64[((b & 15) << 2) | (c >> 6)] : '=') + (i + 2 < bytes.length ? B64[c & 63] : '=');
   }
   return out;
 }
 
-// What actually goes out on the serial line: the tty submits on CR, so every \n
-// (line feed we built the command with) becomes a CR, plus a final CR that submits
-// the last line.
-export function toSentBytes(sentCommand) {
-  return sentCommand.replace(/\n/g, '\r') + '\r';
+// What vm.exec() runs for a request. Under EXEC_ARG_LIMIT UTF-8 bytes the code goes straight
+// into the interpreter's own -c/-e argument; over it (the 64 KiB cap allows it) the code's
+// base64 goes through stdin to a /tmp file the interpreter runs, the way the v86 path did,
+// because the argument would overflow kwtty's 2-byte option lengths. The wrapper is short;
+// the id is shell-safe by construction (ID_RE).
+const INTERPRETERS = { sh: '/bin/sh', python: 'python3', node: 'node' };
+const EXTENSIONS = { sh: 'sh', python: 'py', node: 'js' };
+export function planExec(id, lang, code) {
+  const arg = new TextEncoder().encode(code).length <= EXEC_ARG_LIMIT;
+  if (arg) return { file: INTERPRETERS[lang], args: [lang === 'node' ? '-e' : '-c', code], input: undefined };
+  const path = `/tmp/webpc-${id}.${EXTENSIONS[lang]}`;
+  return { file: '/bin/sh', args: ['-c', `base64 -d > ${path} && ${INTERPRETERS[lang]} ${path}`], input: base64Encode(code) };
 }
 
-// The sentinel the run line prints after the interpreter exits: a standalone line that
-// delimits the captured output and carries the exit code ($? is an unquoted printf
-// argument, expanded by the guest shell; id and nonce are shell-safe by construction).
-function sentinelBody(id, nonce) { return `printf '\\n__WEBPC_END_%s_%s_%d__\\n' ${id} ${nonce} $?`; }
-
-// The code is never typed into the shell: raw code in bash readline submits mid-line on
-// a raw \r, TAB triggers completion, Ctrl+P/R and ESC rewrite the line, \x03/\x04 escape
-// structures, and !x may hit history expansion. Instead the code's bytes are base64 and
-// sent as short single-quoted printf lines into a .b64 file, decoded to a file, and run
-// by its interpreter — sh included, now from a file, so a trailing newline or a trailing
-// "# comment" is just file content. Every language's run line starts by printing the
-// __WEBPC_OUT_<id>_<nonce>__ marker on its own line, before the interpreter runs.
-export function buildExecCommand(id, lang, code, nonce) {
-  if (typeof nonce !== 'string' || !NONCE_RE.test(nonce)) throw new Error('buildExecCommand needs a 16-hex-char per-run nonce');
-  const ext = { sh: 'sh', python: 'py', node: 'js' }[lang];
-  const interpreter = { sh: 'bash', python: 'python3', node: 'node' }[lang];
-  const b64 = base64Encode(code);
-  const lines = [`: > /tmp/webpc-${id}.b64`];
-  for (let i = 0; i < b64.length; i += CHUNK_CHARS) lines.push(`printf %s '${b64.slice(i, i + CHUNK_CHARS)}' >> /tmp/webpc-${id}.b64`);
-  lines.push(`base64 -d /tmp/webpc-${id}.b64 > /tmp/webpc-${id}.${ext}`);
-  lines.push(`echo __WEBPC_OUT_${id}_${nonce}__ ; ${interpreter} /tmp/webpc-${id}.${ext}; ${sentinelBody(id, nonce)}`);
-  return lines.join('\n');
-}
-
-// The guest's PS1 is `webpc:<dir># `; the serial output tail ends there when the
-// shell is idle. Anchored at the end (the boot check uses the same pattern).
-export function isAtShellPrompt(tail) {
-  return /webpc:[^\r\n]*# [\r\n\s]*$/.test(tail);
-}
-
-// The sentinel line, anchored: `__WEBPC_END_<id>_<nonce>_<0-255>__` alone on a line.
-// Similar text (other ids or nonces, codes above 255, un-anchored, unterminated) never
-// matches — the per-run nonce is what a running command cannot know.
-export function findSentinel(buffer, id, nonce) {
-  const re = new RegExp(`(^|\\n)__WEBPC_END_${id}_${nonce}_(\\d{1,3})__(?=\\r?\\n|$)`, 'g');
-  let match;
-  while ((match = re.exec(buffer)) !== null) {
-    const exitCode = Number(match[2]);
-    if (exitCode <= 255) return { exitCode, index: match.index + match[1].length, length: match[0].length - match[1].length };
-  }
-  return null;
-}
-
-export function stripAnsi(text) {
-  return text
-    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')  // CSI sequences
-    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '') // terminated OSC sequences
-    .replace(/\x1b[@-Z\\-_]/g, '') // other two-byte escapes
-    .replace(/[\x00-\x08\x0b\x0e-\x1f]/g, ''); // C0 controls, keep \t \n \r
-}
-
-// Index of a line consisting exactly of `line` (line-anchored: the run line's echo
-// contains the marker as a substring but not as a line). With `last`, the last such
-// line — the output cut must not stop at an earlier occurrence.
-export function findOwnLine(text, line, last = false) {
-  const re = new RegExp(`(^|\\n)${line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=\\r?\\n|$)`, 'g');
-  let match, start = -1;
-  while ((match = re.exec(text)) !== null) { start = match.index + match[1].length; if (!last) break; }
-  return start;
-}
-
-// Where the command's own output begins, in normalized text (ANSI stripped, CRs→LFs):
-// the guest echoes each sent CR as a bare \r byte (plus a bare-\r blank line) and wraps
-// long lines at the console width, so the echo is useless as a cut point. Every
-// language's run line prints __WEBPC_OUT_<id>_<nonce>__ on its own line before the
-// interpreter runs — the cut is after the LAST such line.
-export function cutStart(text, id, nonce) {
-  const marker = `__WEBPC_OUT_${id}_${nonce}__`;
-  const start = findOwnLine(text, marker, true);
-  if (start >= 0) return start + marker.length + 1; // +1 skips the \n of the marker line
-  return 0;
-}
-
-// output = everything before the sentinel line, from cutStart on. The text is
-// normalized first (ANSI stripped, CRs→LFs) because the guest's CR echo is bare \r.
-// One leading newline (CR-echo artifact) and one trailing newline (the sentinel's
-// own leading newline) are stripped; bounded to 64 KB (the tail is kept).
-export function parseExecResult(buffer, id, lang, nonce) {
-  const found = findSentinel(buffer, id, nonce);
-  if (!found) return null;
-  const pre = stripAnsi(buffer.slice(0, found.index)).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  let output = pre.slice(cutStart(pre, id, nonce));
-  if (output.startsWith('\n')) output = output.slice(1);
-  if (output.endsWith('\n')) output = output.slice(0, -1);
+// The reply for a finished vm.exec() run, in the old protocol's shape: the exit code a shell
+// would report (128 + signal when a signal ended the program), stdout and stderr joined (the
+// v86 path read one merged tty stream), and the tail beyond MAX_OUTPUT kept.
+export function execReply(result) {
+  const exitCode = result.exitCode !== null ? result.exitCode : 128 + (result.signal ?? 0);
+  let output = result.stdout + result.stderr;
   let truncated = false;
   if (output.length > MAX_OUTPUT) { output = output.slice(-MAX_OUTPUT); truncated = true; }
-  return { exitCode: found.exitCode, output, truncated };
+  return { exitCode, output, truncated };
 }
 
-// Partial output for the timeout path: the same normalization and cut as a normal
-// result — after the last OUT marker line (every language prints one; empty if the
-// marker never arrived). Then drop the trailing shell prompt (printed after the
-// Ctrl+C) and surrounding blank lines.
-export function parseExecPartial(buffer, id, lang, nonce) {
-  const text = stripAnsi(buffer).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  const marker = `__WEBPC_OUT_${id}_${nonce}__`;
-  const start = findOwnLine(text, marker, true);
-  let output = start >= 0 ? text.slice(start + marker.length + 1) : '';
-  const prompt = output.match(/\n?webpc:[^\n]*# [^\n]*$/);
-  if (prompt) output = output.slice(0, output.length - prompt[0].length);
-  return output.trim();
+// Whether this tab may run the request: one run at a time (busy), the guest must be running,
+// and only the tab that holds the saved disk's Web Lock (owner, the boot's lock.held) runs -
+// a snapshot tab replies not-running so the owner tab wins (its exec-pending ack cancels the
+// client's grace) and, with only a snapshot tab up, the run settles not-running after the grace.
+export function execGate({ owner, running, inFlight }) {
+  if (inFlight) return 'busy';
+  if (!running || !owner) return 'not-running';
+  return 'run';
 }
 
-// The approval prompt shows exactly what will run: C0 controls, DEL and
-// bidi/zero-width characters render as escapes (\x0d, <U+202E>) instead of being
-// invisible, so crafted code cannot masquerade. Newlines stay newlines.
-const CONTROL_RE = /[\u0000-\u0008\u0009\u000B-\u001F\u007F]/g;
-const INVISIBLE_RE = /[\u200B\u200C\u200D\u200E\u200F\u202A\u202B\u202C\u202D\u202E\u2060\u2066\u2067\u2068\u2069\uFEFF]/g;
-export function visibleCode(code) {
-  return code
-    .replace(CONTROL_RE, ch => `\\x${ch.charCodeAt(0).toString(16).padStart(2, '0')}`)
-    .replace(INVISIBLE_RE, ch => `<U+${ch.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}>`);
+// The finished run's block for the xterm (M5): display lines, ANSI escapes included, in
+// writing order. The header is cyan so it reads as the agent's, not the user's: the sh code
+// as typed (its own newlines become further header lines), or the interpreter's -c/-e line
+// plus the code's own lines for python and node, at most 6 then a note. The output shows at
+// most 200 lines (its trailing newline never leaves a blank line before the footer), then a
+// note that the agent still got the output. The footer is dim and names the ending: the
+// exit code with the run's time, or timed out, cancelled, error. redrawAbovePrompt() turns
+// the lines into the one term.write string that puts the block above the user's prompt line
+// and restores that line and its cursor; the pty never sees any of it.
+const AGENT_CODE_LINES = 6;
+const AGENT_OUTPUT_LINES = 200;
+export function formatAgentRun({ from, lang, code, exitCode, output, truncated, durationMs, reason }) {
+  void truncated; // the reply says whether the agent got the full output; the display only caps its own lines
+  const lines = [];
+  const colour = text => `\x1b[36m${text}\x1b[0m`;
+  if (lang === 'sh') {
+    for (const line of `${from} $ ${code}`.split('\n')) lines.push(colour(line));
+  } else {
+    lines.push(colour(`${from} $ ${lang === 'python' ? 'python3 -c' : 'node -e'}`));
+    const codeLines = code.split('\n');
+    for (const line of codeLines.slice(0, AGENT_CODE_LINES)) lines.push(colour(line));
+    if (codeLines.length > AGENT_CODE_LINES) lines.push(`… (${codeLines.length - AGENT_CODE_LINES} more lines)`);
+  }
+  const outputLines = output.split('\n');
+  while (outputLines.length > 0 && outputLines[outputLines.length - 1] === '') outputLines.pop();
+  for (const line of outputLines.slice(0, AGENT_OUTPUT_LINES)) lines.push(line);
+  if (outputLines.length > AGENT_OUTPUT_LINES) lines.push(`… (${outputLines.length - AGENT_OUTPUT_LINES} more lines; the agent got the full output)`);
+  const footer = reason === 'timeout' ? '[timed out]' : reason === 'cancelled' ? '[cancelled]' : reason ? `[error: ${reason}]` : `[exit ${exitCode} · ${durationMs} ms]`;
+  lines.push(`\x1b[2m${footer}\x1b[0m`);
+  return lines;
 }
 
-// Channel-message triage for the exec protocol: an 'exec-request' goes to the approval
-// flow; another Terminal's 'exec-started' or 'exec-cancel' for the id this Terminal is
-// still prompting for withdraws that prompt silently (no reply). Everything else —
-// including the replies this Terminal posts itself and other apps' traffic — must be
-// ignored: answering a non-request message is what made two Terminals bounce
-// exec-error replies forever.
+// The one string to term.write: to the start of the user's prompt line (the cursor is on it
+// while the shell waits), erase the line, write the block - every line starts at column 0
+// via \r\n, so the output's \n never reaches the terminal raw - then rewrite the saved row
+// text and put the cursor back at the saved column. This is how a line editor prints above
+// its own prompt, so the shell's buffer is untouched and its next redraw reflows normally.
+export function redrawAbovePrompt(blockLines, rowText, cursorX) {
+  return `\r\x1b[2K` + blockLines.join('\r\n') + `\r\n` + rowText + `\r` + (cursorX > 0 ? `\x1b[${cursorX}C` : '');
+}
+
+// Channel-message triage for the exec protocol: an 'exec-request' runs at once (no approval
+// prompt, M3); an 'exec-cancel' for the id this Terminal is running - Buddy's Stop, New chat
+// or its wall timer - aborts that run. Everything else, including the replies this Terminal
+// posts itself and other apps' traffic, must be ignored: answering a non-request message is
+// what made two Terminals bounce exec-error replies forever.
 export function handleExecChannelMessage(data, slot) {
   if (data?.type === 'exec-request') return { action: 'request' };
-  if ((data?.type === 'exec-started' || data?.type === 'exec-cancel') && typeof data.id === 'string' && slot && slot.phase === 'prompt' && slot.req?.id === data.id) {
-    return { action: 'withdraw' };
+  if (data?.type === 'exec-cancel' && typeof data.id === 'string' && slot && slot.req?.id === data.id) {
+    return { action: 'cancel' };
   }
   return { action: 'ignore' };
 }

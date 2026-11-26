@@ -4,7 +4,7 @@
 // behaviour, limits and safety checks of every tool stay exactly as they were.
 import { ToolError } from '../../src/apps/ai-agent/runtime/args.mjs';
 
-export const pack = { id: 'system', title: 'Buddy' };
+export const pack = { id: 'system', title: 'WebPC Agent' };
 
 // Run a legacy tool; its { error } results become teaching errors for the model.
 async function legacy(ctx, name, args) {
@@ -114,5 +114,26 @@ export const tools = [
     effect: 'change', needs: ['legacy:remove_background'],
     examples: [{ args: { source: 'attached' }, says: 'Remove the background of this photo' }],
     run: (args, ctx) => legacy(ctx, 'remove_background', args),
+  },
+  {
+    name: 'system.sleep', purpose: 'Wait a few seconds, then continue.',
+    when: 'Use when the user asks to wait or sleep, or to poll a state that changes over time.',
+    params: { seconds: { type: 'integer', min: 1, max: 30, description: 'How many seconds to wait (default 3)' } },
+    effect: 'read',
+    examples: [{ args: { seconds: 3 }, says: 'Wait a few seconds' }],
+    // Resolves after seconds (default 3). The turn's abort signal (Stop) rejects it at once
+    // instead of letting the wait run out; a Stop while sleeping also throws the session's
+    // own AbortError, which ends the turn either way.
+    run: async (args, ctx) => {
+      const seconds = args.seconds ?? 3;
+      const signal = ctx?.signal;
+      if (signal?.aborted) throw new ToolError('aborted', 'The turn was stopped while waiting.', '');
+      await new Promise((resolve, reject) => {
+        const onAbort = () => { clearTimeout(timer); reject(new ToolError('aborted', 'The turn was stopped while waiting.', '')); };
+        const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve(); }, seconds * 1000);
+        signal?.addEventListener('abort', onAbort, { once: true });
+      });
+      return { slept: seconds };
+    },
   },
 ];

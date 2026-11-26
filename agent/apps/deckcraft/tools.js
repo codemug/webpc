@@ -345,7 +345,7 @@ export const tools = [
   {
     name: 'deckcraft.run_command',
     purpose: 'Run any DeckCraft menu command by id with parameters.',
-    when: `Use when a menu action is wanted by id; ${DESTRUCTIVE.join(', ')} are destructive, so ask first.`,
+    when: `Use when a menu action is wanted by id; ${DESTRUCTIVE.join(', ')} are destructive.`,
     params: {
       command: { type: 'string', required: true, description: 'Command id from deckcraft.list_commands, e.g. slide.new or format.bold' },
       params: { type: 'text', description: 'Parameters as key=value lines, one per line; omit for the defaults' },

@@ -213,12 +213,12 @@ if (shell) {
     badge.textContent = need ? String(need) : run ? String(run) : '';
     badge.dataset.kind = need ? 'needs-you' : 'running';
     const parts = [run && `${run} chat${run === 1 ? '' : 's'} running`, need && `${need} need${need === 1 ? 's' : ''} you`].filter(Boolean);
-    buddyButton.setAttribute('aria-label', parts.length ? `Buddy, ${parts.join(', ')}` : 'Buddy');
+    buddyButton.setAttribute('aria-label', parts.length ? `WebPC Agent, ${parts.join(', ')}` : 'WebPC Agent');
   };
   const ensureBuddyFrame = () => {
     if (buddyFrame?.isConnected) return buddyFrame;
     const frame = document.createElement('iframe');
-    frame.title = 'Buddy';
+    frame.title = 'WebPC Agent';
     frame.className = 'pc-app-frame';
     frame.src = buddy.src;
     buddyPanel.querySelector('.pc-buddy-body').append(frame);
@@ -378,13 +378,13 @@ if (shell) {
     });
     element.querySelector('[data-maximize]').addEventListener('click', () => dispatch({ type: 'maximize', id: app.id }));
     element.querySelector('[data-close]').addEventListener('click', () => {
-      try {
-        if (view.frame?.contentWindow?.pcBeforeClose?.() === false) {
-          announce(`${app.title} could not save. Keep this window open and export a backup.`);
-          return;
-        }
-      } catch {
-        announce(`${app.title} could not save. Keep this window open and export a backup.`);
+      // pcBeforeClose() false means the app has changes it could not save yet. The user's own
+      // close warns and closes if they confirm; the agent's desktop.close still refuses and
+      // reports dirty (it closes with force only when the user asked).
+      let unsaved = false;
+      try { unsaved = view.frame?.contentWindow?.pcBeforeClose?.() === false; } catch { unsaved = true; }
+      if (unsaved && !confirm(`${app.title} has changes that are not saved. Close it anyway and lose them?`)) {
+        announce(`${app.title} is still open; its changes are not saved.`);
         return;
       }
       dispatch({ type: 'close', id: app.id });

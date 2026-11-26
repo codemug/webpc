@@ -13,8 +13,8 @@ import { filesCall, openFromBytes, readOpenFile } from '../../shared/craft-files
 const APP = 'lightcraft';
 const NEEDS = ['host', 'app:lightcraft'];
 // run_command ids that destroy or replace data, from the engine command registry (grep of the
-// cmd! ids in crates/engine/src/cmd): effectFor marks those calls destructive, so the policy
-// asks. Prefixes: mask.delete covers mask.deleteAll/mask.deleteEffect, develop.reset covers
+// cmd! ids in crates/engine/src/cmd): effectFor marks those calls destructive. Prefixes:
+// mask.delete covers mask.deleteAll/mask.deleteEffect, develop.reset covers
 // develop.resetControl.
 const DESTRUCTIVE = [
   'photo.delete', 'photo.deletePermanently', 'library.emptyRecentlyDeleted',
@@ -239,7 +239,7 @@ export const tools = [
   {
     name: 'lightcraft.run_command',
     purpose: 'Run any LightCraft command by id with parameters.',
-    when: `Use when a menu action is wanted by id; ${DESTRUCTIVE.join(', ')} are destructive, so ask first.`,
+    when: `Use when a menu action is wanted by id; ${DESTRUCTIVE.join(', ')} are destructive.`,
     params: {
       command: { type: 'string', required: true, description: 'Command id, e.g. library.select, photo.rate, preset.apply, mask.invert' },
       params: { type: 'text', description: 'Parameters as key=value lines or a JSON object; omit for the defaults' },

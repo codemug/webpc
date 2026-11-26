@@ -9,7 +9,7 @@ import { releases } from '../../../scripts/pc/craft/releases.mjs';
 const APP = 'figcraft';
 const NEEDS = ['host', 'app:figcraft'];
 // run_command/batch ids that destroy or replace data, from the engine command registry
-// (crates/engine/src/cmd): effectFor marks those calls destructive, so the policy asks.
+// (crates/engine/src/cmd): effectFor marks those calls destructive.
 // file.new is not listed: the web app holds a document list (session docs/active) and the
 // new document becomes active while the others stay (lead live gate, destructive=false).
 const DESTRUCTIVE = ['file.close', 'edit.delete', 'page.delete', 'style.delete', 'variable.delete', 'comment.delete', 'version.delete'];
@@ -86,7 +86,7 @@ export const tools = [
   {
     name: 'figcraft.run_command',
     purpose: 'Run any FigCraft command by id with parameters.',
-    when: `Use when a menu, panel or shortcut action is wanted by id; ${DESTRUCTIVE.join(', ')} are destructive, so ask first.`,
+    when: `Use when a menu, panel or shortcut action is wanted by id; ${DESTRUCTIVE.join(', ')} are destructive.`,
     params: {
       command: { type: 'string', required: true, description: 'Command id from figcraft.list_commands, e.g. node.create, align.left, file.export' },
       params: { type: 'text', description: 'Parameters as key=value lines, one per line; a [ ... ] or { ... } value is JSON; omit for the defaults' },

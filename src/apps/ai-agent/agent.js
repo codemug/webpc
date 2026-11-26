@@ -13,17 +13,17 @@ const LANG_CODE = /^[a-z]{2,3}(-[A-Za-z]{2,8})*$/;
 /**
  * A terminal exec-service reply (exec-result / exec-error over BroadcastChannel) reduced to the
  * model-facing tool result. `no-terminal` is synthesized by the bridge when the wall timer
- * expires without any reply (the terminal app is not open, or approval/run is still pending).
+ * expires without any reply (the terminal app is not open, or Linux is not running).
  */
 export function execReplyToToolResult(reply) {
   if (reply?.type === "exec-result") return { exitCode: reply.exitCode, output: String(reply.output ?? ""), truncated: reply.truncated === true };
-  if (reply?.type === "exec-error" && reply.reason === "timeout") return { error: "The run exceeded its time limit and was interrupted with Ctrl+C.", output: String(reply.output ?? ""), truncated: reply.truncated === true };
+  if (reply?.type === "exec-error" && reply.reason === "timeout") return { error: "The run exceeded its time limit and was killed in the guest.", output: String(reply.output ?? ""), truncated: reply.truncated === true };
   const reason = reply?.type === "exec-error" ? reply.reason : "invalid";
   const message = {
-    "not-running": "The Linux guest is not running. The user needs to open the Linux Terminal app and press Start Linux first.",
+    "not-running": "Linux is not running: call terminal.start, then system.sleep seconds=3 and terminal.status until the state is running, then run the code again.",
     denied: "The user denied this run.",
     busy: "Another command is already running in the terminal; try again shortly.",
-    "no-terminal": "No reply from the Linux Terminal app: it may not be open, or the run is still waiting for the user's approval. Check the terminal window before trying again.",
+    "no-terminal": "No reply from the Linux Terminal app: it may not be open, or Linux is not running: call terminal.start, then system.sleep seconds=3 and terminal.status until the state is running, then run the code again.",
     invalid: "The run request was rejected.",
   }[reason] ?? `The run failed (${String(reason)}).`;
   return { error: message };
@@ -115,13 +115,13 @@ export function createTools(host) {
   // (BroadcastChannel bridge). The terminal app asks the user to approve every run, so the
   // reply only arrives once the run finishes, is denied, or the guest is not running.
   if (host.runCode) tools.run_code = {
-    description: "Run code in WebPC's Linux guest (real Alpine Linux) and return its exit code and output. lang is python, node or sh; for SQL use Python's sqlite3 module. The user approves every run in the terminal app. Output is the last 64 KB (truncated flags the head).",
+    description: "Run code in WebPC's Linux guest (real Alpine Linux) and return its exit code and output. lang is python, node or sh; for SQL use Python's sqlite3 module. Output is the last 64 KB (truncated flags the head).",
     parameters: {
       type: "object",
       properties: {
         code: { type: "string", description: `Code to run (max ${MAX_CODE_CHARS} characters)` },
         lang: { type: "string", description: "python, node or sh" },
-        timeout_ms: { type: "number", description: "Optional run limit in milliseconds, 1-120000 (default 30000); the run is interrupted with Ctrl+C at the limit and the partial output is returned" },
+        timeout_ms: { type: "number", description: "Optional run limit in milliseconds, 1-120000 (default 30000); the run is killed at the limit" },
       },
       required: ["code", "lang"],
     },
@@ -208,7 +208,7 @@ export function createTools(host) {
     run: ({ path }) => host.readFile(String(path ?? "")),
   };
   if (host.writeFile) tools.write_file = {
-    description: "Create or update a text file inside a granted FOLDER; the user confirms every write and overwrites are announced. path is relative to the Files app root, inside the granted folder. The parent folder must already exist.",
+    description: "Create or update a text file inside a granted FOLDER; overwrites are announced. path is relative to the Files app root, inside the granted folder. The parent folder must already exist.",
     parameters: {
       type: "object",
       properties: {

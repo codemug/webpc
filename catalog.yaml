@@ -93,19 +93,15 @@ apps:
     enabled: true
     title: Terminal
     category: Developer
-    keywords: [ linux, alpine, bash, python, node, shell ]
-    description: Real offline Linux with Bash, Python and Node.js.
+    keywords: [ linux, alpine, python, node, shell ]
+    description: Real offline Alpine Linux with a busybox shell, Python and Node.js.
     src: /pc/apps/terminal/
     kind: iframe
     width: 940
     height: 680
     wasm:
-      build: "make all"
+      build: "./setup.sh"
     sources:
-      - type: npm
-        package: v86
-        version: 0.5.473
-        upgrade: manual
       - type: npm
         package: "@xterm/xterm"
         version: 5.5.0
@@ -115,12 +111,30 @@ apps:
         version: 0.10.0
         upgrade: auto
       - type: npm
-        package: "@xterm/addon-serialize"
-        version: 0.13.0
-        upgrade: auto
-      - type: alpine
-        lock: scripts/pc/linux/packages.lock.json
-        upgrade: auto
+        package: unkernel
+        version: 0.2.0-261123-8f039c5
+        upgrade: manual
+      - type: github-release
+        repo: pithings/unkernel
+        tag: v0.2.0-261123-8f039c5
+        asset: distros.json
+        url: https://github.com/pithings/unkernel/releases/download/v0.2.0-261123-8f039c5/distros.json
+        sha256: 93dff645db9796f3f1303d4d09cec15cf8e6e58e4732a02d41f15e96ad389e64
+        upgrade: manual
+      - type: github-release
+        repo: pithings/unkernel
+        tag: v0.2.0-261123-8f039c5
+        asset: alpine.erofs
+        url: https://github.com/pithings/unkernel/releases/download/v0.2.0-261123-8f039c5/alpine.erofs
+        sha256: 72a89c2638ec4cb69767b2071d9a3492134cb00c00168c5c32a932859524ae7f
+        upgrade: manual
+      - type: github-release
+        repo: codemug/webpc
+        tag: terminal-data-v1
+        asset: webpc-terminal-data-v1.kwsparse.gz
+        url: https://github.com/codemug/webpc/releases/download/terminal-data-v1/webpc-terminal-data-v1.kwsparse.gz
+        sha256: 058a918d3772ddb5976692aa093e8ef1c6368a75a376e800ea39f0877ce413bd
+        upgrade: manual
   - id: sqliteviz
     enabled: true
     title: SQLiteViz
@@ -244,7 +258,7 @@ apps:
         upgrade: auto
   - id: ai-agent
     enabled: true
-    title: Buddy
+    title: WebPC Agent
     category: Utilities
     keywords: [ buddy, ai, chat, assistant, local, model ]
     description: Your on-device sidekick, one click away in the taskbar.

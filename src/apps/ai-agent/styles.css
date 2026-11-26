@@ -11,7 +11,7 @@
 #cloud-provider .check{margin-right:14px;white-space:nowrap}
 #cloud-model,#cloud-base{min-width:230px;max-width:320px}
 #cloud-key{min-width:230px;max-width:320px}
-/* M3: the chats list (fits the 480 px panel) and the in-chat approval cards */
+/* M3: the chats list (fits the 480 px panel) */
 #chats-panel{position:absolute;top:0;left:0;bottom:0;width:min(300px,80%);background:var(--panel);border-right:1px solid var(--line);box-shadow:var(--shadow);z-index:30;display:flex;flex-direction:column}
 #chats-panel[hidden]{display:none}
 .chats-head{display:flex;align-items:center;gap:8px;padding:12px 12px 10px;border-bottom:1px solid var(--line)}
@@ -32,10 +32,6 @@
 .chat-rename:hover,.chat-delete:hover{color:var(--text);background:var(--tint)}
 .chat-rename-input{width:170px;padding:2px 5px;border:1px solid var(--accent);border-radius:4px;background:var(--panel);color:var(--text);font-size:12px}
 .chats-empty{color:var(--muted);font-size:11px;padding:8px 4px}
-.approval{border:1px solid var(--accent);background:var(--tint);border-radius:8px;padding:10px 12px;margin:8px 0}
-.approval p{margin:0 0 6px;font-weight:650}
-.approval pre{margin:0 0 8px;white-space:pre-wrap;font-size:11px;font-family:var(--font-mono);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 8px}
-.approval-actions{display:flex;gap:8px;justify-content:flex-end}
 /* Help pop-ups (help.js): the shared #help-pop tooltip and the .help-dot buttons. The
    tooltip is position:fixed inside Buddy's own frame, so it is clamped to the panel. */
 #help-pop{position:fixed;top:0;left:0;z-index:60;max-width:260px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);box-shadow:var(--shadow);font-size:12px;line-height:1.45;opacity:0;transition:opacity .15s ease;pointer-events:auto}

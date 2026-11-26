@@ -176,7 +176,7 @@ export const tools = [
   {
     name: 'cadcraft.run_command',
     purpose: 'Run any CADCraft command by id with JSON parameters.',
-    when: `Use when a menu action is wanted by id; ${DESTRUCTIVE.join(', ')} replaces the drawing, so ask first.`,
+    when: `Use when a menu action is wanted by id; ${DESTRUCTIVE.join(', ')} replaces the drawing.`,
     params: {
       command: { type: 'string', required: true, description: 'Command id from cadcraft.list_commands, e.g. line, circle, layer.new, move, zoom' },
       params: { type: 'text', description: 'Parameters as key=value lines, one per line; omit for the defaults' },

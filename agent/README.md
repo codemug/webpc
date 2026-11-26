@@ -1,6 +1,6 @@
-# Buddy app packs
+# WebPC Agent app packs
 
-How Buddy's tools and skills are built, and how to add a pack for an app.
+How WebPC Agent's tools and skills are built, and how to add a pack for an app.
 Every pack is plain ES modules that run in the browser and in Node, so the
 unit tests need no browser. The build reads the packs; nothing here is a page.
 
@@ -53,8 +53,9 @@ commit nothing from it. Run the build after changing a pack.
   optionally `required`, `values` (for `enum`, or the live `apps` list),
   `default`, `min`, `max`. In the excerpt, `APP` is the pack's shared
   `{ type: 'enum', values: 'apps', ... }` spec for an app id.
-- `effect`: `read`, `change`, `destructive` or `external`. The policy allows
-  reads and asks before destructive or external calls.
+- `effect`: `read`, `change`, `destructive` or `external`. It describes the
+  tool to the model (`describe_tool` shows it); every effect runs without
+  asking, on every backend.
 - `effectFor` (optional): a function of the args that returns the effective
   effect, for a tool whose danger depends on an argument. The GridCraft pack
   marks `file.new` and `sheet.delete` destructive this way.
@@ -144,8 +145,8 @@ node scripts/agent/eval.mjs --model lfm3-1.7b --set A [--limit N] [--prefetch on
 
 `--model` is the key from `src/apps/ai-agent/models.js` (default `lfm3-1.7b`);
 `--set` runs one set and `--task <id>` one task; `--limit` caps the count;
-`--prefetch on` loads the Buddy document with `?prefetch=1`, the eval-only
-switch that puts the best skill's steps in the turn (Buddy's default is off).
+`--prefetch on` loads the WebPC Agent document with `?prefetch=1`, the eval-only
+switch that puts the best skill's steps in the turn (WebPC Agent's default is off).
 Chrome runs headless with WebGPU and a persistent profile
 (`/tmp/webpc-eval-profile`), so model downloads are cached across runs.
 Results go to `tests/agent-eval/results/<model>-<set>-<timestamp>.json`:

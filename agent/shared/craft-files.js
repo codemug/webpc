@@ -11,9 +11,10 @@
 // web.rs:106) and the standalone bootstrap requires (scripts/pc/craft/bootstrap.js:53).
 // A direct postMessage from the agent frame is silently dropped by both; host-mode and
 // standalone apps both consume that one message, so one code path covers both modes.
-// The wrapper's 256 MB check (app.mjs:36) and unsaved-changes confirm (app.mjs:35)
-// still apply. The open is async, so openAndAwait waits: it snapshots craft.inspect()
-// before the open and polls it until the result differs.
+// The wrapper's 256 MB check (app.mjs:36) still applies; its unsaved-changes confirm
+// (app.mjs:35) applies to user opens only - this drive is an untrusted change event, so the
+// confirm is skipped for tool opens (M3). The open is async, so openAndAwait waits: it
+// snapshots craft.inspect() before the open and polls it until the result differs.
 //
 // Save: the browser has no file system, so no path is ever passed to the app. The bytes
 // come back inline when the app's save command answers with them: file.saveBytes in the
@@ -106,7 +107,8 @@ export const readOpenFile = async (ctx, path, { id, title }) => {
  * Throws ToolError('invalid_argument') for a bad name or non-binary bytes,
  * ('not_available') when the wrapper has no #file input, ('app_error') above 256 MB.
  * The wrapper's handler still applies its own 256 MB check and, while the document is
- * dirty, its own unsaved-changes confirm dialog (app.mjs:35).
+ * dirty, its own unsaved-changes confirm dialog (app.mjs:35) to user opens; this drive is
+  * an untrusted event, so the confirm is skipped (M3).
  */
 export async function openFromBytes(wrapperWindow, id, name, bytes) {
   if (typeof name !== 'string' || name.length < 1 || name.length > 255) {

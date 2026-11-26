@@ -12,7 +12,7 @@ import { innerApi } from '../../shared/inner-app.js';
 
 const APP = 'beepbox';
 const NEEDS = ['host', 'app:beepbox'];
-const NOT_HERE = 'BeepBox is not available here (Buddy is not running inside WebPC).';
+const NOT_HERE = 'BeepBox is not available here (WebPC Agent is not running inside WebPC).';
 
 // Gate on ctx.host (needs: ['host', 'app:beepbox']), then turn host rejections, which carry a
 // code (unknown_app, not_open, not_iframe, timeout, invalid_argument), and innerApi's
