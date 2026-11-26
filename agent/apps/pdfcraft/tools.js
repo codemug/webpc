@@ -275,7 +275,15 @@ export const tools = [
     needs: NEEDS,
     examples: [{ args: { query: 'invoice' }, says: 'Where does the word invoice appear?' }],
     // tools.rs:272-278 text_find, ro, engine command edit.find
-    run: async (args, ctx) => gate(await ctx.craft(APP)).execute('edit.find', pick(args, ['doc', 'query', 'limit'])),
+    run: async (args, ctx) => {
+      const result = await gate(await ctx.craft(APP)).execute('edit.find', pick(args, ['doc', 'query', 'limit']));
+      // b21 pdfcraft-02: the app can answer edit.find with { ran } only (no match details),
+      // a dead end the model loops on; point at read_text, which returns the page text.
+      if (result && typeof result === 'object' && !Array.isArray(result) && Object.keys(result).length <= 1) {
+        return { ...result, note: 'the app reported the search ran but gave no match details; pdfcraft.read_text returns the page text' };
+      }
+      return result;
+    },
   },
   {
     name: 'pdfcraft.text_replace',

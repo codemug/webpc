@@ -312,6 +312,34 @@ test('effect_add runs one engine.batch of effect.apply plus prop.set per value, 
   });
 });
 
+// b20 effectcraft-04: a bare "12" for values is a valid JSON number, so the old code parsed
+// it and Object.entries dropped it; the effect landed with every parameter at zero.
+test('effect_add refuses a values argument that parses but is not a JSON object', async () => {
+  const craft = fakeCraft();
+  await assert.rejects(runTool('effectcraft.effect_add', { layer: '1', effect: 'Gaussian Blur', values: '12' }, craft), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.match(error.message, /values must be a JSON object/);
+    return true;
+  });
+  assert.equal(craft.calls.length, 1, 'only the before layer.tree ran; no batch with empty values');
+});
+
+// b20 effectcraft-06: expression text in value reached prop.set, the app answered
+// "bad value", and the model retried the same dead end to the round cap.
+test('property_set refuses non-# string values and points at the expression parameter', async () => {
+  const craft = fakeCraft();
+  await assert.rejects(runTool('effectcraft.property_set', { layer: '1', path: 'transform/opacity', value: 'time + 1' }, craft), error => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.type, 'invalid_argument');
+    assert.match(error.message, /expression/);
+    return true;
+  });
+  assert.deepEqual(craft.calls, []);
+  await runTool('effectcraft.property_set', { layer: '1', path: 'transform/opacity', value: '#FF0000' }, craft);
+  assert.deepEqual(craft.calls[0], ['execute', 'prop.set', { layer: '1', path: 'transform/opacity', value: '#FF0000' }], 'a #color raw string still goes to prop.set');
+});
+
 test('effects_list, fonts_list, state and script_run send their engine commands', async () => {
   const craft = fakeCraft();
   await runTool('effectcraft.effects_list', { filter: 'blur' }, craft);
@@ -491,7 +519,7 @@ test('effectcraft.open_file reads the file, drives the wrapper input, and waits 
   assert.deepEqual(ctx.calls.read, ['/EffectCraft/ad.ecproj']);
   assert.equal(wrapper.opened.length, 1);
   assert.equal(wrapper.opened[0].name, 'ad.ecproj');
-  assert.deepEqual(out, { name: 'ad.ecproj', bytes: 3, opened: 'the app state changed' });
+  assert.deepEqual(out, { name: 'ad.ecproj', bytes: 3, opened: 'the app state changed', next: 'ad.ecproj is open. To check it, call effectcraft.inspect. Opening it again shows a dialog and blocks the app.' });
   assert.equal(byName('effectcraft.open_file').effect, 'destructive'); // a project open replaces the open one
 });
 

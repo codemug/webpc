@@ -353,7 +353,7 @@ test('cadcraft.open_file reads the file, waits for the drawing to load, and retu
   assert.deepEqual(ctx.calls.read, ['/CadCraft/plan.dxf']);
   assert.equal(wrapper.opened.length, 1);
   assert.equal(wrapper.opened[0].name, 'plan.dxf');
-  assert.deepEqual(out, { name: 'plan.dxf', bytes: 2, opened: 'the app state changed' }); // threw before, loads after
+  assert.deepEqual(out, { name: 'plan.dxf', bytes: 2, opened: 'the app state changed', next: 'plan.dxf is open. To check it, call cadcraft.inspect. Opening it again shows a dialog and blocks the app.' }); // threw before, loads after
 });
 
 test('cadcraft.save_copy takes the bytes inline from document.bytes and writes them', async () => {

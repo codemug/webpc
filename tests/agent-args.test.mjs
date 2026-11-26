@@ -337,6 +337,14 @@ test('repairArgs splits an unknown key whose value spells the tool own pairs, ke
 
 test('repairArgs moves one unknown key into the one missing required text parameter', () => {
   assert.deepEqual(checkArgs(RUN, { query: 'uname -a' }), { ok: true, args: { code: 'uname -a', lang: 'sh' } });
+  // terminal-01 (sweep b20b): the command spelled as a JSON array (args='["ls", "-la",
+  // "~"]'); moved raw, the shell executed the JSON text itself ("[ls,: not found", 27
+  // rounds of 127). A flat array of scalars moves as its space-joined command line.
+  assert.deepEqual(checkArgs(RUN, { args: '["ls", "-la", "~"]' }), { ok: true, args: { code: 'ls -la ~', lang: 'sh' } });
+  assert.deepEqual(checkArgs(RUN, { command: '[42]' }), { ok: true, args: { code: '42', lang: 'sh' } });
+  // Nested arrays and non-JSON bracket text have no sane join: they move as-is.
+  assert.deepEqual(checkArgs(RUN, { args: '[[1,2],[3,4]]' }), { ok: true, args: { code: '[[1,2],[3,4]]', lang: 'sh' } });
+  assert.deepEqual(checkArgs(RUN, { query: '[a, b]' }), { ok: true, args: { code: '[a, b]', lang: 'sh' } });
 });
 
 test('repairArgs unwraps the tool own args sent as a JSON object under an unknown key', () => {

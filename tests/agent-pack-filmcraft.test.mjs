@@ -457,7 +457,7 @@ test('filmcraft.open_file reads the file, drives the wrapper input, and waits fo
   assert.deepEqual(ctx.calls.read, ['/FilmCraft/talk.fcproj']);
   assert.equal(wrapper.opened.length, 1);
   assert.equal(wrapper.opened[0].name, 'talk.fcproj');
-  assert.deepEqual(out, { name: 'talk.fcproj', bytes: 3, opened: 'the app state changed' });
+  assert.deepEqual(out, { name: 'talk.fcproj', bytes: 3, opened: 'the app state changed', next: 'talk.fcproj is open. To check it, call filmcraft.inspect. Opening it again shows a dialog and blocks the app.' });
   assert.equal(byName('filmcraft.open_file').effect, 'destructive'); // a project open replaces the open one
 });
 

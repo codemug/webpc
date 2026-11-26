@@ -447,7 +447,25 @@ test('deckcraft.open_file reads the file, waits for the load, and returns the op
   assert.deepEqual(ctx.calls.read, ['/DeckCraft/talk.pptx']);
   assert.equal(wrapper.opened.length, 1);
   assert.equal(wrapper.opened[0].name, 'talk.pptx');
-  assert.deepEqual(out, { name: 'talk.pptx', bytes: 2, opened: '"Talk" 2 slides' });
+  assert.deepEqual(out, { name: 'talk.pptx', bytes: 2, opened: '"Talk" 2 slides', next: 'talk.pptx is open. To check it, call deckcraft.inspect. Opening it again shows a dialog and blocks the app.' });
+});
+
+// deckcraft-10 (b21): the model re-opened an already-open deck ~10 times to "check it
+// loaded"; each re-open tripped the app's dialog and the turn died at the 240 s timer.
+// The deck's title of a file-opened deck is the file's stem, so the re-open short-circuits
+// before driving the input (no dialog), with the note telling the model to inspect.
+test('deckcraft.open_file re-opening an open deck short-circuits instead of driving the dialog', async () => {
+  const wrapper = fakeWrapper();
+  const ctx = fileCtx(new Uint8Array([1, 2]), wrapper);
+  ctx.craft = () => Promise.resolve({ ...fakeCraft(), inspect: async () => ({ title: 'talk', slides: [1, 2] }) });
+  const out = await byName('deckcraft.open_file').run({ path: '/DeckCraft/talk.pptx' }, ctx);
+  assert.equal(wrapper.opened.length, 0, 'the file input is never driven for a re-open (no dialog)');
+  assert.deepEqual(out, {
+    name: 'talk.pptx',
+    bytes: 2,
+    opened: 'already open as talk.pptx',
+    next: 'talk.pptx is open. To check it, call deckcraft.inspect. Opening it again shows a dialog and blocks the app.',
+  });
 });
 
 test('deckcraft.open_file turns a store not_found into a teaching ToolError', async () => {

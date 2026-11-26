@@ -462,7 +462,14 @@ export function repairArgs(tool, raw) {
   const missing = names.filter(k => params[k].required && (args[k] == null || args[k] === ''));
   if (unknown.length === 1 && missing.length === 1 && ['string', 'text'].includes(params[missing[0]].type) && typeof args[unknown[0]] === 'string') {
     const { [unknown[0]]: value, ...rest } = args;
-    args = { ...rest, [missing[0]]: value };
+    // Sweep b20b terminal-01: lfm3 spelled the command as a JSON array (args='["ls", "-la",
+    // "~"]'); moved raw, the shell executed the JSON text itself ("/bin/sh: [ls,: not found",
+    // exit 127) for 27 rounds. A flat array of scalars moves as its space-joined command
+    // line - the model's only sane intent for a command-line parameter.
+    // shortcut: multi-word items join unquoted (a [bash,-c,"cmd"] shape degrades to a bare
+    // run); rebuild quoting only if traces show the model relying on it.
+    const items = jsonArray(unquote(value));
+    args = { ...rest, [missing[0]]: Array.isArray(items) && items.length > 0 && items.every(cell => typeof cell === 'string' || typeof cell === 'number' || typeof cell === 'boolean') ? items.map(cell => String(cell)).join(' ') : value };
   }
   return args;
 }

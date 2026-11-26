@@ -385,7 +385,7 @@ export const tools = [
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { from_text: 'Next steps', to_text: 'Open the beta to 500 users.', before_text: 'Current plan' }, says: 'Move that section to the top' }],
+    examples: [{ args: { from_text: 'Closing notes', to_text: 'Send the invoices.', before_text: 'Roadmap' }, says: 'Move that section to the top' }],
     // A cut-and-paste on the live view (the same view find_replace edits): the fragment of the
     // range is inserted at the target, shifted up by the removed range when the target sits
     // after it. One transaction, one undo step, no tracked change.

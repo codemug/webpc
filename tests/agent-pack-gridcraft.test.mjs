@@ -388,7 +388,7 @@ test('gridcraft.open_file reads the file, waits for the load, and returns the op
   assert.equal(wrapper.opened.length, 1);
   assert.equal(wrapper.opened[0].name, 'budget.xlsx');
   assert.deepEqual([...wrapper.opened[0].parts[0]], [1, 2, 3]);
-  assert.deepEqual(out, { name: 'budget.xlsx', bytes: 3, opened: '1 sheet' });
+  assert.deepEqual(out, { name: 'budget.xlsx', bytes: 3, opened: '1 sheet', next: 'budget.xlsx is open. To check it, call gridcraft.inspect. Opening it again shows a dialog and blocks the app.' });
 });
 
 test('gridcraft.open_file turns a store not_found into a teaching ToolError', async () => {

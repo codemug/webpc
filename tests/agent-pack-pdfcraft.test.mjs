@@ -123,6 +123,21 @@ test('the read tools send their engine command ids (doc_info reads the page stat
   ]);
 });
 
+// b21 pdfcraft-02: the app answered edit.find with { ran } only (no match details), a
+// dead end the model looped on; the tool then points at read_text. A rich reply with
+// match details passes through unchanged.
+test('text_find notes the thin app reply and points at read_text', async () => {
+  const thin = fakeCraft();
+  thin.execute = (command, params) => Promise.resolve(command === 'edit.find' ? { ran: 'edit.find' } : { command, params });
+  const out = await runTool('pdfcraft.text_find', { query: 'review' }, thin);
+  assert.equal(out.ran, 'edit.find');
+  assert.match(out.note, /read_text/);
+  const rich = fakeCraft();
+  rich.execute = (command, params) => Promise.resolve({ ran: 'edit.find', pages: [1] });
+  const out2 = await runTool('pdfcraft.text_find', { query: 'review' }, rich);
+  assert.equal(out2.note, undefined, 'a rich reply with match details gets no note');
+});
+
 test('the page tools send their engine command ids', async () => {
   const craft = fakeCraft();
   await runTool('pdfcraft.page_rotate', { degrees: 90 }, craft);
@@ -387,7 +402,7 @@ test('pdfcraft.open_file reads the file, waits for the PDF to load, and returns 
   assert.deepEqual(ctx.calls.read, ['/PDFCraft/contract.pdf']);
   assert.equal(wrapper.opened.length, 1);
   assert.equal(wrapper.opened[0].name, 'contract.pdf');
-  assert.deepEqual(out, { name: 'contract.pdf', bytes: 2, opened: '1 tab' });
+  assert.deepEqual(out, { name: 'contract.pdf', bytes: 2, opened: '1 tab', next: 'contract.pdf is open. To check it, call pdfcraft.inspect. Opening it again shows a dialog and blocks the app.' });
 });
 
 test('pdfcraft.save_copy starts the no-path file.save and writes the captured bytes', async () => {

@@ -226,7 +226,14 @@ export const tools = [
       const base = pick(args, ['layer', 'path', 'comp']);
       const jsonValue = () => {
         if (args.value === undefined) return undefined;
-        try { return JSON.parse(args.value); } catch { return args.value; }
+        let parsed;
+        try { parsed = JSON.parse(args.value); } catch { parsed = args.value; }
+        // b20 effectcraft-06: a raw string that is not a #color is expression text; prop.set
+        // answers "bad value" and the model loops, so point at the expression parameter.
+        if (typeof parsed === 'string' && !parsed.startsWith('#')) {
+          throw new ToolError('invalid_argument', 'value is not a number, a JSON array or a #rrggbb color: animation text goes in the expression parameter', '');
+        }
+        return parsed;
       };
       if (args.value !== undefined) {
         const params = { ...base, value: jsonValue() };
@@ -309,7 +316,12 @@ export const tools = [
         try {
           values = JSON.parse(args.values);
         } catch {
-          throw new ToolError('invalid_argument', 'values must be a JSON object of parameter id to value', '');
+          throw new ToolError('invalid_argument', 'values must be a JSON object of parameter id to value, e.g. {"blurriness": 8}', '');
+        }
+        // b20 effectcraft-04: a bare "12" parses as a JSON number and Object.entries drops it
+        // silently, so the effect landed with every parameter at zero; refuse it up front.
+        if (typeof values !== 'object' || values === null || Array.isArray(values)) {
+          throw new ToolError('invalid_argument', 'values must be a JSON object of parameter id to value, e.g. {"blurriness": 8}', '');
         }
         const prefix = `effects/#${index}`;
         for (const [key, value] of Object.entries(values)) {

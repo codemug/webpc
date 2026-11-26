@@ -436,7 +436,7 @@ test('vectorcraft.open_file reads the file, drives the wrapper input, and waits 
   assert.deepEqual(ctx.calls.read, ['/VectorCraft/poster.vectorcraft']);
   assert.equal(wrapper.opened.length, 1);
   assert.equal(wrapper.opened[0].name, 'poster.vectorcraft');
-  assert.deepEqual(out, { name: 'poster.vectorcraft', bytes: 3, opened: '"poster.vectorcraft"' });
+  assert.deepEqual(out, { name: 'poster.vectorcraft', bytes: 3, opened: '"poster.vectorcraft"', next: 'poster.vectorcraft is open. To check it, call vectorcraft.inspect. Opening it again shows a dialog and blocks the app.' });
 });
 
 test('vectorcraft.save_copy takes the bytes inline from document.serialize; the target base names the result', async () => {

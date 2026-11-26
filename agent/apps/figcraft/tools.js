@@ -158,7 +158,7 @@ export const tools = [
     purpose: 'Create a layer: frame, shape, text, section or component.',
     when: 'Use when the user wants a new layer added to the design.',
     params: {
-      type: { type: 'enum', required: true, values: ['frame', 'rectangle', 'ellipse', 'polygon', 'star', 'line', 'arrow', 'text', 'vector', 'section', 'component', 'slice'], description: 'Layer type' },
+      type: { type: 'enum', required: true, values: ['frame', 'rectangle', 'ellipse', 'polygon', 'star', 'line', 'arrow', 'text', 'vector', 'section', 'component', 'slice'], description: 'Layer type: the kind of layer the user asks for - a shape, text, or a container for other layers' },
       x: { type: 'number', description: 'Left, relative to the parent frame (default 0)' },
       y: { type: 'number', description: 'Top, relative to the parent frame (default 0)' },
       width: { type: 'number', description: 'Width (default 100)' },
@@ -172,7 +172,7 @@ export const tools = [
     },
     effect: 'change',
     needs: NEEDS,
-    examples: [{ args: { type: 'frame', width: 480, height: 852, name: 'Shell', props: 'fill=#FFFFFF\nlayout=vertical\ngap=16' }, says: 'Create a phone frame called Shell' }],
+    examples: [{ args: { type: 'polygon', width: 170, height: 170, name: 'Glyph', props: 'fill=#7048E8' }, says: 'Add a polygon' }],
     // tools.rs:668-693 node.create, then node.get {id, depth:0} for the new layer
     run: async (args, ctx) => {
       const app = teachApp(await ctx.craft(APP), NO_DOC.message, NO_DOC.fix);

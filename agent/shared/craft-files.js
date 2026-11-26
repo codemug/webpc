@@ -228,6 +228,12 @@ export const extOf = name => {
   return ext.includes(' ') ? '' : ext.toLowerCase();
 };
 
+// The model-facing next on every successful open (deckcraft-10, b21: the open succeeded
+// in round 2, then the model re-opened the same file ~10 times to "check it loaded";
+// each re-open tripped the app's dialog and the turn died at the 240 s timer). Built
+// from the app id; every openAndAwait caller passes it, import tools included.
+const openNextNote = (id, name) => `${name} is open. To check it, call ${id}.inspect. Opening it again shows a dialog and blocks the app.`;
+
 // The open result's opened field: a short confirmation the model can read.
 const COUNT_WORDS = { sheets: 'sheet', slides: 'slide', tabs: 'tab', documents: 'document', pages: 'page' };
 
@@ -238,7 +244,12 @@ const COUNT_WORDS = { sheets: 'sheet', slides: 'slide', tabs: 'tab', documents: 
 // the file stem) - or the app's own path/file field. A name anywhere else in the state
 // (a photo catalog row, a recent-files list) must not count, or the next import of that
 // file would silently skip. Import tools pass checkAlreadyOpen: false instead.
-const alreadyOpenDoc = (state, name) => {
+// DeckCraft's only identity field is the deck's title - excluded from the general
+// checks because a deck can be titled after anything - but a file-opened deck is
+// titled after the file's stem (live b21: opening outline.md reports "outline"), so
+// for deckcraft an exact stem match is the already-open proof (deckcraft-10: ten
+// re-opens of the open deck, each driving the blocking dialog); a partial title is not.
+const alreadyOpenDoc = (state, name, id) => {
   if (!state || typeof state !== 'object' || Array.isArray(state)) return null;
   const docs = Array.isArray(state.documents) ? state.documents : [];
   const doc = docs.find(d => d && typeof d.name === 'string' && d.name === name);
@@ -246,6 +257,7 @@ const alreadyOpenDoc = (state, name) => {
   const stem = name.replace(/\.[^.]*$/, '');
   const sheets = Array.isArray(state.sheets) ? state.sheets : [];
   if (sheets.some(s => s && typeof s.name === 'string' && (s.name === name || (stem.length >= 4 && s.name === stem)))) return `already open as ${name}`;
+  if (id === 'deckcraft' && typeof state.title === 'string' && state.title === stem) return `already open as ${name}`;
   for (const key of ['path', 'file']) {
     const own = state[key];
     if (typeof own === 'string' && own.split('/').pop() === name) return `already open as ${name}`;
@@ -429,15 +441,17 @@ const boundedInspect = (craft, boundMs) => Promise.race([
  * files.readBytes), accept (the releases accept list, quoted in the timeout error),
  * timeoutMs, intervalMs, sleep (injectable for tests), checkAlreadyOpen (default
  * true; open-or-import tools pass false to skip the pre-open already-open check).
- * Returns { name, bytes: <size>, opened }, opened a short summary of the post-open
+ * Returns { name, bytes: <size>, opened, next }, opened a short summary of the post-open
  * inspect (title, path, sheet/slide/tab count) - or, when the file is already open
- * (its name in the state's identity fields: documents[].name, sheets[].name, or the
- * app's path/file field), an immediate "already open as ..." confirmation without
- * driving the input.
+ * (its name in the state's identity fields: documents[].name, sheets[].name, the
+ * app's path/file field, or - for deckcraft only - a title equal to the file's stem),
+ * an immediate "already open as ..." confirmation without driving the input (no
+ * dialog). next tells the model the file is open and that checking is <id>.inspect.
  * Throws ToolError('invalid_argument') for a bad name or non-binary bytes,
  * ('not_available') when the wrapper has no #file input, ('app_error') above 256 MB or
  * when the app state never changes within the cap (the message then notes when the
- * inspect stopped answering, so a waiting dialog reads as such).
+ * inspect stopped answering, so a waiting dialog reads as such, and names
+ * <id>.inspect as the check once the dialog is cleared).
  */
 export async function openAndAwait(craft, { id, title = id, wrapperWindow, name, bytes, accept = '', timeoutMs = 30000, intervalMs = 250, sleep = ms => new Promise(done => setTimeout(done, ms)), checkAlreadyOpen = true } = {}) {
   const beforeOut = await boundedInspect(craft, timeoutMs);
@@ -449,8 +463,8 @@ export async function openAndAwait(craft, { id, title = id, wrapperWindow, name,
   // checkAlreadyOpen: false for open-or-import tools: their state lists imported files,
   // so a present name is not proof this file is the open one.
   if (!beforeThrew && checkAlreadyOpen) {
-    const already = alreadyOpenDoc(JSON.parse(before), name);
-    if (already !== null) return { name, bytes: bytes.byteLength, opened: already };
+    const already = alreadyOpenDoc(JSON.parse(before), name, id);
+    if (already !== null) return { name, bytes: bytes.byteLength, opened: already, next: openNextNote(id, name) };
   }
   const driven = await openFromBytes(wrapperWindow, id, name, bytes);
   const deadline = Date.now() + timeoutMs;
@@ -461,9 +475,9 @@ export async function openAndAwait(craft, { id, title = id, wrapperWindow, name,
     let afterThrew = false;
     if (out.threw || out.hung) { afterThrew = true; if (out.hung) hungPolls += 1; }
     else after = JSON.stringify(out.value);
-    if (!afterThrew && (beforeThrew || after !== before)) return { ...driven, opened: openedSummary(JSON.parse(after)) };
+    if (!afterThrew && (beforeThrew || after !== before)) return { ...driven, opened: openedSummary(JSON.parse(after)), next: openNextNote(id, name) };
     if (Date.now() >= deadline) {
-      const hung = hungPolls > 0 ? ' Its inspect stopped answering during the wait (a dialog may be waiting for input).' : '';
+      const hung = hungPolls > 0 ? ` Its inspect stopped answering during the wait (a dialog may be waiting for input); after the dialog is cleared, call ${id}.inspect.` : '';
       throw new ToolError('app_error', `${title} did not open ${name}.${hung} It accepts: ${accept}.`, '');
     }
     await sleep(intervalMs);

@@ -359,7 +359,7 @@ test('figcraft.open_file reads the file, drives the wrapper input, and waits for
   assert.deepEqual(ctx.calls.read, ['/FigCraft/app.figcraft']);
   assert.equal(wrapper.opened.length, 1);
   assert.equal(wrapper.opened[0].name, 'app.figcraft');
-  assert.deepEqual(out, { name: 'app.figcraft', bytes: 3, opened: '"app.figcraft" 1 page' });
+  assert.deepEqual(out, { name: 'app.figcraft', bytes: 3, opened: '"app.figcraft" 1 page', next: 'app.figcraft is open. To check it, call figcraft.inspect. Opening it again shows a dialog and blocks the app.' });
 });
 
 test('figcraft.save_copy takes the bytes inline from file.saveAs {data: true} and writes them', async () => {
